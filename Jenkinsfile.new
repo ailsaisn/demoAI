@@ -106,14 +106,14 @@ withFolderProperties {
             node(POD_LABEL) {
 
                 stage('Checkout SCM') {
-                    container('agent-noncis-be-pr') {
+                    container('agent-noncis-be-dev') {
                         checkout scm
                     }
                 }
 
                 def changes
                 stage('Detect Changes') {
-                    container('agent-noncis-be-pr') {
+                    container('agent-noncis-be-dev') {
                         changes = detectChanges()
                     }
                 }
@@ -132,7 +132,6 @@ withFolderProperties {
                                 return
                             }
                             stage('Build and Push Docker Image') {
-
                                 container('agent-noncis-be-dev') {
                                     dir("backend") {
                                         buildPushImageNoncisBe(
@@ -143,22 +142,15 @@ withFolderProperties {
                                             branch: env.BRANCH_NAME
                                         )
                                     }
-
                                 }
-
                             }
                             stage('Argocd Sync Develop') {
-
                                 container('agent-noncis-be-dev') {
-
                                     argocdSync.sync(
                                         appName: 'connect-' + repoName + '-dev'
                                     )
-
                                 }
-
                             }
-
                         },
                         frontend: {
                             if (!runFrontend) {
@@ -166,7 +158,6 @@ withFolderProperties {
                                 return
                             }
                             stage('Build and Push Docker Image') {
-
                                 container('agent-noncis-be-dev') {
                                     dir("frontend") {
                                         buildPushImageNoncisFe(
@@ -178,28 +169,19 @@ withFolderProperties {
                                         )
                                     }
                                 }
-
                             }
                             stage('Argocd Sync Develop') {
-
                                 container('agent-noncis-be-dev') {
-
                                     argocdSync.sync(
                                         appName: 'connect-' + repoName + '-dev'
                                     )
-
                                 }
-
                             }
                         }
-
                     )
                 }
-
             }
-
         }
-
     }
 
     /*
@@ -214,14 +196,14 @@ withFolderProperties {
             node(POD_LABEL) {
 
                 stage('Checkout SCM') {
-                    container('agent-noncis-be-pr') {
+                    container('agent-noncis-be-dev') {
                         checkout scm
                     }
                 }
 
                 def changes
                 stage('Detect Changes') {
-                    container('agent-noncis-be-pr') {
+                    container('agent-noncis-be-dev') {
                         changes = detectChanges()
                     }
                 }
@@ -240,7 +222,6 @@ withFolderProperties {
                                 return
                             }
                             stage('Build and Push Docker Image') {
-
                                 container('agent-noncis-be-dev') {
                                     dir("backend") {
                                         buildPushImageNoncisBe(
@@ -251,22 +232,15 @@ withFolderProperties {
                                             branch: env.BRANCH_NAME
                                         )
                                     }
-
                                 }
-
                             }
                             stage('Argocd Sync Staging') {
-
                                 container('agent-noncis-be-dev') {
-
                                     argocdSync.sync(
                                         appName: 'connect-' + repoName + '-staging'
                                     )
-
                                 }
-
                             }
-
                         },
                         frontend: {
                             if (!runFrontend) {
@@ -274,7 +248,6 @@ withFolderProperties {
                                 return
                             }
                             stage('Build and Push Docker Image') {
-
                                 container('agent-noncis-be-dev') {
                                     dir("frontend") {
                                         buildPushImageNoncisFe(
@@ -286,28 +259,19 @@ withFolderProperties {
                                         )
                                     }
                                 }
-
                             }
                             stage('Argocd Sync Staging') {
-
                                 container('agent-noncis-be-dev') {
-
                                     argocdSync.sync(
                                         appName: 'connect-' + repoName + '-staging'
                                     )
-
                                 }
-
                             }
                         }
-
                     )
                 }
-
             }
-
         }
-
     }
 
     /*
@@ -348,7 +312,6 @@ withFolderProperties {
                                 return
                             }
                             stage('Build and Push Docker Image') {
-
                                 container('agent-noncis-be-prod') {
                                     dir("backend") {
                                         buildPushImageCisBe(
@@ -360,9 +323,7 @@ withFolderProperties {
                                         )
                                     }
                                 }
-
                             }
-
                         },
                         frontend: {
                             if (!runFrontend) {
@@ -370,7 +331,6 @@ withFolderProperties {
                                 return
                             }
                             stage('Build and Push Docker Image') {
-
                                 container('agent-noncis-be-prod') {
                                     dir("frontend") {
                                         buildPushImageCisBe(
@@ -382,12 +342,11 @@ withFolderProperties {
                                         )
                                     }
                                 }
-
                             }
                         }
-
                     )
                 }
+
                 stage('Schedule Deployment to Prod') {
                     container('agent-noncis-be-prod') {
                         scheduleDeploy()
