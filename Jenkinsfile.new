@@ -144,20 +144,21 @@ withFolderProperties {
                             stage('Build and Push Docker Image') {
                                 container('agent-noncis-be-dev') {
                                     dir("backend") {
-                                        buildPushImageNoncisBe(
-                                            repoName: repoName,
+                                        buildPushImage.other(
+                                            repoName: repoName + '-be',
                                             registry: env.REGISTRY,
                                             project: env.PROJECT,
                                             ecrRepo: env.ECRNAME,
                                             branch: env.BRANCH_NAME
                                         )
+                                        
                                     }
                                 }
                             }
                             stage('Argocd Sync Develop') {
                                 container('agent-noncis-be-dev') {
                                     argocdSync.sync(
-                                        appName: 'connect-' + repoName + '-dev'
+                                        appName: 'connect-' + repoName + '-be-dev'
                                     )
                                 }
                             }
@@ -170,8 +171,8 @@ withFolderProperties {
                             stage('Build and Push Docker Image') {
                                 container('agent-noncis-be-dev') {
                                     dir("frontend") {
-                                        buildPushImageNoncisFe(
-                                            repoName: repoName,
+                                        buildPushImage.other(
+                                            repoName: repoName + '-fe',
                                             registry: env.REGISTRY,
                                             project: env.PROJECT,
                                             ecrRepo: env.ECRNAME,
@@ -183,7 +184,7 @@ withFolderProperties {
                             stage('Argocd Sync Develop') {
                                 container('agent-noncis-be-dev') {
                                     argocdSync.sync(
-                                        appName: 'connect-' + repoName + '-dev'
+                                        appName: 'connect-' + repoName + '-fe-dev'
                                     )
                                 }
                             }
@@ -234,8 +235,8 @@ withFolderProperties {
                             stage('Build and Push Docker Image') {
                                 container('agent-noncis-be-dev') {
                                     dir("backend") {
-                                        buildPushImageNoncisBe(
-                                            repoName: repoName,
+                                        buildPushImage.other(
+                                            repoName: repoName + '-be',
                                             registry: env.REGISTRY,
                                             project: env.PROJECT,
                                             ecrRepo: env.ECRNAME,
@@ -247,7 +248,7 @@ withFolderProperties {
                             stage('Argocd Sync Staging') {
                                 container('agent-noncis-be-dev') {
                                     argocdSync.sync(
-                                        appName: 'connect-' + repoName + '-staging'
+                                        appName: 'connect-' + repoName + '-be-staging'
                                     )
                                 }
                             }
@@ -260,8 +261,8 @@ withFolderProperties {
                             stage('Build and Push Docker Image') {
                                 container('agent-noncis-be-dev') {
                                     dir("frontend") {
-                                        buildPushImageNoncisFe(
-                                            repoName: repoName,
+                                        buildPushImage.other(
+                                            repoName: repoName + '-fe',
                                             registry: env.REGISTRY,
                                             project: env.PROJECT,
                                             ecrRepo: env.ECRNAME,
@@ -273,7 +274,7 @@ withFolderProperties {
                             stage('Argocd Sync Staging') {
                                 container('agent-noncis-be-dev') {
                                     argocdSync.sync(
-                                        appName: 'connect-' + repoName + '-staging'
+                                        appName: 'connect-' + repoName + '-fe-staging'
                                     )
                                 }
                             }
@@ -324,8 +325,8 @@ withFolderProperties {
                             stage('Build and Push Docker Image') {
                                 container('agent-noncis-be-prod') {
                                     dir("backend") {
-                                        buildPushImageCisBe(
-                                            repoName: repoName,
+                                        buildPushImage.other(
+                                            repoName: repoName + '-be',
                                             registry: env.REGISTRY,
                                             project: env.PROJECT,
                                             ecrRepo: env.ECRNAME,
@@ -343,8 +344,8 @@ withFolderProperties {
                             stage('Build and Push Docker Image') {
                                 container('agent-noncis-be-prod') {
                                     dir("frontend") {
-                                        buildPushImageCisBe(
-                                            repoName: repoName,
+                                        buildPushImage.other(
+                                            repoName: repoName + '-fe',
                                             registry: env.REGISTRY,
                                             project: env.PROJECT,
                                             ecrRepo: env.ECRNAME,
