@@ -10,10 +10,20 @@ def detectChanges() {
             returnStdout: true
         ).trim().split("\n")
     } else {
-        files = sh(
-            script: "git diff --name-only HEAD~1 HEAD",
-            returnStdout: true
-        ).trim().split("\n")
+        def hasPrevCommit = sh(
+            script: "git rev-parse --verify HEAD~1 >/dev/null 2>&1",
+            returnStatus: true
+        ) == 0
+
+        if (hasPrevCommit) {
+            files = sh(
+                script: "git diff --name-only HEAD~1 HEAD",
+                returnStdout: true
+            ).trim().split("\n")
+        } else {
+            echo "⚠️ No previous commit available (shallow clone or first commit) — treating all paths as changed"
+            files = ["backend/", "frontend/"]
+        }
     }
 
     return [
