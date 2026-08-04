@@ -145,10 +145,10 @@ withFolderProperties {
                                 container('agent-noncis-be-dev') {
                                     dir("backend") {
                                         buildPushImage.other(
-                                            repoName: repoName + '-be',
+                                            repoName: repoName,
                                             registry: env.REGISTRY,
                                             project: env.PROJECT,
-                                            ecrRepo: env.ECRNAME,
+                                            ecrRepo: env.ECRNAME  + '-be',
                                             branch: env.BRANCH_NAME
                                         )
                                         
@@ -172,10 +172,10 @@ withFolderProperties {
                                 container('agent-noncis-be-dev') {
                                     dir("frontend") {
                                         buildPushImage.other(
-                                            repoName: repoName + '-fe',
+                                            repoName: repoName,
                                             registry: env.REGISTRY,
                                             project: env.PROJECT,
-                                            ecrRepo: env.ECRNAME,
+                                            ecrRepo: env.ECRNAME + '-fe',
                                             branch: env.BRANCH_NAME
                                         )
                                     }
@@ -236,10 +236,10 @@ withFolderProperties {
                                 container('agent-noncis-be-dev') {
                                     dir("backend") {
                                         buildPushImage.other(
-                                            repoName: repoName + '-be',
+                                            repoName: repoName,
                                             registry: env.REGISTRY,
                                             project: env.PROJECT,
-                                            ecrRepo: env.ECRNAME,
+                                            ecrRepo: env.ECRNAME + '-be',
                                             branch: env.BRANCH_NAME
                                         )
                                     }
@@ -262,10 +262,10 @@ withFolderProperties {
                                 container('agent-noncis-be-dev') {
                                     dir("frontend") {
                                         buildPushImage.other(
-                                            repoName: repoName + '-fe',
+                                            repoName: repoName,
                                             registry: env.REGISTRY,
                                             project: env.PROJECT,
-                                            ecrRepo: env.ECRNAME,
+                                            ecrRepo: env.ECRNAME + '-fe',
                                             branch: env.BRANCH_NAME
                                         )
                                     }
@@ -326,10 +326,10 @@ withFolderProperties {
                                 container('agent-noncis-be-prod') {
                                     dir("backend") {
                                         buildPushImage.other(
-                                            repoName: repoName + '-be',
+                                            repoName: repoName,
                                             registry: env.REGISTRY,
                                             project: env.PROJECT,
-                                            ecrRepo: env.ECRNAME,
+                                            ecrRepo: env.ECRNAME  + '-be',
                                             branch: env.BRANCH_NAME
                                         )
                                     }
@@ -345,10 +345,10 @@ withFolderProperties {
                                 container('agent-noncis-be-prod') {
                                     dir("frontend") {
                                         buildPushImage.other(
-                                            repoName: repoName + '-fe',
+                                            repoName: repoName,
                                             registry: env.REGISTRY,
                                             project: env.PROJECT,
-                                            ecrRepo: env.ECRNAME,
+                                            ecrRepo: env.ECRNAME + '-fe',
                                             branch: env.BRANCH_NAME
                                         )
                                     }
