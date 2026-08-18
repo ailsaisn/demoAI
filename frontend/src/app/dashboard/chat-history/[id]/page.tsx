@@ -11,7 +11,7 @@ import {
   MessageScrollerButton,
 } from "@/components/ui/message-scroller"
 import { useParams, useRouter } from "next/navigation"
-import { useChatMessages } from "@/app/doctor/hooks/use-doctor-chat"
+import { useChatMessages } from "@/hooks/use-chat-messages"
 import { Button } from "@/components/ui/button"
 
 export default function ChatHistoryDetailPage() {

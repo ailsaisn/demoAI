@@ -6,6 +6,7 @@ from loguru import logger
 
 from sqlalchemy import create_engine, Column, String, Text, Integer, JSON, text
 from sqlalchemy.orm import declarative_base, sessionmaker
+# pyrefly: ignore [missing-import]
 from pgvector.sqlalchemy import Vector
 
 from app.rag.services.interfaces import BaseVectorStoreAdapter
@@ -44,7 +45,7 @@ class PGVectorAdapter(BaseVectorStoreAdapter):
                 check_table_sql = text("""
                     SELECT atttypmod 
                     FROM pg_attribute 
-                    WHERE attrelid = :tablename::regclass AND attname = 'embedding';
+                    WHERE attrelid = to_regclass(:tablename) AND attname = 'embedding';
                 """)
                 try:
                     result = conn.execute(check_table_sql, {"tablename": self.collection_name}).fetchone()
@@ -149,7 +150,12 @@ class PGVectorAdapter(BaseVectorStoreAdapter):
                 
                 if filter_metadata:
                     for k, v in filter_metadata.items():
-                        if isinstance(v, list):
+                        if k == "excluded_categories" and isinstance(v, list):
+                            from sqlalchemy import not_
+                            for item in v:
+                                if item:
+                                    q = q.filter(not_(DocumentChunk.metadata_["categories"].astext.ilike(f"%{item}%")))
+                        elif isinstance(v, list):
                             from sqlalchemy import or_
                             or_clauses = [DocumentChunk.metadata_[k].astext.ilike(f"%{item}%") for item in v if item]
                             if or_clauses:

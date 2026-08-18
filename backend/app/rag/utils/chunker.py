@@ -138,165 +138,196 @@ class CustomChunker:
         return self._merge_and_split(processed_chunks, max_length_for_semantic)
 
     # =========================================================================
-    # FAST PATH: Section-aware chunking from plain page text
+    # FAST PATH: Document -> Section -> Entity/Treatment -> Semantic Chunking
     # =========================================================================
-    def _chunk_fast_pages(self, pages: List[Dict], max_length_for_semantic: int = 500) -> List[Dict]:
+    def _split_large_table(self, table_lines: List[str], max_rows_per_chunk: int = 8) -> List[str]:
         """
-        Smart section-aware chunking from fast-extracted page text.
-        Detects section headers, splits by sections, and preserves page numbers.
+        Splits a large markdown table into smaller valid sub-tables,
+        ensuring each chunk has the complete table header and delimiter.
         """
-        logger.info(f"⚡ Fast chunking {len(pages)} pages with section detection...")
+        if len(table_lines) <= 3:
+            return ["\n".join(table_lines)]
 
-        # Build a regex pattern for known section headers
-        section_pattern = re.compile(
-            r"^(?:" + "|".join(re.escape(s) for s in self.KNOWN_SECTIONS) + r")\s*:?\s*$",
-            re.IGNORECASE | re.MULTILINE
-        )
+        header = table_lines[0]
+        delimiter = table_lines[1]
+        data_rows = table_lines[2:]
+
+        sub_tables = []
+        for i in range(0, len(data_rows), max_rows_per_chunk):
+            chunk_rows = data_rows[i:i + max_rows_per_chunk]
+            sub_table = "\n".join([header, delimiter] + chunk_rows)
+            sub_tables.append(sub_table)
+
+        return sub_tables
+
+    def _chunk_fast_pages(self, pages: List[Dict], max_length_for_semantic: int = 600) -> List[Dict]:
+        """
+        Hierarchical Chunking:
+        Document -> Section (H1/H2) -> Entity/Treatment (H3/H4/Numbered) -> Semantic Chunks.
+        Ensures 1 chunk = 1 complete informational unit answering 1 doctor intent.
+        """
+        logger.info(f"⚡ Hierarchical chunking {len(pages)} pages (Document -> Section -> Entity -> Semantic Chunks)...")
 
         processed_chunks = []
-        current_section = "Root"
+        current_section = "General"
+        current_entity = ""
+
+        # Regex patterns for hierarchical boundaries
+        section_h1_h2_pattern = re.compile(r"^(?:#{1,2}\s+|\d+\.\s+[A-Z])", re.IGNORECASE)
+        entity_h3_h4_pattern = re.compile(r"^(?:#{3,4}\s+|\d+\.\d+\s+|\*\*[A-Z0-9\s\.\-]+\*\*)", re.IGNORECASE)
 
         for page_data in pages:
             page_num = page_data.get("page", 1)
+            page_image_url = page_data.get("image_url")
             page_text = page_data.get("text", "").strip()
             if not page_text:
                 continue
 
-            # Split page text into lines and group by sections
             lines = page_text.split("\n")
-            current_block_lines = []
+            current_entity_lines = []
+            current_table_lines = []
+
+            def _build_meta(chunk_type: str) -> Dict[str, Any]:
+                meta = {
+                    "headings": [current_section, current_entity] if current_entity else [current_section],
+                    "section": current_section,
+                    "entity": current_entity,
+                    "chunk_type": chunk_type,
+                    "page": page_num
+                }
+                if page_image_url:
+                    meta["image_url"] = page_image_url
+                return meta
+
+            def flush_entity_block():
+                nonlocal current_entity_lines
+                if not current_entity_lines:
+                    return
+
+                block_text = "\n".join(current_entity_lines).strip()
+                if not block_text:
+                    current_entity_lines = []
+                    return
+
+                # If block is very short (< 80 chars) and has no specific entity, buffer it to combine with next block
+                if len(block_text) < 80 and not current_entity:
+                    return
+
+                # If entity block is within target size (~600-1200 chars), keep as 1 self-contained unit
+                if len(block_text) <= 1200:
+                    processed_chunks.append({
+                        "text": block_text,
+                        "metadata": _build_meta("EntityChunk" if current_entity else "TextChunk")
+                    })
+                else:
+                    # Split long entity into logical semantic sub-units (e.g. paragraphs / double newlines)
+                    paragraphs = [p.strip() for p in block_text.split("\n\n") if p.strip()]
+                    if len(paragraphs) > 1:
+                        running_sub = []
+                        for p in paragraphs:
+                            running_sub.append(p)
+                            sub_text = "\n\n".join(running_sub)
+                            if len(sub_text) >= 500:
+                                # Prepend entity header if not already in sub-text
+                                if current_entity and not sub_text.startswith("#"):
+                                    sub_text = f"### {current_entity}\n\n{sub_text}"
+                                processed_chunks.append({
+                                    "text": sub_text,
+                                    "metadata": _build_meta("EntityChunk" if current_entity else "TextChunk")
+                                })
+                                running_sub = []
+                        if running_sub:
+                            sub_text = "\n\n".join(running_sub)
+                            if current_entity and not sub_text.startswith("#"):
+                                sub_text = f"### {current_entity}\n\n{sub_text}"
+                            processed_chunks.append({
+                                "text": sub_text,
+                                "metadata": _build_meta("EntityChunk" if current_entity else "TextChunk")
+                            })
+                    else:
+                        processed_chunks.append({
+                            "text": block_text,
+                            "metadata": _build_meta("EntityChunk" if current_entity else "TextChunk")
+                        })
+
+                current_entity_lines = []
+
+            def flush_table_block():
+                nonlocal current_table_lines
+                if not current_table_lines:
+                    return
+
+                if len(current_table_lines) > 10:
+                    sub_tables = self._split_large_table(current_table_lines, max_rows_per_chunk=6)
+                    for tbl in sub_tables:
+                        processed_chunks.append({
+                            "text": tbl,
+                            "metadata": _build_meta("TableChunk")
+                        })
+                else:
+                    processed_chunks.append({
+                        "text": "\n".join(current_table_lines),
+                        "metadata": _build_meta("TableChunk")
+                    })
+                current_table_lines = []
 
             for line in lines:
                 line_strip = line.strip()
                 if not line_strip:
+                    if current_table_lines:
+                        flush_table_block()
                     continue
 
-                # Check if this line is a section header
-                if line_strip.lower() in self.KNOWN_SECTIONS or section_pattern.match(line_strip):
-                    # Flush current block before switching sections
-                    if current_block_lines:
-                        block_text = "\n".join(current_block_lines).strip()
-                        if block_text:
-                            processed_chunks.append({
-                                "text": block_text,
-                                "metadata": {
-                                    "headings": [current_section],
-                                    "section": current_section,
-                                    "chunk_type": "TextChunk",
-                                    "page": page_num
-                                }
-                            })
-                        current_block_lines = []
+                # 1. Detect Markdown Table Row
+                is_table_row = line_strip.startswith("|") and line_strip.endswith("|")
+                if is_table_row:
+                    flush_entity_block()
+                    current_table_lines.append(line_strip)
+                    continue
+                else:
+                    if current_table_lines:
+                        flush_table_block()
 
-                    current_section = line_strip.upper()
+                # 2. Detect Major Section (H1 / H2 / 1. Title)
+                if section_h1_h2_pattern.match(line_strip) and not is_table_row:
+                    flush_entity_block()
+                    clean_sec = line_strip.lstrip("#: ").strip()
+                    if clean_sec:
+                        current_section = clean_sec
+                        current_entity = ""
+                    current_entity_lines.append(line_strip)
                     continue
 
-                current_block_lines.append(line_strip)
+                # 3. Detect Entity / Treatment / Product (H3 / H4 / 1.1 Item)
+                if entity_h3_h4_pattern.match(line_strip) and not is_table_row:
+                    flush_entity_block()
+                    clean_ent = line_strip.lstrip("#: *").rstrip("*").strip()
+                    if clean_ent:
+                        current_entity = clean_ent
+                    current_entity_lines.append(line_strip)
+                    continue
 
-            # Flush remaining lines from this page
-            if current_block_lines:
-                block_text = "\n".join(current_block_lines).strip()
-                if block_text:
-                    processed_chunks.append({
-                        "text": block_text,
-                        "metadata": {
-                            "headings": [current_section],
-                            "section": current_section,
-                            "chunk_type": "TextChunk",
-                            "page": page_num
-                        }
-                    })
+                # 4. Regular content line / bullet point
+                current_entity_lines.append(line_strip)
 
-        logger.info(f"Created {len(processed_chunks)} section-aware chunks from fast extraction.")
-        return self._merge_and_split(processed_chunks, max_length_for_semantic)
+            # Flush remaining lines
+            flush_entity_block()
+            flush_table_block()
 
-    # =========================================================================
-    # SHARED: Merge consecutive same-section chunks + semantic split long ones
-    # =========================================================================
-    def _merge_and_split(self, processed_chunks: List[Dict], max_length_for_semantic: int = 500) -> List[Dict]:
-        """
-        Phase 2: Merge consecutive text chunks belonging to the same section and page.
-        Apply semantic splitting to chunks that exceed max_length_for_semantic.
-        """
-        final_chunks = []
-        current_merged = None
-        
-        def push_chunk(merged_chunk):
-            if not merged_chunk:
-                return
-            txt = merged_chunk["text"]
-            meta = merged_chunk["metadata"]
-            c_type = meta.get("chunk_type")
-            
-            if len(txt) > max_length_for_semantic and c_type == "TextChunk":
-                # Fast paragraph splitting for long section blocks (> 1500 chars)
-                paragraphs = [p.strip() for p in txt.split("\n\n") if p.strip()]
-                if len(paragraphs) > 1:
-                    for p in paragraphs:
-                        final_chunks.append({
-                            "text": p,
-                            "metadata": meta.copy()
-                        })
-                else:
-                    final_chunks.append({
-                        "text": txt,
-                        "metadata": meta
-                    })
-            else:
-                final_chunks.append({
-                    "text": txt,
-                    "metadata": meta
-                })
-
-        for pc in processed_chunks:
-            text = pc["text"]
-            meta = pc["metadata"]
-            c_type = meta.get("chunk_type")
-            
-            if c_type == "TextChunk":
-                if current_merged:
-                    same_section = current_merged["metadata"]["section"] == meta["section"]
-                    same_page = current_merged["metadata"]["page"] == meta["page"]
-                    not_too_long = (len(current_merged["text"]) + len(text) + 2) <= max_length_for_semantic
-                    
-                    if same_section and same_page and not_too_long:
-                        current_merged["text"] += "\n" + text
-                    else:
-                        push_chunk(current_merged)
-                        current_merged = {
-                            "text": text,
-                            "metadata": meta
-                        }
-                else:
-                    current_merged = {
-                        "text": text,
-                        "metadata": meta
-                    }
-            else:
-                push_chunk(current_merged)
-                current_merged = None
-                final_chunks.append({
-                    "text": text,
-                    "metadata": meta
-                })
-                
-        push_chunk(current_merged)
-        
-        logger.info(f"Final total chunks generated after merging and semantic splitting: {len(final_chunks)}")
-        return final_chunks
+        logger.info(f"Hierarchical chunking complete: generated {len(processed_chunks)} granular, entity-aware chunks.")
+        return processed_chunks
 
     # =========================================================================
     # PUBLIC API: Unified entry point
     # =========================================================================
-    def chunk_document(self, parse_result, max_length_for_semantic: int = 500) -> List[Dict]:
+    def chunk_document(self, parse_result, max_length_for_semantic: int = 600) -> List[Dict]:
         """
         Unified chunking entry point. Accepts either:
         - ParseResult (from new smart parser)
         - DoclingDocument (backward compatibility)
         
-        Automatically routes to the correct chunking path.
+        Automatically routes to hierarchical chunking.
         """
-        # Handle new ParseResult objects
         if isinstance(parse_result, ParseResult):
             if parse_result.is_fast:
                 return self._chunk_fast_pages(parse_result.pages, max_length_for_semantic)
@@ -306,10 +337,8 @@ class CustomChunker:
                 logger.error("ParseResult has no usable data.")
                 return []
 
-        # Backward compatibility: accept raw DoclingDocument
         if DoclingDocument and isinstance(parse_result, DoclingDocument):
             return self._chunk_docling_document(parse_result, max_length_for_semantic)
 
-        # Fallback: try treating it as a DoclingDocument anyway
         logger.warning(f"Unknown parse_result type: {type(parse_result)}. Attempting Docling chunking.")
         return self._chunk_docling_document(parse_result, max_length_for_semantic)

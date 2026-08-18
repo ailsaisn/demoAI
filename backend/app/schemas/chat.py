@@ -1,17 +1,20 @@
 from pydantic import BaseModel, ConfigDict
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Union
 from uuid import UUID
 from datetime import datetime
 from app.models.chat import ChatStatus, ChatRole, ChatRating
 
 class ChatSessionCreate(BaseModel):
-    branch_id: UUID
+    branch_code: Optional[str] = None
+    branch_id: Optional[UUID] = None
+    cis_branch_id: Optional[Union[int, str]] = None
 
 class ChatSessionUpdate(BaseModel):
     status: Optional[ChatStatus] = None
     summary: Optional[str] = None
     rating: Optional[ChatRating] = None
     feedback: Optional[str] = None
+    has_data_issue: Optional[bool] = None
 
 class ChatSessionResponse(BaseModel):
     id: UUID
@@ -21,6 +24,8 @@ class ChatSessionResponse(BaseModel):
     summary: Optional[str] = None
     rating: Optional[ChatRating] = None
     feedback: Optional[str] = None
+    has_data_issue: bool = False
+    is_feedback_read: bool = False
     created_at: datetime
     updated_at: datetime
     

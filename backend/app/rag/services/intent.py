@@ -7,10 +7,53 @@ strict response length limits and tailored response constraints.
 from enum import Enum
 from typing import Dict, Any, Tuple
 import re
+from datetime import datetime, timezone, timedelta
 from loguru import logger
 
 
+def get_current_time_period() -> str:
+    """
+    Returns the time period in Indonesian:
+    - 'pagi' (04:00 - 10:59)
+    - 'siang' (11:00 - 14:59)
+    - 'sore' (15:00 - 18:29)
+    - 'malam' (18:30 - 03:59)
+    Uses WIB (UTC+7) or local system time.
+    """
+    try:
+        tz_wib = timezone(timedelta(hours=7))
+        now = datetime.now(tz_wib)
+    except Exception:
+        now = datetime.now()
+
+    hour = now.hour
+    minute = now.minute
+    total_minutes = hour * 60 + minute
+
+    if 4 * 60 <= total_minutes < 11 * 60:
+        return "pagi"
+    elif 11 * 60 <= total_minutes < 15 * 60:
+        return "siang"
+    elif 15 * 60 <= total_minutes < 18 * 60 + 30:
+        return "sore"
+    else:
+        return "malam"
+
+
+def get_time_greeting_response(query: str = "") -> str:
+    """
+    Generates a concise, polite, and objective greeting response for Doctors,
+    adjusted to the current time of day.
+    """
+    period = get_current_time_period()
+    time_greeting = f"Selamat {period}"
+
+    return f"Halo Dok! {time_greeting}. Saya ERHA Medical Assistant, siap membantu Dokter."
+
+
 class QueryIntent(str, Enum):
+    GREETING = "GREETING"
+    CLOSING = "CLOSING"
     PRODUCT_NAME = "PRODUCT_NAME"
     PRODUCT_FUNCTION = "PRODUCT_FUNCTION"
     INGREDIENTS = "INGREDIENTS"
@@ -25,6 +68,28 @@ class QueryIntent(str, Enum):
 
 
 _INTENT_PATTERNS = [
+    # 0. GREETING / SAPAAN
+    (
+        QueryIntent.GREETING,
+        [
+            r"^\s*(halo|hallo|hai|hi|hey|hello)(\s+dok|\s+dokter)?\s*[\.\,\!\?]*\s*$",
+            r"^\s*(selamat\s+(pagi|siang|sore|malam)|(pagi|siang|sore|malam))(\s+dok|\s+dokter)?\s*[\.\,\!\?]*\s*$",
+            r"^\s*(halo|hallo|hai|hi|hey|hello)\s*[\.\,\!\?]*\s*(selamat\s+(pagi|siang|sore|malam)|(pagi|siang|sore|malam))(\s+dok|\s+dokter)?\s*[\.\,\!\?]*\s*$",
+            r"^\s*(selamat\s+(pagi|siang|sore|malam)|(pagi|siang|sore|malam))\s*[\.\,\!\?]*\s*(halo|hallo|hai|hi|hey|hello)(\s+dok|\s+dokter)?\s*[\.\,\!\?]*\s*$",
+            r"^\s*assalamu['a]?laikum(\s+wr\s+wb|\s+warahmatullahi\s+wabarakatuh)?\s*[\.\,\!\?]*\s*$",
+            r"^\s*(tes|test|ping)\s*[\.\,\!\?]*\s*$",
+            r"^\s*(halo|hallo|hai|hi|hello)\s+(ada\s+orang|apakah\s+ada\s+orang|bisa\s+bantu|apa\s+kabar)\s*[\.\,\!\?]*\s*$",
+            r"^\s*(halo|hallo|hai|hi|hello)\s+(admin|cs|asisten|bot|erha)\s*[\.\,\!\?]*\s*$",
+        ]
+    ),
+    # 0.1 CLOSING / TERIMA KASIH
+    (
+        QueryIntent.CLOSING,
+        [
+            r"^\s*(oke|ok)?\s*(kalo|kalau)?\s*(gitu|begitu)?\s*(terima\s*kasih|terimaksih|makasih|thanks|thank\s*you|trims)(\s+dok|\s+dokter)?\s*[\.\,\!\?]*\s*$",
+            r"^\s*(sama[- ]sama|siap|baik|mantap|sip)\s*(dok|dokter)?\s*[\.\,\!\?]*\s*$"
+        ]
+    ),
     # 1. PRICE
     (
         QueryIntent.PRICE,
@@ -124,74 +189,132 @@ class QueryIntentDetector:
             for pattern in patterns:
                 if re.search(pattern, query_clean, re.IGNORECASE):
                     rules = QueryIntentDetector._get_rules_for_intent(intent)
-                    logger.info(f"Query intent detected: '{intent.value}' (matched pattern: '{pattern}')")
+                    logger.debug(f"Query intent detected: '{intent.value}' (matched pattern: '{pattern}')")
                     return intent, rules
 
         # Default fallback: UNKNOWN
         rules = QueryIntentDetector._get_rules_for_intent(QueryIntent.UNKNOWN)
-        logger.info(f"Query intent detected: '{QueryIntent.UNKNOWN.value}' (default)")
+        logger.debug(f"Query intent detected: '{QueryIntent.UNKNOWN.value}' (default)")
         return QueryIntent.UNKNOWN, rules
+
+    @staticmethod
+    def get_recommended_top_k(query: str, intent: QueryIntent, requested_top_k: int = 5) -> int:
+        """
+        Calculates dynamic top_k:
+        - Simple factual queries (price, single product name, availability) -> 3-5
+        - Multi-condition, protocol, comparison, or routine queries -> 8-10
+        """
+        query_lower = query.lower()
+        complex_recommendation_keywords = [
+            "rangkaian", "rutinitas", "perbandingan", "urutan", "pagi", "malam", 
+            "perbedaan", "membandingkan", "kombinasi", "langkah", "semua produk", 
+            "persentase", "rekomendasi", "resep", "tindakan", "treatment", "active acne", 
+            "post acne", "post-acne", "papules", "jerawat aktif", "bekas jerawat", 
+            "protokol", "program", "treatment + produk", "treatment dan produk"
+        ]
+
+        is_complex = any(kw in query_lower for kw in complex_recommendation_keywords) or intent in (
+            QueryIntent.COMPARISON, QueryIntent.HOW_TO_USE, QueryIntent.SUITABLE_FOR
+        )
+
+        if is_complex:
+            return max(requested_top_k, 9)
+        elif intent == QueryIntent.GREETING:
+            return 1
+        elif intent in (QueryIntent.PRODUCT_NAME, QueryIntent.PRICE, QueryIntent.AVAILABILITY, QueryIntent.INGREDIENTS):
+            return min(requested_top_k, 4) if requested_top_k > 4 else requested_top_k
+        return requested_top_k
+
+    @staticmethod
+    def should_use_agent(query: str, intent: QueryIntent) -> bool:
+        """
+        Evaluates whether a query requires deep ReAct Agent multi-step tool reasoning:
+        - Simple factual queries (greeting, closing, single product usage, ingredients, price) -> False (Use fast GenerationPipeline)
+        - Complex multi-condition, comparison, multi-topic, or deep reasoning queries -> True (Use MedicalAgent)
+        """
+        if intent in (QueryIntent.GREETING, QueryIntent.CLOSING, QueryIntent.PRICE, QueryIntent.PRODUCT_NAME):
+            return False
+
+        query_lower = query.lower()
+        complex_agent_indicators = [
+            "bandingkan", "perbandingan", "bedanya", "vs", "kombinasi", 
+            "kontraindikasi dan", "aman untuk", "sekaligus", "pisahkan",
+            "buat analisis klinis", "urutkan", "tindakan dan produk",
+            "treatment + produk", "treatment dan produk", "fase active", "fase post"
+        ]
+
+        words = query_lower.split()
+        is_long_multi_topic = len(words) >= 12 and any(kw in query_lower for kw in ["dan", "serta", "tetapi", "namun", "untuk"])
+        is_explicit_complex = any(ind in query_lower for ind in complex_agent_indicators)
+
+        return is_explicit_complex or is_long_multi_topic
 
     @staticmethod
     def _get_rules_for_intent(intent: QueryIntent) -> Dict[str, Any]:
         """Returns length constraints and specific rules per intent."""
-        if intent == QueryIntent.PRODUCT_NAME:
+        if intent == QueryIntent.GREETING:
+            return {
+                "max_sentences": 2,
+                "length_instruction": "Acknowledge the greeting warmly and politely in Indonesian, adjusted to the current time of day (Selamat pagi/siang/sore/malam). Offer assistance with ERHA products or treatments.",
+                "missing_fallback": get_time_greeting_response()
+            }
+        elif intent == QueryIntent.PRODUCT_NAME:
             return {
                 "max_sentences": 1,
                 "length_instruction": "Return ONLY the exact product name in 1 sentence. Do not add unsolicited product recommendations, clinical regimens, or usage instructions.",
-                "missing_fallback": "Informasi nama produk tersebut tidak tersedia dalam knowledge base."
+                "missing_fallback": "Untuk saat ini informasi tersebut belum tersedia."
             }
         elif intent == QueryIntent.INGREDIENTS:
             return {
                 "max_sentences": 2,
                 "length_instruction": "Return ONLY the relevant active ingredients in 1-2 sentences or a concise list. Do not add unsolicited product recommendations or clinical advice.",
-                "missing_fallback": "Informasi ingredients produk tersebut tidak tersedia dalam knowledge base."
+                "missing_fallback": "Untuk saat ini informasi tersebut belum tersedia."
             }
         elif intent == QueryIntent.PRODUCT_FUNCTION or intent == QueryIntent.BENEFITS:
             return {
                 "max_sentences": 3,
                 "length_instruction": "Return ONLY the primary product function/benefits in maximum 2-3 sentences. Do not add unsolicited clinical regimens, extra product recommendations, or disclaimers.",
-                "missing_fallback": "Informasi fungsi produk tersebut tidak tersedia dalam knowledge base."
+                "missing_fallback": "Untuk saat ini informasi tersebut belum tersedia."
             }
         elif intent == QueryIntent.HOW_TO_USE:
             return {
                 "max_sentences": 4,
                 "length_instruction": "Return ONLY the usage instructions in maximum 2-4 sentences. Do not add extra product recommendations or clinical disclaimers.",
-                "missing_fallback": "Informasi cara penggunaan produk tersebut tidak tersedia dalam knowledge base."
+                "missing_fallback": "Untuk saat ini informasi tersebut belum tersedia."
             }
         elif intent == QueryIntent.PRICE:
             return {
                 "max_sentences": 1,
                 "length_instruction": "Return ONLY the product price if found in context in 1 sentence.",
-                "missing_fallback": "Informasi harga produk tersebut tidak tersedia dalam knowledge base."
+                "missing_fallback": "Untuk saat ini informasi tersebut belum tersedia."
             }
         elif intent == QueryIntent.WARNING:
             return {
                 "max_sentences": 3,
                 "length_instruction": "Return ONLY safety warnings, contraindications, or pregnancy notes mentioned in context in maximum 2-3 sentences. Do not provide medical advice outside retrieved context.",
-                "missing_fallback": "Informasi mengenai keamanan/kontraindikasi penggunaan produk tersebut tidak tersedia dalam knowledge base."
+                "missing_fallback": "Untuk saat ini informasi tersebut belum tersedia."
             }
         elif intent == QueryIntent.COMPARISON:
             return {
                 "max_sentences": 4,
                 "length_instruction": "Provide a concise comparison comparing ONLY the requested products using retrieved context. Do not mention any third product.",
-                "missing_fallback": "Informasi perbandingan produk tersebut tidak tersedia dalam knowledge base."
+                "missing_fallback": "Untuk saat ini informasi tersebut belum tersedia."
             }
         elif intent == QueryIntent.SUITABLE_FOR:
             return {
                 "max_sentences": 2,
                 "length_instruction": "Return ONLY the target skin type / indication in 1-2 sentences.",
-                "missing_fallback": "Informasi indikasi/kesesuaian jenis kulit produk tersebut tidak tersedia dalam knowledge base."
+                "missing_fallback": "Untuk saat ini informasi tersebut belum tersedia."
             }
         elif intent == QueryIntent.AVAILABILITY:
             return {
                 "max_sentences": 2,
                 "length_instruction": "Return ONLY product availability or branch availability mentioned in context.",
-                "missing_fallback": "Informasi ketersediaan produk tersebut tidak tersedia dalam knowledge base."
+                "missing_fallback": "Untuk saat ini informasi tersebut belum tersedia."
             }
         else:
             return {
                 "max_sentences": 3,
                 "length_instruction": "Answer the question concisely in maximum 2-3 sentences using ONLY the retrieved context. Do not over-explain or provide unsolicited recommendations.",
-                "missing_fallback": "Informasi yang diminta tidak tersedia dalam knowledge base."
+                "missing_fallback": "Untuk saat ini informasi tersebut belum tersedia."
             }

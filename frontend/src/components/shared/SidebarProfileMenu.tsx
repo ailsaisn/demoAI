@@ -6,15 +6,12 @@ import { SidebarMenu, SidebarMenuButton, SidebarMenuItem } from "@/components/ui
 import { useCurrentUser } from "@/hooks/use-current-user";
 import { RiLogoutBoxRLine, RiNotification3Line } from "@remixicon/react";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+
 import { Separator } from "../ui/separator";
 
 export function SidebarProfileMenu() {
 	const { mutate: logout, isPending: isLoggingOut } = useLogout();
 	const { data: user } = useCurrentUser();
-	const pathname = usePathname();
-
-	const isDoctor = pathname?.startsWith("/doctor");
 
 	const userName = user?.name || "User";
 	const userRole = user?.roles?.[0]?.name || "User";
@@ -28,21 +25,17 @@ export function SidebarProfileMenu() {
 
 	return (
 		<SidebarMenu>
-			{!isDoctor && (
-				<>
-					<SidebarMenuItem>
-						<SidebarMenuButton
-							render={<Link href="/dashboard/notifications" />}
-							className="text-zinc-500 hover:text-blue-600 hover:bg-blue-50"
-							tooltip="Notifications"
-						>
-							<RiNotification3Line className="size-4" />
-							<span className="font-medium group-data-[collapsible=icon]:hidden">Notifications</span>
-						</SidebarMenuButton>
-					</SidebarMenuItem>
-					<Separator className="my-3" />
-				</>
-			)}
+			<SidebarMenuItem>
+				<SidebarMenuButton
+					render={<Link href="/dashboard/notifications" />}
+					className="text-zinc-500 hover:text-blue-600 hover:bg-blue-50"
+					tooltip="Notifications"
+				>
+					<RiNotification3Line className="size-4" />
+					<span className="font-medium group-data-[collapsible=icon]:hidden">Notifications</span>
+				</SidebarMenuButton>
+			</SidebarMenuItem>
+			<Separator className="my-3" />
 			<SidebarMenuItem className="flex items-center flex-row group-data-[collapsible=icon]:justify-center">
 				<SidebarMenuButton
 					size="lg"

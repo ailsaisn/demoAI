@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import "./FloatingChatbot.css";
 
 /**
@@ -22,12 +22,84 @@ export default function FloatingChatbot({
 	const [messages, setMessages] = useState([]);
 	const [input, setInput] = useState("");
 	const [sessionId, setSessionId] = useState(null);
+	const [sessionStatus, setSessionStatus] = useState("ACTIVE");
 	const [isLoading, setIsLoading] = useState(false);
+
+	// Feedback states
+	const [rating, setRating] = useState(null);
+	const [feedbackText, setFeedbackText] = useState("");
+	const [dataNotFound, setDataNotFound] = useState(false);
+	const [feedbackSubmitted, setFeedbackSubmitted] = useState(false);
+	const [manualClose, setManualClose] = useState(false);
+
 	const chatEndRef = useRef(null);
 
 	useEffect(() => {
 		chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
 	}, [messages]);
+
+	const initChat = async () => {
+		try {
+			const res = await fetch(`${apiBaseUrl}/api/chats/`, {
+				method: "POST",
+				headers: {
+					"Content-Type": "application/json",
+					// Authentication Note for CIS Team:
+					// The token provided via props should be a valid RS256 JWT signed by the CIS system.
+					// The AI Backend will verify this token using the CIS public key (SSO).
+					Authorization: `Bearer ${token}`,
+				},
+				body: JSON.stringify({
+					cis_branch_id: branchId,
+				}),
+			});
+
+			if (!res.ok) {
+				const errData = await res.json().catch(() => ({}));
+				throw new Error(errData.detail || "Failed to initialize session");
+			}
+
+			const data = await res.json();
+			setSessionId(data.id);
+			setSessionStatus(data.status || "ACTIVE");
+
+			// Fetch existing messages if resuming an active session
+			const msgRes = await fetch(`${apiBaseUrl}/api/chats/${data.id}/messages`, {
+				headers: { Authorization: `Bearer ${token}` },
+				cache: "no-store"
+			});
+
+			if (msgRes.ok) {
+				const history = await msgRes.json();
+				if (history && history.length > 0) {
+					setMessages(
+						history.map((m) => ({
+							id: m.id,
+							role: m.role.toLowerCase(),
+							content: m.content,
+						})),
+					);
+				} else {
+					setMessages([
+						{
+							id: "init",
+							role: "assistant",
+							content: "Your artificial intelligence assistant is ready.",
+						},
+					]);
+				}
+			}
+		} catch (err) {
+			console.error("Failed to create/resume session:", err);
+			setMessages([
+				{
+					id: "init-error",
+					role: "assistant",
+					content: `Error initializing session: ${err.message}`,
+				},
+			]);
+		}
+	};
 
 	const toggleChat = async () => {
 		const nextState = !isOpen;
@@ -35,28 +107,19 @@ export default function FloatingChatbot({
 
 		// Step 1: If opening for the first time, create a new chat session via the API
 		if (nextState && !sessionId && token) {
-			try {
-				const res = await fetch(`${apiBaseUrl}/api/chats/`, {
-					method: "POST",
-					headers: {
-						"Content-Type": "application/json",
-						Authorization: `Bearer ${token}`, // Use the seamless SSO token
-					},
-					body: JSON.stringify({
-						branch_id: branchId,
-					}),
-				});
-				if (res.ok) {
-					const data = await res.json();
-					setSessionId(data.id);
-					setMessages([
-						{ id: "init", role: "assistant", content: "Your artificial intelligence assistant" },
-					]);
-				}
-			} catch (err) {
-				console.error("Failed to create session:", err);
-			}
+			await initChat();
 		}
+	};
+
+	const startNewChat = async () => {
+		setRating(null);
+		setFeedbackText("");
+		setDataNotFound(false);
+		setFeedbackSubmitted(false);
+		setManualClose(false);
+		setSessionId(null);
+		setMessages([]);
+		await initChat();
 	};
 
 	const handleSend = async (e) => {
@@ -69,39 +132,145 @@ export default function FloatingChatbot({
 		setIsLoading(true);
 
 		try {
-			// Step 2: Send the user's message using FormData (supports file attachments if needed)
-			const formData = new FormData();
-			formData.append("role", "user");
-			formData.append("content", userMessage.content);
-
-			const res = await fetch(`${apiBaseUrl}/api/chats/${sessionId}/messages`, {
-				method: "POST",
-				headers: {
-					Authorization: `Bearer ${token}`,
-				},
-				body: formData,
+			const payload = JSON.stringify({
+				role: "user",
+				content: userMessage.content
 			});
 
-			if (res.ok) {
-				// Step 3: Poll the API to retrieve the AI's response
-				// Note: In production, consider implementing WebSockets or Server-Sent Events (SSE)
-				// for real-time updates instead of polling, if supported by the backend.
-				setTimeout(async () => {
-					const histRes = await fetch(`${apiBaseUrl}/api/chats/${sessionId}/messages`, {
-						headers: { Authorization: `Bearer ${token}` },
-					});
-					if (histRes.ok) {
-						const histData = await histRes.json();
-						setMessages(histData);
+			const res = await fetch(`${apiBaseUrl}/api/chats/${sessionId}/messages/stream`, {
+				method: "POST",
+				headers: {
+					"Content-Type": "application/json",
+					Authorization: `Bearer ${token}`,
+				},
+				body: payload,
+			});
+
+			if (!res.ok) {
+				const errorData = await res.json().catch(() => ({}));
+				throw new Error(errorData.detail || "Failed to send message");
+			}
+
+			if (!res.body) throw new Error("ReadableStream not supported");
+
+			const reader = res.body.getReader();
+			const decoder = new TextDecoder("utf-8");
+			let assistantMessageId = "ai-" + Date.now().toString();
+
+			// Create a placeholder for the assistant message
+			setMessages((prev) => [...prev, { id: assistantMessageId, role: "assistant", content: "" }]);
+			setIsLoading(false); // Remove loading indicator once stream starts
+
+			let buffer = "";
+
+			while (true) {
+				const { value, done } = await reader.read();
+				if (done) break;
+
+				buffer += decoder.decode(value, { stream: true });
+				const events = buffer.split("\n\n");
+
+				// Keep the last segment in the buffer because it might be incomplete
+				buffer = events.pop() || "";
+
+				for (let event of events) {
+					event = event.trim();
+					if (!event) continue;
+
+					if (event.startsWith("data: ")) {
+						const jsonStr = event.substring(6).trim();
+						if (!jsonStr) continue;
+
+						try {
+							const parsedData = JSON.parse(jsonStr);
+
+							if (parsedData.type === "token") {
+								setMessages((prev) =>
+									prev.map((msg) =>
+										msg.id === assistantMessageId
+											? { ...msg, content: msg.content + parsedData.content }
+											: msg,
+									),
+								);
+							} else if (parsedData.type === "done") {
+								// The stream has ended
+								break;
+							} else if (parsedData.error) {
+								console.error("AI Assistant Error:", parsedData.error);
+								setMessages((prev) =>
+									prev.map((msg) =>
+										msg.id === assistantMessageId
+											? { ...msg, content: msg.content + "\n\n**Error:** " + parsedData.error }
+											: msg,
+									),
+								);
+							}
+							// 'context' type could be handled here if we want to show sources
+						} catch (err) {
+							console.error("Failed to parse SSE JSON chunk", err, "Chunk:", jsonStr);
+						}
 					}
-					setIsLoading(false);
-				}, 3000);
-			} else {
-				setIsLoading(false);
+				}
 			}
 		} catch (err) {
-			console.error(err);
+			console.error("Message send error:", err);
 			setIsLoading(false);
+			
+			if (err.message.toLowerCase().includes("closed") || err.message.toLowerCase().includes("expired") || err.message.includes("403")) {
+				setSessionStatus("CLOSED");
+				setManualClose(false); // Indicates it was a timeout, not a manual click
+			} else {
+				setMessages((prev) => [
+					...prev,
+					{
+						id: "error-" + Date.now(),
+						role: "assistant",
+						content: `An error occurred: ${err.message}`,
+					},
+				]);
+			}
+		}
+	};
+
+	const endChat = async () => {
+		if (!sessionId || !token) return;
+		try {
+			setManualClose(true);
+			const res = await fetch(`${apiBaseUrl}/api/chats/${sessionId}`, {
+				method: "PUT",
+				headers: {
+					"Content-Type": "application/json",
+					Authorization: `Bearer ${token}`,
+				},
+				body: JSON.stringify({ status: "CLOSED" }),
+			});
+			if (res.ok) {
+				setSessionStatus("CLOSED");
+			}
+		} catch (err) {
+			console.error("Failed to end chat:", err);
+		}
+	};
+
+	const submitFeedback = async (e) => {
+		if (e) e.preventDefault();
+		if (!sessionId || !token || !rating) return;
+		try {
+			await fetch(`${apiBaseUrl}/api/chats/${sessionId}`, {
+				method: "PUT",
+				headers: {
+					"Content-Type": "application/json",
+					Authorization: `Bearer ${token}`,
+				},
+				body: JSON.stringify({
+					rating: rating,
+					feedback: feedbackText,
+					has_data_issue: dataNotFound,
+				}),
+			});
+			setFeedbackSubmitted(true);
+		} catch (err) {
+			console.error("Failed to submit feedback:", err);
 		}
 	};
 
@@ -125,23 +294,17 @@ export default function FloatingChatbot({
 							</svg>
 						</div>
 						<div className="fc-header-title">
-							<h3>Erha AI</h3>
-							<span>Assisting {doctorName}</span>
+							<h3>Erha AI Assistant</h3>
+							<span>{doctorName}</span>
 						</div>
 					</div>
 					<div className="fc-header-actions">
-						<button className="fc-action-btn">
-							<svg
-								xmlns="http://www.w3.org/2000/svg"
-								viewBox="0 0 24 24"
-								fill="currentColor"
-								width="20"
-								height="20"
-							>
-								<path d="M16.004 9.414l-8.607 8.607-1.414-1.414L14.59 8H7.004V6h11v11h-2V9.414z" />
-							</svg>
-						</button>
-						<button onClick={() => setIsOpen(false)} className="fc-action-btn">
+						{sessionStatus === "ACTIVE" && (
+							<button onClick={endChat} className="fc-action-btn fc-end-btn" title="End Chat">
+								End
+							</button>
+						)}
+						<button onClick={() => setIsOpen(false)} className="fc-action-btn" title="Minimize">
 							<svg
 								xmlns="http://www.w3.org/2000/svg"
 								viewBox="0 0 24 24"
@@ -155,53 +318,172 @@ export default function FloatingChatbot({
 					</div>
 				</div>
 
-				{/* Content Area */}
-				<div className="fc-body">
-					{messages.map((msg) => (
-						<div
-							key={msg.id}
-							className={`fc-message-row ${msg.role === "user" ? "fc-row-user" : "fc-row-assistant"}`}
-						>
-							<div className={`fc-bubble ${msg.role === "user" ? "fc-user" : "fc-assistant"}`}>
-								{msg.content}
-							</div>
-						</div>
-					))}
-					{isLoading && (
-						<div className="fc-message-row fc-row-assistant">
-							<div className="fc-bubble fc-assistant fc-loading">
-								<span className="fc-dot"></span>
-								<span className="fc-dot"></span>
-								<span className="fc-dot"></span>
-							</div>
-						</div>
-					)}
-					<div ref={chatEndRef} />
-				</div>
-
-				{/* Input Area */}
-				<div className="fc-footer">
-					<form onSubmit={handleSend} className="fc-input-wrapper">
-						<input
-							type="text"
-							value={input}
-							onChange={(e) => setInput(e.target.value)}
-							placeholder="Describe what your concern is..."
-							disabled={isLoading || !sessionId}
-						/>
-						<button type="submit" disabled={isLoading || !input.trim() || !sessionId}>
+				{sessionStatus === "CLOSED" ? (
+					<div className="fc-end-session-screen">
+						<h2 className="fc-end-title">End of Session</h2>
+						<div className="fc-end-icon">
 							<svg
 								xmlns="http://www.w3.org/2000/svg"
 								viewBox="0 0 24 24"
-								fill="currentColor"
-								width="20"
-								height="20"
+								fill="none"
+								stroke="currentColor"
+								strokeWidth="2"
+								strokeLinecap="round"
+								strokeLinejoin="round"
 							>
-								<path d="M1.946 9.315c-.522-.174-.527-.455.01-.634l19.087-6.362c.529-.176.832.12.684.638l-5.454 19.086c-.15.529-.455.547-.679.045L12 14l6-8-8 6-8.054-2.685z" />
+								<circle cx="12" cy="12" r="10"></circle>
+								<polyline points="12 6 12 12 16 14"></polyline>
 							</svg>
-						</button>
-					</form>
-				</div>
+						</div>
+						<p className="fc-end-desc">
+							{manualClose
+								? "This session has ended, please give a feedback so we can improve, and you will get a summary."
+								: "You have reached the 5-minute limit for this session, please give this session a feedback so we can improve, and you will get a summary."}
+						</p>
+
+						{feedbackSubmitted ? (
+							<div className="fc-feedback-thanks">
+								<p>Thank you for your feedback!</p>
+								<button 
+									onClick={startNewChat}
+									className="fc-submit-feedback-btn"
+									style={{marginTop: '1rem'}}
+								>
+									Start New Chat
+								</button>
+							</div>
+						) : (
+							<div className="fc-feedback-card">
+								<div className="fc-form-group">
+									<label>
+										Rate<span className="text-red-500">*</span>
+									</label>
+									<div className="fc-rating-buttons">
+										<button
+											type="button"
+											className={`fc-rate-btn ${rating === "GOOD" ? "active" : ""}`}
+											onClick={() => setRating("GOOD")}
+										>
+											<svg
+												xmlns="http://www.w3.org/2000/svg"
+												viewBox="0 0 24 24"
+												fill="none"
+												stroke="currentColor"
+												strokeWidth="2"
+												strokeLinecap="round"
+												strokeLinejoin="round"
+												className="size-4"
+											>
+												<path d="M7 10v12" />
+												<path d="M15 5.88 14 10h5.83a2 2 0 0 1 1.92 2.56l-2.33 8A2 2 0 0 1 17.5 22H4a2 2 0 0 1-2-2v-8a2 2 0 0 1 2-2h2.76a2 2 0 0 0 1.79-1.11L12 2h0a3.13 3.13 0 0 1 3 3.88Z" />
+											</svg>
+											Good
+										</button>
+										<button
+											type="button"
+											className={`fc-rate-btn ${rating === "BAD" ? "active" : ""}`}
+											onClick={() => setRating("BAD")}
+										>
+											<svg
+												xmlns="http://www.w3.org/2000/svg"
+												viewBox="0 0 24 24"
+												fill="none"
+												stroke="currentColor"
+												strokeWidth="2"
+												strokeLinecap="round"
+												strokeLinejoin="round"
+												className="size-4"
+											>
+												<path d="M17 14V2" />
+												<path d="M9 18.12 10 14H4.17a2 2 0 0 1-1.92-2.56l2.33-8A2 2 0 0 1 6.5 2H20a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-2.76a2 2 0 0 0-1.79 1.11L12 22h0a3.13 3.13 0 0 1-3-3.88Z" />
+											</svg>
+											Bad
+										</button>
+									</div>
+								</div>
+
+								<div className="fc-form-group">
+									<label>
+										Feedback <span className="fc-optional">(opsional)</span>
+									</label>
+									<textarea
+										placeholder="write your feedback here..."
+										value={feedbackText}
+										onChange={(e) => setFeedbackText(e.target.value)}
+									></textarea>
+								</div>
+
+								<label className="fc-checkbox-label">
+									<input
+										type="checkbox"
+										checked={dataNotFound}
+										onChange={(e) => setDataNotFound(e.target.checked)}
+									/>
+									I found a "Data Not Found" issue in this chat.
+								</label>
+
+								<button
+									type="button"
+									className="fc-submit-feedback-btn"
+									onClick={submitFeedback}
+									disabled={!rating}
+								>
+									Send Feedback
+								</button>
+							</div>
+						)}
+					</div>
+				) : (
+					<>
+						{/* Chat Area */}
+						<div className="fc-body">
+							{messages.map((msg, index) => (
+								<div
+									key={msg.id || index}
+									className={`fc-message-row ${msg.role === "user" ? "fc-row-user" : "fc-row-assistant"}`}
+								>
+									<div className={`fc-bubble ${msg.role === "user" ? "fc-user" : "fc-assistant"}`}>
+										{msg.content}
+									</div>
+								</div>
+							))}
+							{isLoading && (
+								<div className="fc-message-row fc-row-assistant">
+									<div className="fc-bubble fc-assistant fc-loading">
+										<div className="fc-dot"></div>
+										<div className="fc-dot"></div>
+										<div className="fc-dot"></div>
+									</div>
+								</div>
+							)}
+							<div ref={chatEndRef} />
+						</div>
+
+						{/* Input Area */}
+						<div className="fc-footer">
+							<form onSubmit={handleSend} className="fc-input-wrapper">
+								<input
+									type="text"
+									value={input}
+									onChange={(e) => setInput(e.target.value)}
+									placeholder="Describe what your concern is..."
+									disabled={isLoading || !sessionId}
+								/>
+								<button type="submit" disabled={isLoading || !input.trim() || !sessionId}>
+									<svg
+										xmlns="http://www.w3.org/2000/svg"
+										viewBox="0 0 24 24"
+										fill="currentColor"
+										width="20"
+										height="20"
+									>
+										<path d="M1.946 9.315c-.522-.174-.527-.455.01-.634l19.087-6.362c.529-.176.832.12.684.638l-5.454 19.086c-.15.529-.455.547-.679.045L12 14l6-8-8 6-8.054-2.685z" />
+									</svg>
+								</button>
+							</form>
+						</div>
+					</>
+				)}
 			</div>
 
 			{/* Minimized Button */}

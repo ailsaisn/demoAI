@@ -1,6 +1,8 @@
-from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks
+from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks, Request
+from fastapi.responses import StreamingResponse
+from fastapi.sse import EventSourceResponse
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func
+from sqlalchemy import select, func, or_, update
 from typing import List, Optional
 import uuid
 try:
@@ -12,16 +14,65 @@ from app.core.database import AsyncSessionLocal
 from app.models.branch import Branch
 
 from app.core.database import get_db
-from app.api.dependencies import get_current_user
-from app.models.user import User, UserType
-from app.models.chat import ChatSession, ChatMessage
+from app.api.dependencies import get_current_user, get_current_user_from_proxy, get_current_user_flexible
+from app.models.user import User, UserType, UserTokenUsage
+from app.models.chat import ChatSession, ChatMessage, ChatStatus
 from app.schemas.chat import (
     ChatSessionCreate, ChatSessionUpdate, ChatSessionResponse,
     ChatHistoryResponse, ChatMessageCreate, ChatMessageResponse
 )
 from app.models.config import AppConfig
+from datetime import datetime, timezone, timedelta
 
 router = APIRouter(tags=["Chats"])
+
+async def summarize_chat_session(session_id: uuid.UUID):
+    """Background task to generate a summary for a closed chat session."""
+    try:
+        from app.rag.services.factory import AdapterFactory
+    except ImportError as e:
+        logger.error(f"Cannot summarize, AI dependencies missing: {e}")
+        return
+
+    async with AsyncSessionLocal() as db:
+        try:
+            # Check if session exists and has no summary
+            stmt_session = select(ChatSession).where(ChatSession.id == session_id)
+            result_session = await db.execute(stmt_session)
+            chat_session = result_session.scalar_one_or_none()
+            
+            if not chat_session or chat_session.summary or chat_session.status != ChatStatus.CLOSED:
+                return
+
+            # Fetch messages
+            stmt_msg = select(ChatMessage).where(ChatMessage.session_id == session_id).order_by(ChatMessage.created_at.asc())
+            result_msg = await db.execute(stmt_msg)
+            messages = result_msg.scalars().all()
+            
+            if not messages:
+                return
+                
+            transcript = ""
+            for msg in messages:
+                role = "Doctor" if msg.role.value == "USER" else "Assistant"
+                transcript += f"{role}: {msg.content}\n\n"
+                
+            prompt = (
+                "You are an AI summarizing a medical support chat. "
+                "Provide a brief, 1-2 sentence summary of the main topic and resolution of the following conversation.\n\n"
+                f"Transcript:\n{transcript}\n\nSummary:"
+            )
+            
+            llm_adapter = await AdapterFactory.get_dynamic_llm(db)
+            summary = llm_adapter.generate(prompt)
+            
+            chat_session.summary = summary.strip()
+            db.add(chat_session)
+            await db.commit()
+            logger.info(f"Successfully generated summary for session {session_id}")
+            
+        except Exception as e:
+            logger.error(f"Failed to summarize chat session {session_id}: {e}")
 
 async def process_ai_response(session_id: uuid.UUID, user_query: str):
     """
@@ -100,6 +151,8 @@ async def _hydrate_chat_session(session: ChatSession, db: AsyncSession) -> dict:
         "summary": session.summary,
         "rating": session.rating,
         "feedback": session.feedback,
+        "has_data_issue": session.has_data_issue,
+        "is_feedback_read": session.is_feedback_read,
         "created_at": session.created_at,
         "updated_at": session.updated_at,
         "query": "",
@@ -130,28 +183,169 @@ async def _hydrate_chat_session(session: ChatSession, db: AsyncSession) -> dict:
     
     return session_dict
 
-@router.get("/", response_model=List[ChatHistoryResponse])
-async def list_chat_sessions(
+@router.get("/feedback", response_model=List[ChatHistoryResponse])
+async def list_chat_feedbacks(
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user_flexible)
 ):
-    stmt = select(ChatSession)
+    # Enforce access - usually only staff/admin should see this
     if not await has_chats_read_access(current_user, db):
-        stmt = stmt.where(ChatSession.user_id == current_user.id)
+        raise HTTPException(status_code=403, detail="Not authorized to view feedbacks")
+        
+    stmt = select(ChatSession).where(
+        or_(
+            ChatSession.feedback.is_not(None),
+            ChatSession.has_data_issue == True
+        )
+    ).order_by(ChatSession.updated_at.desc())
+    
     result = await db.execute(stmt)
     sessions = result.scalars().all()
     
     return [await _hydrate_chat_session(s, db) for s in sessions]
 
+from pydantic import BaseModel
+class MarkFeedbackReadRequest(BaseModel):
+    session_ids: List[uuid.UUID]
+
+@router.put("/feedback/read", status_code=status.HTTP_200_OK)
+async def mark_feedback_read(
+    req: MarkFeedbackReadRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user_flexible)
+):
+    if not await has_chats_read_access(current_user, db):
+        raise HTTPException(status_code=403, detail="Not authorized")
+        
+    if not req.session_ids:
+        return {"status": "ok", "marked": 0}
+        
+    stmt = (
+        update(ChatSession)
+        .where(ChatSession.id.in_(req.session_ids))
+        .values(is_feedback_read=True)
+    )
+    result = await db.execute(stmt)
+    await db.commit()
+    return {"status": "ok", "marked": result.rowcount}
+
+@router.get("/", response_model=List[ChatHistoryResponse])
+async def list_chat_sessions(
+    search: Optional[str] = None,
+    doctor_id: Optional[uuid.UUID] = None,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user_flexible)
+):
+    stmt = select(ChatSession).order_by(ChatSession.updated_at.desc())
+    if not await has_chats_read_access(current_user, db):
+        stmt = stmt.where(ChatSession.user_id == current_user.id)
+    elif doctor_id:
+        stmt = stmt.where(ChatSession.user_id == doctor_id)
+
+    result = await db.execute(stmt)
+    sessions = result.scalars().all()
+
+    hydrated = [await _hydrate_chat_session(s, db) for s in sessions]
+
+    if search:
+        s_clean = search.lower().strip()
+        hydrated = [
+            h for h in hydrated
+            if s_clean in (h.get("query") or "").lower()
+            or s_clean in (h.get("summary") or "").lower()
+            or s_clean in (h.get("doctor") or "").lower()
+            or s_clean in (h.get("branch") or "").lower()
+        ]
+
+    return hydrated
+
 @router.post("/", response_model=ChatSessionResponse, status_code=status.HTTP_201_CREATED)
 async def create_chat_session(
     session_in: ChatSessionCreate,
+    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user_flexible)
 ):
+    branch_id = session_in.branch_id
+    
+    if session_in.branch_code:
+        stmt = select(Branch.id).where(
+            Branch.code == session_in.branch_code,
+            Branch.deleted_at.is_(None)
+        )
+        if current_user.ecosystem:
+            stmt = stmt.where(func.lower(Branch.ecosystem) == current_user.ecosystem.lower())
+        result = await db.execute(stmt)
+        resolved_id = result.scalar_one_or_none()
+        if not resolved_id:
+            raise HTTPException(
+                status_code=404, 
+                detail=f"Branch with code '{session_in.branch_code}' not found in ecosystem '{current_user.ecosystem or 'default'}'"
+            )
+        branch_id = resolved_id
+    elif session_in.cis_branch_id is not None:
+        try:
+            ext_id = int(session_in.cis_branch_id)
+        except (ValueError, TypeError):
+            raise HTTPException(status_code=400, detail="Invalid CIS branch ID format")
+        stmt = select(Branch.id).where(
+            Branch.external_id == ext_id,
+            Branch.deleted_at.is_(None)
+        )
+        if current_user.ecosystem:
+            stmt = stmt.where(func.lower(Branch.ecosystem) == current_user.ecosystem.lower())
+        result = await db.execute(stmt)
+        resolved_id = result.scalar_one_or_none()
+        if not resolved_id:
+            raise HTTPException(
+                status_code=404, 
+                detail=f"Branch with external CIS ID '{session_in.cis_branch_id}' not found in ecosystem '{current_user.ecosystem or 'default'}'"
+            )
+        branch_id = resolved_id
+        
+    if not branch_id:
+        raise HTTPException(status_code=400, detail="Either branch_code, cis_branch_id, or branch_id must be provided")
+
+    # Fetch configured time limit
+    stmt_config = select(AppConfig.value).where(AppConfig.key == "TIME_LIMIT_PER_SESSION")
+    result_config = await db.execute(stmt_config)
+    time_limit_str = result_config.scalar_one_or_none()
+    try:
+        time_limit_minutes = int(time_limit_str) if time_limit_str else 5
+    except ValueError:
+        time_limit_minutes = 5
+
+    # Look for existing active session
+    stmt_active = select(ChatSession).where(
+        ChatSession.user_id == current_user.id,
+        ChatSession.branch_id == branch_id,
+        ChatSession.status == ChatStatus.ACTIVE
+    ).order_by(ChatSession.updated_at.desc())
+    result_active = await db.execute(stmt_active)
+    active_sessions = result_active.scalars().all()
+
+    valid_session = None
+    now = datetime.now(timezone.utc)
+
+    for sess in active_sessions:
+        session_updated_at = sess.updated_at.replace(tzinfo=timezone.utc) if sess.updated_at.tzinfo is None else sess.updated_at
+        
+        # If we haven't found a valid session yet, and this one is not expired, keep it
+        if not valid_session and (now - session_updated_at <= timedelta(minutes=time_limit_minutes)):
+            valid_session = sess
+        else:
+            # Otherwise, close it (it's either expired, or a duplicate older active session)
+            sess.status = ChatStatus.CLOSED
+            db.add(sess)
+            background_tasks.add_task(summarize_chat_session, sess.id)
+
+    if valid_session:
+        await db.commit()
+        return valid_session
+
     session = ChatSession(
         user_id=current_user.id,
-        branch_id=session_in.branch_id
+        branch_id=branch_id
     )
     db.add(session)
     await db.commit()
@@ -162,8 +356,9 @@ async def create_chat_session(
 async def update_chat_session(
     session_id: uuid.UUID,
     session_in: ChatSessionUpdate,
+    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user_flexible)
 ):
     stmt = select(ChatSession).where(ChatSession.id == session_id)
     if not await has_chats_read_access(current_user, db):
@@ -176,18 +371,31 @@ async def update_chat_session(
         raise HTTPException(status_code=404, detail="Chat session not found")
         
     update_data = session_in.model_dump(exclude_unset=True)
+    status_changed_to_closed = False
+    
     for field, value in update_data.items():
+        if field == "status" and value == ChatStatus.CLOSED and session.status != ChatStatus.CLOSED:
+            status_changed_to_closed = True
         setattr(session, field, value)
         
     await db.commit()
     await db.refresh(session)
+    
+    if status_changed_to_closed:
+        background_tasks.add_task(summarize_chat_session, session.id)
+        
+    # Broadcast event if any feedback, rating, or issue is provided
+    if session_in.feedback or session_in.rating or session_in.has_data_issue:
+        from app.core.broadcaster import broadcaster
+        await broadcaster.publish("feedback_submitted")
+        
     return session
 
 @router.get("/{session_id}/messages", response_model=List[ChatMessageResponse])
 async def list_chat_messages(
     session_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user_flexible)
 ):
     # Verify access to session
     stmt_session = select(ChatSession).where(ChatSession.id == session_id)
@@ -217,15 +425,16 @@ ALLOWED_MIME_TYPES = {
     "image/png"
 }
 
-@router.post("/{session_id}/messages", response_model=ChatMessageResponse, status_code=status.HTTP_201_CREATED)
+@router.post("/{session_id}/messages", status_code=status.HTTP_201_CREATED)
 async def create_chat_message(
     session_id: uuid.UUID,
+    background_tasks: BackgroundTasks,
+    request: Request,
     role: str = Form(...),
     content: str = Form(...),
-    background_tasks: BackgroundTasks = None,
     files: Optional[List[UploadFile]] = File(None),
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user_flexible)
 ):
     # Verify access to session
     stmt_session = select(ChatSession).where(ChatSession.id == session_id)
@@ -233,8 +442,32 @@ async def create_chat_message(
         stmt_session = stmt_session.where(ChatSession.user_id == current_user.id)
     
     result_session = await db.execute(stmt_session)
-    if not result_session.scalar_one_or_none():
+    chat_session = result_session.scalar_one_or_none()
+    if not chat_session:
         raise HTTPException(status_code=404, detail="Chat session not found")
+        
+    if chat_session.status == ChatStatus.CLOSED:
+        raise HTTPException(status_code=403, detail="Chat session is closed")
+
+    # Enforce time limit
+    stmt_config = select(AppConfig.value).where(AppConfig.key == "TIME_LIMIT_PER_SESSION")
+    result_config = await db.execute(stmt_config)
+    time_limit_str = result_config.scalar_one_or_none()
+    time_limit_minutes = int(time_limit_str) if time_limit_str and time_limit_str.isdigit() else 5
+
+    now = datetime.now(timezone.utc)
+    session_updated_at = chat_session.updated_at.replace(tzinfo=timezone.utc) if chat_session.updated_at.tzinfo is None else chat_session.updated_at
+    
+    if now - session_updated_at > timedelta(minutes=time_limit_minutes):
+        chat_session.status = ChatStatus.CLOSED
+        db.add(chat_session)
+        await db.commit()
+        background_tasks.add_task(summarize_chat_session, chat_session.id)
+        raise HTTPException(status_code=403, detail="Session expired")
+
+    # Update session activity
+    chat_session.updated_at = now
+    db.add(chat_session)
         
     attachments = None
     if files:
@@ -244,10 +477,9 @@ async def create_chat_message(
                 raise HTTPException(status_code=400, detail=f"File type {file.content_type} not allowed for file {file.filename}")
             attachments[file.filename] = {"content_type": file.content_type, "status": "processed"}
 
-    # We just save the message. A Langchain service would normally process and reply here.
     message = ChatMessage(
         session_id=session_id,
-        role=role,
+        role=role.upper(),
         content=content,
         attachments=attachments
     )
@@ -255,7 +487,271 @@ async def create_chat_message(
     await db.commit()
     await db.refresh(message)
     
-    if role == "user" and background_tasks is not None:
-        background_tasks.add_task(process_ai_response, session_id, content)
+    if role != "user":
+        # If it's not a user message (e.g. system message), just return the saved message.
+        from fastapi.encoders import jsonable_encoder
+        from fastapi.responses import JSONResponse
+        return JSONResponse(status_code=status.HTTP_201_CREATED, content=jsonable_encoder(message))
+
+    # For user message, we stream the AI response back via SSE
+    async def sse_generator():
+        try:
+            from app.rag.services.factory import AdapterFactory
+            from app.rag.services.rag_retriever import HybridRetriever, BM25Index, Reranker
+            from app.rag.services.rag_generator import GenerationPipeline
+            from app.rag.config import settings as rag_settings
+        except ImportError as e:
+            logger.error(f"AI dependencies missing: {e}")
+            yield f"data: {json.dumps({'error': 'AI configuration error'})}\n\n"
+            return
+
+        async with AsyncSessionLocal() as session:
+            try:
+                vector_store = AdapterFactory.get_vector_store()
+                bm25_index = BM25Index()
+                try:
+                    bm25_index.load(rag_settings.bm25_index_path)
+                except Exception:
+                    pass
+                reranker = Reranker(model_name=rag_settings.reranker_model_name)
+                retriever = HybridRetriever(vector_store=vector_store, bm25_index=bm25_index, reranker=reranker)
+                llm_adapter = await AdapterFactory.get_dynamic_llm(session)
+                pipeline = GenerationPipeline(retriever=retriever, llm_adapter=llm_adapter)
+                
+                stmt_msg = select(ChatMessage).where(ChatMessage.session_id == session_id).order_by(ChatMessage.created_at.asc())
+                result_msg = await session.execute(stmt_msg)
+                messages = result_msg.scalars().all()
+                
+                history = [{"role": msg.role.value.lower(), "content": msg.content} for msg in messages if msg.role.value in ["USER", "ASSISTANT"]]
+                if history and history[-1]["role"] == "user":
+                    history.pop()
+
+                ai_response_text = ""
+                
+                # We consume the generator token by token
+                async for chunk in pipeline.generate_answer_stream(
+                    query=content,
+                    top_k=5,
+                    rerank=True,
+                    history=history
+                ):
+                    # check if the chunk is the initial JSON context string
+                    if chunk.startswith('{"type": "context"'):
+                        yield f"data: {chunk}\n\n"
+                    else:
+                        ai_response_text += chunk
+                        # Send text token
+                        payload = json.dumps({"type": "token", "content": chunk})
+                        yield f"data: {payload}\n\n"
+                
+                # Signal end of stream
+                yield f"data: {json.dumps({'type': 'done'})}\n\n"
+                
+                # Save the final AI message to the DB
+                ai_msg = ChatMessage(
+                    session_id=session_id,
+                    role="ASSISTANT",
+                    content=ai_response_text
+                )
+                session.add(ai_msg)
+                
+                # Update Token Usage
+                if current_user.token_limit is not None and current_user.token_limit > 0:
+                    estimated_tokens = int(len(ai_response_text) * 1.3)
+                    now_ym = datetime.now(timezone.utc).strftime("%Y-%m")
+                    
+                    stmt_usage = select(UserTokenUsage).where(
+                        UserTokenUsage.user_id == current_user.id,
+                        UserTokenUsage.year_month == now_ym
+                    )
+                    result_usage = await session.execute(stmt_usage)
+                    usage_record = result_usage.scalar_one_or_none()
+                    
+                    if usage_record:
+                        usage_record.tokens_used += estimated_tokens
+                    else:
+                        usage_record = UserTokenUsage(
+                            user_id=current_user.id,
+                            year_month=now_ym,
+                            tokens_used=estimated_tokens
+                        )
+                        session.add(usage_record)
+                
+                await session.commit()
+                
+            except Exception as e:
+                logger.error(f"Error streaming AI response: {e}")
+                fallback = "Maaf, terjadi kesalahan pada pemrosesan AI."
+                yield f"data: {json.dumps({'type': 'token', 'content': fallback})}\n\n"
+                yield f"data: {json.dumps({'type': 'done'})}\n\n"
+                
+                ai_msg = ChatMessage(session_id=session_id, role="ASSISTANT", content=fallback)
+                session.add(ai_msg)
+                await session.commit()
+                
+    return StreamingResponse(sse_generator(), media_type="text/event-stream")
+
+@router.post("/{session_id}/messages/stream")
+async def stream_chat_message(
+    session_id: uuid.UUID,
+    request: Request,
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user_flexible)
+):
+    import json
+    body_bytes = await request.body()
+    try:
+        data = json.loads(body_bytes)
+        role = data.get("role")
+        content = data.get("content")
+        files = None
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=422, detail="Invalid JSON body")
         
-    return message
+    if not role or not content:
+        raise HTTPException(status_code=422, detail="Missing role or content")
+    
+    role = role.lower()
+
+    # Verify access to session
+    stmt_session = select(ChatSession).where(ChatSession.id == session_id)
+    if not await has_chats_read_access(current_user, db):
+        stmt_session = stmt_session.where(ChatSession.user_id == current_user.id)
+    
+    result_session = await db.execute(stmt_session)
+    chat_session = result_session.scalar_one_or_none()
+    if not chat_session:
+        raise HTTPException(status_code=404, detail="Chat session not found")
+        
+    if chat_session.status == ChatStatus.CLOSED:
+        raise HTTPException(status_code=403, detail="Chat session is closed")
+
+    # Enforce time limit
+    stmt_config = select(AppConfig.value).where(AppConfig.key == "TIME_LIMIT_PER_SESSION")
+    result_config = await db.execute(stmt_config)
+    time_limit_str = result_config.scalar_one_or_none()
+    time_limit_minutes = int(time_limit_str) if time_limit_str and time_limit_str.isdigit() else 5
+
+    now = datetime.now(timezone.utc)
+    session_updated_at = chat_session.updated_at.replace(tzinfo=timezone.utc) if chat_session.updated_at.tzinfo is None else chat_session.updated_at
+    
+    if now - session_updated_at > timedelta(minutes=time_limit_minutes):
+        chat_session.status = ChatStatus.CLOSED
+        db.add(chat_session)
+        await db.commit()
+        background_tasks.add_task(summarize_chat_session, chat_session.id)
+        raise HTTPException(status_code=403, detail="Session expired")
+
+    # Update session activity
+    chat_session.updated_at = now
+    db.add(chat_session)
+        
+    attachments = None
+    if files:
+        attachments = {}
+        for file in files:
+            if file.content_type not in ALLOWED_MIME_TYPES:
+                raise HTTPException(status_code=400, detail=f"File type {file.content_type} not allowed for file {file.filename}")
+            attachments[file.filename] = {"content_type": file.content_type, "status": "processed"}
+
+    message = ChatMessage(
+        session_id=session_id,
+        role=role.upper(),
+        content=content,
+        attachments=attachments
+    )
+    db.add(message)
+    await db.commit()
+    await db.refresh(message)
+    
+    if role != "user":
+        from fastapi.encoders import jsonable_encoder
+        from fastapi.responses import JSONResponse
+        return JSONResponse(status_code=status.HTTP_201_CREATED, content=jsonable_encoder(message))
+
+    # Token pre-check
+    if current_user.token_limit is not None and current_user.token_limit > 0:
+        now_ym = datetime.now(timezone.utc).strftime("%Y-%m")
+        stmt_usage = select(UserTokenUsage).where(
+            UserTokenUsage.user_id == current_user.id,
+            UserTokenUsage.year_month == now_ym
+        )
+        result_usage = await db.execute(stmt_usage)
+        usage = result_usage.scalar_one_or_none()
+        
+        tokens_used = usage.tokens_used if usage else 0
+        if tokens_used >= current_user.token_limit:
+            raise HTTPException(status_code=403, detail="Token limit exceeded for this month")
+
+    async def sse_generator():
+        try:
+            from app.rag.services.factory import AdapterFactory
+            from app.rag.services.rag_retriever import HybridRetriever, BM25Index, Reranker
+            from app.rag.services.rag_generator import GenerationPipeline
+            from app.rag.config import settings as rag_settings
+        except ImportError as e:
+            logger.error(f"AI dependencies missing: {e}")
+            yield f"data: {json.dumps({'error': 'AI configuration error'})}\n\n"
+            return
+
+        async with AsyncSessionLocal() as session:
+            try:
+                vector_store = AdapterFactory.get_vector_store()
+                bm25_index = BM25Index()
+                try:
+                    bm25_index.load(rag_settings.bm25_index_path)
+                except Exception:
+                    pass
+                reranker = Reranker(model_name=rag_settings.reranker_model_name)
+                retriever = HybridRetriever(vector_store=vector_store, bm25_index=bm25_index, reranker=reranker)
+                llm_adapter = await AdapterFactory.get_dynamic_llm(session)
+                pipeline = GenerationPipeline(retriever=retriever, llm_adapter=llm_adapter)
+                
+                stmt_msg = select(ChatMessage).where(ChatMessage.session_id == session_id).order_by(ChatMessage.created_at.asc())
+                result_msg = await session.execute(stmt_msg)
+                messages = result_msg.scalars().all()
+                
+                history = [{"role": msg.role.value.lower(), "content": msg.content} for msg in messages if msg.role.value in ["USER", "ASSISTANT"]]
+                if history and history[-1]["role"] == "user":
+                    history.pop()
+
+                ai_response_text = ""
+                
+                async for chunk in pipeline.generate_answer_stream(
+                    query=content,
+                    top_k=5,
+                    rerank=True,
+                    history=history
+                ):
+                    if await request.is_disconnected():
+                        logger.info(f"Client disconnected from chat session {session_id}")
+                        break
+
+                    if chunk.startswith('{"type": "context"'):
+                        yield f"data: {chunk}\n\n"
+                    else:
+                        ai_response_text += chunk
+                        yield f"data: {json.dumps({'type': 'token', 'content': chunk})}\n\n"
+                
+                yield f"data: {json.dumps({'type': 'done'})}\n\n"
+                
+                ai_msg = ChatMessage(
+                    session_id=session_id,
+                    role="ASSISTANT",
+                    content=ai_response_text
+                )
+                session.add(ai_msg)
+                await session.commit()
+                
+            except Exception as e:
+                logger.error(f"Error streaming AI response: {e}")
+                fallback = "Maaf, terjadi kesalahan pada pemrosesan AI."
+                yield f"data: {json.dumps({'type': 'token', 'content': fallback})}\n\n"
+                yield f"data: {json.dumps({'type': 'done'})}\n\n"
+                
+                ai_msg = ChatMessage(session_id=session_id, role="ASSISTANT", content=fallback)
+                session.add(ai_msg)
+                await session.commit()
+                
+    return EventSourceResponse(sse_generator())

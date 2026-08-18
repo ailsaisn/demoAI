@@ -35,7 +35,6 @@ export function LoginForm({ className, ...props }: React.ComponentProps<"form">)
 			credentials.append("username", value.email);
 			credentials.append("password", value.password);
 
-			// Add a slight artificial delay for better UX
 			await new Promise((resolve) => setTimeout(resolve, 800));
 
 			login(credentials, {
@@ -43,10 +42,7 @@ export function LoginForm({ className, ...props }: React.ComponentProps<"form">)
 					const fromParam = searchParams.get("from");
 					let defaultTarget = "/login";
 
-					// Determine standard home
-					if (userProfile.type === "DOCTOR") {
-						defaultTarget = "/doctor";
-					} else if (userProfile.type === "STAFF") {
+					if (userProfile.type === "STAFF") {
 						defaultTarget = "/dashboard/knowledge";
 					}
 
@@ -55,14 +51,11 @@ export function LoginForm({ className, ...props }: React.ComponentProps<"form">)
 					if (fromParam && fromParam.startsWith("/")) {
 						if (fromParam.startsWith("/dashboard") && userProfile.type === "STAFF") {
 							target = fromParam;
-						} else if (fromParam.startsWith("/doctor") && userProfile.type === "DOCTOR") {
-							target = fromParam;
 						}
 					}
 
 					router.push(target);
 
-					// slight delay to show toast after page transition
 					setTimeout(() => {
 						toast.success(`Welcome, ${userProfile.name}!`);
 					}, 300);
@@ -74,6 +67,14 @@ export function LoginForm({ className, ...props }: React.ComponentProps<"form">)
 			});
 		},
 	});
+
+	const reason = searchParams.get("reason");
+	const reasonMessage =
+		reason === "idle"
+			? "You were logged out due to inactivity."
+			: reason === "session_expired"
+				? "Your session has expired. Please log in again."
+				: null;
 
 	return (
 		<form
@@ -92,6 +93,13 @@ export function LoginForm({ className, ...props }: React.ComponentProps<"form">)
 						Enter your email below to login to your account
 					</p>
 				</div>
+
+				{reasonMessage && !loginError && (
+					<div className="flex items-center gap-3 text-sm font-medium text-amber-700 bg-amber-50 dark:bg-amber-950/40 dark:text-amber-300 p-3 rounded-md mb-2 border border-amber-200 dark:border-amber-800">
+						<RiErrorWarningLine className="h-5 w-5 shrink-0 text-amber-600 dark:text-amber-400" />
+						<span className="leading-tight">{reasonMessage}</span>
+					</div>
+				)}
 
 				{loginError && (
 					<div className="flex items-center gap-3 text-sm font-medium text-destructive bg-destructive/10 p-3 rounded-md mb-2">

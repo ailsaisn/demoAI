@@ -214,22 +214,22 @@ python seed.py
 ## Document Ingestion & RAG Verification Workflow
 
 ```
-[ Upload PDF ] ──► [ POST /api/ai/ingest ] ──► [ Status: PROCESSING ]
+[ Upload PDF ] ──► [ POST /api/knowledge/upload ] ──► [ Status: PROCESSING ]
                                                        │
                                                        ▼
 [ Status: PENDING ] ◄── [ AI Executive Summary ] ◄── [ Parse & Vectorize ]
         │
         ▼
-[ Admin Review ] ──► [ Approve via /api/knowledge ] ──► [ Status: APPROVED ]
+[ Admin Review ] ──► [ POST /api/knowledge/{id}/approve ] ──► [ Status: APPROVED ]
                                                                │
                                                                ▼
                                                   [ Available in Chat Queries ]
 ```
 
-1. **Upload Document**: User or Admin posts document to `POST /api/ai/ingest` or via the Knowledge Admin UI (`/api/knowledge`).
+1. **Upload Document**: User or Admin posts document to `POST /api/knowledge/upload` via the Knowledge Admin UI.
 2. **Background Ingestion**: File is saved in `data/` directory. Background task parses contents using Docling, splits text into chunks, generates vector embeddings, and stores chunks in the `knowledge_chunk` table.
 3. **AI Summarization**: `generate_document_summary()` generates an executive summary and sets the document status to `KnowledgeStatus.PENDING`.
-4. **Admin Approval**: An admin reviews the document summary and approves it via `PATCH /api/knowledge/{id}`. Once set to `APPROVED`, the document chunks participate in vector search for user queries.
+4. **Admin Approval**: An admin reviews the document summary and approves it via `POST /api/knowledge/{id}/approve`. Once set to `APPROVED`, the document chunks participate in vector search for user queries.
 
 ---
 
@@ -307,8 +307,8 @@ docker compose -f docker-compose.prod.yaml up --build backend
 | :---------------------- | :---------------- | :------------------------------------------------------------------------------------------------ |
 | **Authentication**      | `/api/auth`       | `/login` (JWT token issue), `/me` (Current user profile).                                         |
 | **User Administration** | `/api/users`      | User CRUD operations, RBAC role assignment.                                                       |
-| **Knowledge Base**      | `/api/knowledge`  | Knowledge document list, approval workflow (`PENDING` -> `APPROVED`), delete documents.           |
-| **RAG AI Engine**       | `/api/ai`         | `/ingest` (Upload document), `/chat` (RAG chat completion), `/search` (Hybrid similarity search). |
+| **Knowledge Base**      | `/api/knowledge`  | Document upload, approval workflow (`PENDING` -> `APPROVED`), refinement, delete documents. |
+| **RAG AI Engine**       | `/api/ai`         | `/chat` (RAG chat completion), `/search` (Hybrid similarity search).                              |
 | **Clinic Branches**     | `/api/branches`   | Clinic location list, operating hours, branch configuration.                                      |
 | **Categories**          | `/api/categories` | Product & service categories catalog.                                                             |
 | **Chat Sessions**       | `/api/chats`      | Chat session creation, user message history persistence.                                          |

@@ -1,15 +1,15 @@
 "use client";
 
 import { ChatPreview } from "@/components/shared/knowledge/ChatPreview";
-import { ClassificationSidebar } from "@/components/shared/knowledge/ClassificationSidebar";
 import { Button } from "@/components/ui/button";
 import { RiArrowLeftLine, RiDeleteBin7Line, RiEdit2Line, RiCheckLine } from "@remixicon/react";
 import { toast } from "sonner";
 
 import { useRouter } from "next/navigation";
 import { use, useState } from "react";
-import { useDeleteKnowledge, useKnowledgeDetail } from "../hooks/use-knowledge";
+import { useDeleteKnowledge, useKnowledgeDetail, useEditKnowledge } from "../hooks/use-knowledge";
 import { useSession } from "@/hooks/use-session";
+import { VisibilitySettings } from "../api/types";
 
 export default function KnowledgeDetailPage({ params }: { params: Promise<{ id: string }> }) {
 	const router = useRouter();
@@ -21,6 +21,27 @@ export default function KnowledgeDetailPage({ params }: { params: Promise<{ id: 
 	const hasWriteAccess = user?.accesses?.includes("knowledge:write");
 	const hasDeleteAccess = user?.accesses?.includes("knowledge:delete");
 	const [isEditMode, setIsEditMode] = useState(false);
+	const editKnowledge = useEditKnowledge();
+
+	const initialCategories = (data?.metadata?.categories as string[]) || (data?.metadata?.suggested_categories as Array<{ name: string }>)?.map((c) => c.name) || [];
+	const initialVisibility = (data?.metadata?.visibility_settings as VisibilitySettings) || { clinics: ["all"], doctor_types: ["all"], doctors: ["all"] };
+	
+	const [pendingCategories, setPendingCategories] = useState<string[]>(initialCategories);
+	const [pendingVisibilitySettings, setPendingVisibilitySettings] = useState<VisibilitySettings>(initialVisibility);
+	const [pendingTitle, setPendingTitle] = useState(data?.title || "");
+	const [prevMetadataStr, setPrevMetadataStr] = useState(JSON.stringify(data?.metadata || {}));
+	const [prevTitle, setPrevTitle] = useState(data?.title);
+
+	if (JSON.stringify(data?.metadata || {}) !== prevMetadataStr) {
+		setPrevMetadataStr(JSON.stringify(data?.metadata || {}));
+		setPendingCategories(initialCategories);
+		setPendingVisibilitySettings(initialVisibility);
+	}
+	
+	if (data?.title !== prevTitle && !isEditMode) {
+		setPrevTitle(data?.title);
+		setPendingTitle(data?.title || "");
+	}
 
 	const handleDelete = () => {
 		if (confirm("Are you sure you want to delete this knowledge document?")) {
@@ -48,6 +69,18 @@ export default function KnowledgeDetailPage({ params }: { params: Promise<{ id: 
 			.replace(/\b\w/g, (c) => c.toUpperCase()); // title case
 	};
 
+	const handleSave = async (newTitle?: string) => {
+		await editKnowledge.mutateAsync({ id, data: { summary: data?.ai_summary || "", categories: pendingCategories, visibility_settings: pendingVisibilitySettings, title: typeof newTitle === 'string' ? newTitle : pendingTitle } });
+		setIsEditMode(false);
+	};
+
+	const handleCancel = () => {
+		setPendingCategories(initialCategories);
+		setPendingVisibilitySettings(initialVisibility);
+		setPendingTitle(data?.title || "");
+		setIsEditMode(false);
+	};
+
 	return (
 		<div className="flex flex-col absolute inset-0">
 			{/* Title Header with Actions */}
@@ -57,7 +90,16 @@ export default function KnowledgeDetailPage({ params }: { params: Promise<{ id: 
 						<RiArrowLeftLine className="size-5" />
 					</Button>
 					<div>
-						<h1 className="text-lg font-semibold text-gray-900">{formatDisplayTitle(data?.title)}</h1>
+						{isEditMode ? (
+							<input
+								value={pendingTitle}
+								onChange={(e) => setPendingTitle(e.target.value)}
+								className="text-lg font-semibold text-gray-900 border-b border-blue-500 focus:outline-none bg-transparent"
+								placeholder="Knowledge Document Title"
+							/>
+						) : (
+							<h1 className="text-lg font-semibold text-gray-900">{formatDisplayTitle(data?.title)}</h1>
+						)}
 						<p className="text-sm text-gray-500">Knowledge Document Details</p>
 					</div>
 				</div>
@@ -78,12 +120,14 @@ export default function KnowledgeDetailPage({ params }: { params: Promise<{ id: 
 						<Button
 							variant={isEditMode ? "default" : "outline"}
 							className={`gap-2 ${isEditMode ? "bg-emerald-600 hover:bg-emerald-700 text-white" : "text-zinc-950"}`}
-							disabled={isLoading}
-							onClick={() => {
+							disabled={isLoading || editKnowledge.isPending}
+							onClick={async () => {
 								if (isEditMode) {
-									toast.success("Document edits saved successfully.");
+									await handleSave();
+								} else {
+									toast.info("You can now edit the document categories below.");
+									setIsEditMode(true);
 								}
-								setIsEditMode(!isEditMode);
 							}}
 						>
 							{isEditMode ? <RiCheckLine className="size-4" /> : <RiEdit2Line className="size-4" />}
@@ -99,15 +143,23 @@ export default function KnowledgeDetailPage({ params }: { params: Promise<{ id: 
 				{/* Left Column (Chat / Preview) */}
 				<ChatPreview
 					knowledgeId={id}
+					knowledge={data}
 					knowledgeStatus={data?.status}
 					aiSummary={data?.ai_summary}
-					fileName={formatDisplayTitle(data?.title || data?.file_name)}
+					fileName={data?.file_name}
+					files={(data?.metadata?.files as { file_name: string; summary: string }[]) || []}
 					isDetailLoading={isLoading}
 					isEditMode={isEditMode}
+					categories={pendingCategories}
+					onChangeCategories={setPendingCategories}
+					visibilitySettings={pendingVisibilitySettings}
+					onChangeVisibilitySettings={setPendingVisibilitySettings}
+					title={pendingTitle}
+					onChangeTitle={setPendingTitle}
+					onSave={handleSave}
+					onCancel={handleCancel}
 				/>
 
-				{/* Right Column (Classification) */}
-				<ClassificationSidebar knowledge={data} />
 			</div>
 		</div>
 	);

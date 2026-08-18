@@ -22,9 +22,11 @@ export function EditBranchTokenDialog({ branch }: EditBranchTokenDialogProps) {
 	const [open, setOpen] = React.useState(false);
 	const updateBranch = useUpdateBranch();
 
+	const tokenLimitValue = (branch.token_limit ?? branch.tokensMonth ?? 0).toString();
+
 	const form = useForm({
 		defaultValues: {
-			token_limit: branch.tokensMonth.toString(),
+			token_limit: tokenLimitValue,
 		} as z.input<typeof editTokenSchema>,
 		validators: {
 			onChange: editTokenSchema,
@@ -54,7 +56,7 @@ export function EditBranchTokenDialog({ branch }: EditBranchTokenDialogProps) {
 		if (open) {
 			form.reset();
 		}
-	}, [open, branch.tokensMonth, form]);
+	}, [open, branch.token_limit, branch.tokensMonth, form]);
 
 	return (
 		<Dialog open={open} onOpenChange={setOpen}>

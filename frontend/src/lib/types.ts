@@ -7,7 +7,7 @@ export interface UserResponse {
   type: "STAFF" | "DOCTOR" | "ADMIN";
   email: string;
   name: string;
-  cis_id: string | null;
+  cis_id: number | null;
   token_limit: number | null;
   created_at: string;
   status: "Active" | "Inactive" | "Warning";

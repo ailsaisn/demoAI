@@ -5,10 +5,6 @@ from datetime import datetime
 
 class BranchBase(BaseModel):
     name: str
-    address: Optional[str] = None
-    latitude: Optional[float] = None
-    longitude: Optional[float] = None
-    image_url: Optional[str] = None
     token_limit: int = 0
 
 class BranchCreate(BranchBase):
@@ -16,10 +12,6 @@ class BranchCreate(BranchBase):
 
 class BranchUpdate(BaseModel):
     name: Optional[str] = None
-    address: Optional[str] = None
-    latitude: Optional[float] = None
-    longitude: Optional[float] = None
-    image_url: Optional[str] = None
     token_limit: Optional[int] = None
 
 class BranchDoctorResponse(BaseModel):
@@ -29,15 +21,21 @@ class BranchDoctorResponse(BaseModel):
     tokensLeft: int = 0
     status: str = "Active"
     maxTokens: int = 0
+    employee_id: Optional[str] = None
+    dr_type: Optional[str] = None
+    user_type_code: Optional[str] = None
+    ecosystem: Optional[str] = None
     
     model_config = ConfigDict(from_attributes=True)
 
 class BranchResponse(BranchBase):
     id: UUID
+    external_id: Optional[int] = None
+    code: Optional[str] = None
+    ecosystem: str = "Erha"
     created_at: datetime
     updated_at: datetime
     
-    tokensMonth: int = 0
     used: int = 0
     remaining: int = 0
     

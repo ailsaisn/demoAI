@@ -67,7 +67,7 @@ export function BranchTokenTable() {
 											</div>
 										</div>
 									</TableCell>
-									<TableCell className="text-blue-600 font-medium">{branch.tokensMonth}</TableCell>
+									<TableCell className="text-blue-600 font-medium">{branch.token_limit ?? branch.tokensMonth ?? 0}</TableCell>
 									<TableCell className="text-blue-600 font-medium">{branch.used}</TableCell>
 									<TableCell className="text-blue-600 font-medium">{branch.remaining}</TableCell>
 									<TableCell className="text-right">

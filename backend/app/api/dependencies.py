@@ -1,9 +1,12 @@
-from fastapi import Depends, HTTPException, status, Request
+from fastapi import Depends, HTTPException, status, Request, Header
 from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from jose import jwt, JWTError
 import uuid
+import base64
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.asymmetric import padding
 
 from app.core.config import settings
 from app.core.database import get_db
@@ -36,7 +39,11 @@ async def get_current_user(
             user_cis_id = payload.get("sub")
             if not user_cis_id:
                 raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
-            stmt = select(User).where(User.cis_id == user_cis_id, User.deleted_at.is_(None))
+            try:
+                cis_int = int(user_cis_id)
+            except (ValueError, TypeError):
+                raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid doctor ID in token")
+            stmt = select(User).where(User.cis_id == cis_int, User.deleted_at.is_(None))
         else:
             # This is a backend-signed token
             payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
@@ -56,6 +63,83 @@ async def get_current_user(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
         
     return user
+
+async def verify_cis_proxy_signature(
+    request: Request, 
+    x_signature: str | None = Header(None, alias="X-Signature"),
+    x_user_id: str | None = Header(None, alias="X-User-Id")
+) -> str:
+    """Dependency verifying RSA signature for the proxy chat stream."""
+    if not x_signature or not x_user_id:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Missing X-Signature or X-User-Id header"
+        )
+        
+    body_bytes = await request.body()
+    print(f"BACKEND BODY BYTES: {body_bytes}")
+    payload_to_verify = x_user_id.encode("utf-8") + b":" + body_bytes
+    
+    try:
+        signature_bytes = base64.b64decode(x_signature)
+        public_key = get_cis_public_key()
+        public_key.verify(
+            signature_bytes,
+            payload_to_verify,
+            padding.PKCS1v15(),
+            hashes.SHA256()
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid proxy RSA signature"
+        )
+    return x_user_id
+
+async def get_current_user_from_proxy(
+    user_id: str = Depends(verify_cis_proxy_signature),
+    db: AsyncSession = Depends(get_db)
+) -> User:
+    try:
+        cis_int = int(user_id)
+    except (ValueError, TypeError):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid user ID in header")
+    stmt = select(User).where(User.cis_id == cis_int, User.deleted_at.is_(None))
+    result = await db.execute(stmt)
+    user = result.scalar_one_or_none()
+    
+    if user is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+        
+    return user
+
+async def get_current_user_flexible(
+    request: Request,
+    db: AsyncSession = Depends(get_db)
+) -> User:
+    """
+    Flexible dependency that uses X-Signature for Server-to-Server calls, 
+    or falls back to JWT for internal dashboard users.
+    """
+    if request.headers.get("x-signature"):
+        user_id = await verify_cis_proxy_signature(
+            request, 
+            request.headers.get("x-signature"), 
+            request.headers.get("x-user-id")
+        )
+        try:
+            cis_int = int(user_id)
+        except (ValueError, TypeError):
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid user ID in header")
+        stmt = select(User).where(User.cis_id == cis_int, User.deleted_at.is_(None))
+        result = await db.execute(stmt)
+        user = result.scalar_one_or_none()
+        
+        if user is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+        return user
+        
+    return await get_current_user(request, db)
 
 class RequireAccess:
     def __init__(self, required_access: str):

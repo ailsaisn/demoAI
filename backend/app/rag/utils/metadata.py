@@ -150,6 +150,10 @@ class MetadataEnricher:
                 "token_count": token_count,
                 "processed_at": processed_at
             }
+            # Preserve all pre-existing chunk metadata keys (e.g. s3_key, storage_key, image_url, image_reference, content_type, extracted_information, uncertainties)
+            for k, v in chunk_meta.items():
+                if k not in enriched_meta and v is not None:
+                    enriched_meta[k] = v
 
             enriched_data.append({
                 "text": text,

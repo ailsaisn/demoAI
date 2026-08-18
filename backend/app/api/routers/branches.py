@@ -17,22 +17,30 @@ router = APIRouter(tags=["Branches"])
 async def _hydrate_branch(branch: Branch, db: AsyncSession) -> dict:
     branch_dict = {
         "id": branch.id,
+        "external_id": branch.external_id,
         "name": branch.name,
-        "address": branch.address,
-        "latitude": branch.latitude,
-        "longitude": branch.longitude,
-        "image_url": branch.image_url,
+        "code": branch.code,
+        "ecosystem": branch.ecosystem,
         "token_limit": branch.token_limit,
         "created_at": branch.created_at,
         "updated_at": branch.updated_at,
-        "tokensMonth": branch.token_limit,
         "used": 0,
         "remaining": branch.token_limit,
         "doctors": []
     }
     
-    # Get doctors assigned to this branch
-    stmt = select(User).join(UserBranch, UserBranch.user_id == User.id).where(UserBranch.branch_id == branch.id, User.type == UserType.DOCTOR, User.deleted_at.is_(None))
+    # Get doctors assigned to this branch (active connections only)
+    stmt = (
+        select(User)
+        .join(UserBranch, UserBranch.user_id == User.id)
+        .where(
+            UserBranch.branch_id == branch.id,
+            UserBranch.status == 1,
+            UserBranch.deleted_at.is_(None),
+            User.type == UserType.DOCTOR,
+            User.deleted_at.is_(None)
+        )
+    )
     result = await db.execute(stmt)
     doctors = result.scalars().all()
     
@@ -72,7 +80,11 @@ async def _hydrate_branch(branch: Branch, db: AsyncSession) -> dict:
             "speciality": speciality,
             "tokensLeft": tokens_left,
             "status": status,
-            "maxTokens": doc.token_limit or 0
+            "maxTokens": doc.token_limit or 0,
+            "employee_id": doc.employee_id,
+            "dr_type": doc.dr_type,
+            "user_type_code": doc.user_type_code,
+            "ecosystem": doc.ecosystem
         })
         
     branch_dict["used"] = branch_used
@@ -105,17 +117,7 @@ async def get_branch(
         
     return await _hydrate_branch(branch, db)
 
-@router.post("/", response_model=BranchResponse, status_code=status.HTTP_201_CREATED)
-async def create_branch(
-    branch_in: BranchCreate,
-    db: AsyncSession = Depends(get_db),
-    current_admin: User = Depends(RequireAccess("branches:write"))
-):
-    branch = Branch(**branch_in.model_dump())
-    db.add(branch)
-    await db.commit()
-    await db.refresh(branch)
-    return await _hydrate_branch(branch, db)
+
 
 @router.put("/{branch_id}", response_model=BranchResponse)
 async def update_branch(
@@ -139,18 +141,4 @@ async def update_branch(
     await db.refresh(branch)
     return await _hydrate_branch(branch, db)
 
-@router.delete("/{branch_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_branch(
-    branch_id: uuid.UUID,
-    db: AsyncSession = Depends(get_db),
-    current_admin: User = Depends(RequireAccess("branches:write"))
-):
-    stmt = select(Branch).where(Branch.id == branch_id, Branch.deleted_at.is_(None))
-    result = await db.execute(stmt)
-    branch = result.scalar_one_or_none()
-    
-    if not branch:
-        raise HTTPException(status_code=404, detail="Branch not found")
-        
-    branch.deleted_at = datetime.now(timezone.utc)
-    await db.commit()
+

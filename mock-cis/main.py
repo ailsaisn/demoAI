@@ -6,10 +6,10 @@ import httpx
 import jwt
 import datetime
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, HTTPException, status
+from fastapi import FastAPI, HTTPException, status, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 from typing import Optional, List, Dict, Any
 from cryptography.hazmat.primitives import hashes
@@ -39,111 +39,90 @@ def sign_payload_bytes(payload_bytes: bytes) -> str:
     )
     return base64.b64encode(signature).decode("utf-8")
 
+def sign_proxy_payload(body_bytes: bytes, user_id: str) -> str:
+    private_key = load_private_key()
+    payload_to_sign = user_id.encode("utf-8") + b":" + body_bytes
+    signature = private_key.sign(
+        payload_to_sign,
+        padding.PKCS1v15(),
+        hashes.SHA256()
+    )
+    return base64.b64encode(signature).decode("utf-8")
+
 # Mock Master Data
 MOCK_BRANCHES = [
     {
-        "id": "11111111-1111-1111-1111-111111111111",
-        "name": "Jakarta Central Clinic",
-        "address": "Sudirman St. No. 12, South Jakarta"
+        "id": 838,
+        "name": "Klinik Utama Erha Ultimate BSD",
+        "code": "011",
+        "ecosystem": "Erha",
+        "status": "1"
     },
     {
-        "id": "22222222-2222-2222-2222-222222222222",
-        "name": "Bandung Main Clinic",
-        "address": "Ir. H. Juanda St. (Dago) No. 45, Bandung"
-    },
-    {
-        "id": "33333333-3333-3333-3333-333333333333",
-        "name": "Surabaya Skin Care Center",
-        "address": "Pemuda St. No. 88, Surabaya"
-    },
-    {
-        "id": "44444444-4444-4444-4444-444444444444",
-        "name": "Bali Medical & Esthetics",
-        "address": "Sunset Road No. 101, Seminyak, Bali"
-    },
-    {
-        "id": "55555555-5555-5555-5555-555555555555",
-        "name": "Yogyakarta Health & Wellness",
-        "address": "Malioboro St. No. 15, Yogyakarta"
+        "id": 847,
+        "name": "Klinik Utama Dermies BSD",
+        "code": "034",
+        "ecosystem": "Dermies",
+        "status": "1"
     }
 ]
 
 MOCK_DOCTORS = [
     {
-        "cis_id": "DR-12345",
-        "employee_id": "EMP-001",
-        "dr_type": "SpDVE",
-        "ecosystem": "ERHA",
-        "status": "active",
-        "name": "Dr. Jane Doe, Sp.D.V.E.",
-        "email": "doctor@mail.com",
-        "branch_ids": [
-            "11111111-1111-1111-1111-111111111111"
+        "id": 1,
+        "name": "dr Sulistyo SpKK",
+        "user_type": "1",
+        "user_type_name": "Doctor SpKK",
+        "nik": "dr00123",
+        "email": "drkk11@gmail.com",
+        "ecosystem": "Erha",
+        "status": "1",
+        "user_branchs": [
+            {
+                "branch_id": 838,
+                "branch_code": "011",
+                "status": "1"
+            },
+            {
+                "branch_id": 847,
+                "branch_code": "034",
+                "status": "0"
+            }
         ]
     },
     {
-        "cis_id": "DR-67890",
-        "employee_id": "EMP-002",
-        "dr_type": "SpDVE",
-        "ecosystem": "ERHA",
-        "status": "active",
-        "name": "Dr. John Smith, Sp.D.V.E.",
-        "email": "john.smith@example.com",
-        "branch_ids": [
-            "11111111-1111-1111-1111-111111111111",
-            "22222222-2222-2222-2222-222222222222"
+        "id": 2,
+        "name": "dr Budi Santoso",
+        "user_type": "173",
+        "user_type_name": "Doctor gp",
+        "nik": "dr00456",
+        "email": "drbudi@gmail.com",
+        "ecosystem": "Dermies",
+        "status": "1",
+        "user_branchs": [
+            {
+                "branch_id": 847,
+                "branch_code": "034",
+                "status": "1"
+            }
         ]
+    }
+]
+
+MOCK_USER_BRANCHES = [
+    {
+        "user_id": 1,
+        "branch_id": 838,
+        "branch_code": "011",
+        "status": "1",
+        "ecosystem": "Erha"
     },
     {
-        "cis_id": "DR-11223",
-        "employee_id": "EMP-003",
-        "dr_type": "GP Plus",
-        "ecosystem": "ERHA",
-        "status": "active",
-        "name": "Dr. Amanda Prasetya",
-        "email": "amanda.prasetya@example.com",
-        "branch_ids": [
-            "22222222-2222-2222-2222-222222222222",
-            "55555555-5555-5555-5555-555555555555"
-        ]
-    },
-    {
-        "cis_id": "DR-44556",
-        "employee_id": "EMP-004",
-        "dr_type": "GP Plus",
-        "ecosystem": "ERHA",
-        "status": "active",
-        "name": "Dr. Budi Santoso, Sp.B.P.R.E.",
-        "email": "budi.santoso@example.com",
-        "branch_ids": [
-            "33333333-3333-3333-3333-333333333333"
-        ]
-    },
-    {
-        "cis_id": "DR-77889",
-        "employee_id": "EMP-005",
-        "dr_type": "SpDVE",
-        "ecosystem": "ERHA",
-        "status": "active",
-        "name": "Dr. Citra Dewi",
-        "email": "citra.dewi@example.com",
-        "branch_ids": [
-            "11111111-1111-1111-1111-111111111111",
-            "44444444-4444-4444-4444-444444444444"
-        ]
-    },
-    {
-        "cis_id": "DR-99001",
-        "employee_id": "EMP-006",
-        "dr_type": "GP Plus",
-        "ecosystem": "ERHA",
-        "status": "inactive",
-        "name": "Dr. Edward Wijaya",
-        "email": "edward.wijaya@example.com",
-        "branch_ids": [
-            "33333333-3333-3333-3333-333333333333",
-            "44444444-4444-4444-4444-444444444444"
-        ]
+        "user_id": 2,
+        "branch_id": 847,
+        "branch_code": "034",
+        "status": "1",
+        "ecosystem": "Dermies"
     }
 ]
 
@@ -175,7 +154,8 @@ async def auto_sync_task():
         "event": "bulk.sync",
         "data": {
             "branches": MOCK_BRANCHES,
-            "doctors": MOCK_DOCTORS
+            "users": MOCK_DOCTORS,
+            "user_branches": MOCK_USER_BRANCHES
         }
     }
     
@@ -226,17 +206,18 @@ async def get_doctors():
     return MOCK_DOCTORS
 
 class LoginRequest(BaseModel):
-    cis_id: str
+    cis_id: Any
 
 @app.post("/api/login")
 async def login(req: LoginRequest):
-    doctor = next((d for d in MOCK_DOCTORS if d["cis_id"] == req.cis_id), None)
+    doctor = next((d for d in MOCK_DOCTORS if str(d.get("id")) == str(req.cis_id) or str(d.get("cis_id")) == str(req.cis_id)), None)
     if not doctor:
         raise HTTPException(status_code=404, detail="Doctor not found")
         
     private_key = load_private_key()
+    user_id = str(doctor.get("id") or doctor.get("cis_id"))
     payload = {
-        "sub": doctor["cis_id"],
+        "sub": user_id,
         "iat": datetime.datetime.now(datetime.timezone.utc),
         "exp": datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=12)
     }
@@ -258,7 +239,7 @@ async def trigger_push_doctor(doctor_index: int = 0, webhook_url: Optional[str] 
         raise HTTPException(status_code=400, detail="Invalid doctor index")
     
     payload = {
-        "event": "doctor.upsert",
+        "event": "user.upsert",
         "data": MOCK_DOCTORS[doctor_index]
     }
     return await send_signed_webhook(payload, webhook_url)
@@ -274,16 +255,110 @@ async def trigger_push_branch(branch_index: int = 0, webhook_url: Optional[str] 
     }
     return await send_signed_webhook(payload, webhook_url)
 
+@app.post("/trigger/push-user-branch")
+async def trigger_push_user_branch(webhook_url: Optional[str] = None):
+    payload = {
+        "event": "user_branch.upsert",
+        "data": MOCK_USER_BRANCHES
+    }
+    return await send_signed_webhook(payload, webhook_url)
+
 @app.post("/trigger/push-all")
 async def trigger_push_all(webhook_url: Optional[str] = None):
     payload = {
         "event": "bulk.sync",
         "data": {
             "branches": MOCK_BRANCHES,
-            "doctors": MOCK_DOCTORS
+            "users": MOCK_DOCTORS,
+            "user_branches": MOCK_USER_BRANCHES
         }
     }
     return await send_signed_webhook(payload, webhook_url)
+
+async def forward_to_backend(request: Request, method: str, path: str):
+    auth_header = request.headers.get("Authorization")
+    if not auth_header or not auth_header.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Missing or invalid Authorization header")
+    
+    token = auth_header.split(" ")[1]
+    try:
+        payload = jwt.decode(token, options={"verify_signature": False})
+        user_id = payload.get("sub")
+        if not user_id:
+            raise HTTPException(status_code=401, detail="Invalid token payload")
+    except Exception as e:
+        raise HTTPException(status_code=401, detail="Invalid token")
+
+    body_bytes = await request.body()
+    signature = sign_proxy_payload(body_bytes, user_id)
+
+    target_url = f"http://backend:8000{path}"
+    
+    headers = {
+        "X-Signature": signature,
+        "X-User-Id": user_id,
+        "Content-Type": request.headers.get("content-type") or "application/json"
+    }
+
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        resp = await client.request(method, target_url, content=body_bytes, headers=headers)
+        from fastapi.responses import Response
+        # Filter out hop-by-hop headers and transfer-encoding before returning
+        filtered_headers = {k: v for k, v in resp.headers.items() if k.lower() not in ["transfer-encoding", "content-length"]}
+        return Response(content=resp.content, status_code=resp.status_code, headers=filtered_headers)
+
+@app.get("/api/chats/")
+async def proxy_get_chats(request: Request):
+    return await forward_to_backend(request, "GET", "/api/chats/")
+
+@app.post("/api/chats/")
+async def proxy_post_chats(request: Request):
+    return await forward_to_backend(request, "POST", "/api/chats/")
+
+@app.get("/api/chats/{session_id}/messages")
+async def proxy_get_chat_messages(session_id: str, request: Request):
+    return await forward_to_backend(request, "GET", f"/api/chats/{session_id}/messages")
+
+@app.post("/api/chats/{session_id}/messages/stream")
+async def proxy_chat_stream(session_id: str, request: Request):
+    auth_header = request.headers.get("Authorization")
+    if not auth_header or not auth_header.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Missing or invalid Authorization header")
+    
+    token = auth_header.split(" ")[1]
+    try:
+        payload = jwt.decode(token, options={"verify_signature": False})
+        user_id = payload.get("sub")
+    except Exception:
+        raise HTTPException(status_code=401, detail="Invalid token")
+        
+    body_bytes = await request.body()
+    print(f"DEBUG PROXY BODY: {body_bytes}")
+    signature = sign_proxy_payload(body_bytes, user_id)
+
+    target_url = f"http://backend:8000/api/chats/{session_id}/messages/stream"
+    
+    headers = {
+        "X-Signature": signature,
+        "X-User-Id": user_id,
+        "Content-Type": request.headers.get("content-type") or "application/json"
+    }
+
+    client = httpx.AsyncClient(timeout=300.0)
+    
+    async def sse_generator():
+        try:
+            async with client.stream("POST", target_url, content=body_bytes, headers=headers) as response:
+                if response.status_code != 200:
+                    err_body = await response.aread()
+                    yield f"data: {json.dumps({'error': 'Backend error', 'status': response.status_code, 'detail': err_body.decode('utf-8')})}\n\n"
+                    return
+                async for chunk in response.aiter_raw():
+                    yield chunk
+        finally:
+            await client.aclose()
+
+    return StreamingResponse(sse_generator(), media_type="text/event-stream")
 
 # Serve static files from React build (dist folder)
 frontend_dist = os.path.join(os.path.dirname(__file__), "frontend", "dist")

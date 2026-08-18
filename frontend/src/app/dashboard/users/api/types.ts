@@ -7,11 +7,13 @@ export interface RoleResponse {
 
 export interface BranchResponse {
   id: string;
+  external_id?: number;
   name: string;
+  code?: string;
+  ecosystem?: string;
   address?: string;
   latitude?: string;
   longitude?: string;
-  image_url?: string;
   token_limit?: number;
   created_at?: string;
   updated_at?: string;
@@ -36,10 +38,11 @@ export interface UserCreateStaff extends UserBase {
 }
 
 export interface UserCreateDoctor extends UserBase {
-  cis_id: string;
+  cis_id: number;
   token_limit?: number;
   employee_id?: string;
   dr_type?: string;
+  user_type_code?: string;
   ecosystem?: string;
   branches?: string[]; // UUID strings
   categories?: string[]; // UUID strings
@@ -57,6 +60,7 @@ export interface DoctorUpdate {
   status?: string;
   employee_id?: string;
   dr_type?: string;
+  user_type_code?: string;
   ecosystem?: string;
 }
 
@@ -75,10 +79,11 @@ export interface UserUpdateCategories {
 export interface UserResponse extends UserBase {
   id: string;
   type: UserType;
-  cis_id?: string;
+  cis_id?: number;
   token_limit?: number;
   employee_id?: string;
   dr_type?: string;
+  user_type_code?: string;
   ecosystem?: string;
   created_at: string;
   

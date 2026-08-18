@@ -8,12 +8,12 @@ from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import padding
 
 from app.core.database import get_db
+from app.core.broadcaster import broadcaster
 from app.services.cis_sync import (
     get_cis_public_key,
     upsert_branch_payload,
-    delete_branch_payload,
     upsert_doctor_payload,
-    delete_doctor_payload,
+    upsert_user_branch_payload,
     bulk_sync_payload
 )
 
@@ -47,8 +47,8 @@ async def verify_rsa_signature(request: Request, x_signature: Optional[str] = He
     return True
 
 class WebhookEventPayload(BaseModel):
-    event: str # "branch.upsert", "branch.delete", "doctor.upsert", "doctor.delete", "bulk.sync"
-    data: Dict[str, Any]
+    event: str # "branch.upsert", "user.upsert", "user_branch.upsert", "bulk.sync"
+    data: Any # Can be dict or list depending on event
 
 @router.post("/cis", status_code=status.HTTP_200_OK, dependencies=[Depends(verify_rsa_signature)])
 async def handle_cis_webhook(
@@ -61,18 +61,16 @@ async def handle_cis_webhook(
     try:
         if payload.event == "branch.upsert":
             await upsert_branch_payload(db, payload.data)
-        elif payload.event == "branch.delete":
-            branch_id = payload.data.get("id") or payload.data.get("branch_id")
-            if branch_id:
-                await delete_branch_payload(db, branch_id)
-        elif payload.event == "doctor.upsert":
+            await broadcaster.publish("sync_completed")
+        elif payload.event == "user.upsert":
             await upsert_doctor_payload(db, payload.data)
-        elif payload.event == "doctor.delete":
-            cis_id = payload.data.get("cis_id") or payload.data.get("doctor_cis_id")
-            if cis_id:
-                await delete_doctor_payload(db, cis_id)
+            await broadcaster.publish("sync_completed")
+        elif payload.event == "user_branch.upsert":
+            await upsert_user_branch_payload(db, payload.data)
+            await broadcaster.publish("sync_completed")
         elif payload.event == "bulk.sync":
             await bulk_sync_payload(db, payload.data)
+            await broadcaster.publish("sync_completed")
         else:
             raise HTTPException(status_code=400, detail=f"Unsupported event type: {payload.event}")
 

@@ -1,7 +1,7 @@
 import uuid
 import enum
 from typing import Optional
-from sqlalchemy import String, Enum as SQLEnum, ForeignKey
+from sqlalchemy import String, Enum as SQLEnum, ForeignKey, Boolean
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from .base import Base, TimestampMixin
@@ -29,6 +29,8 @@ class ChatSession(Base, TimestampMixin):
     summary: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     rating: Mapped[Optional[ChatRating]] = mapped_column(SQLEnum(ChatRating, name="chat_rating"), nullable=True)
     feedback: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    has_data_issue: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False, server_default="false")
+    is_feedback_read: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False, server_default="false")
 
 class ChatMessage(Base, TimestampMixin):
     __tablename__ = "chat_messages"

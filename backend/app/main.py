@@ -1,8 +1,9 @@
+import os
 from fastapi import FastAPI
 from contextlib import asynccontextmanager
 from loguru import logger
 from app.core.config import settings
-from app.api.routers import auth, users, branches, categories, knowledge, chats, webhooks, config
+from app.api.routers import auth, users, branches, categories, knowledge, chats, webhooks, config, events
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -92,6 +93,53 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# --- Rate Limiting & Observability Middleware ---
+import time
+import uuid
+from collections import defaultdict
+from fastapi import Request, HTTPException, status
+from fastapi.responses import JSONResponse
+
+RATE_LIMIT_STORE = defaultdict(list)
+MAX_REQUESTS_PER_MINUTE = int(os.getenv("RATE_LIMIT_PER_MINUTE", "30"))
+
+@app.middleware("http")
+async def observability_and_rate_limit_middleware(request: Request, call_next):
+    """
+    1. Generates/preserves X-Request-ID for full end-to-end request traceability.
+    2. Measures total server execution latency.
+    3. Protects AI & Chat endpoints against spam/DDoS via IP rate limiting.
+    """
+    request_id = request.headers.get("X-Request-ID") or uuid.uuid4().hex[:12]
+    request.state.request_id = request_id
+    start_time = time.time()
+
+    path = request.url.path
+    if path.startswith("/api/chats") or path.startswith("/api/ai"):
+        client_ip = request.client.host if request.client else "127.0.0.1"
+        now = time.time()
+        
+        # Keep timestamps within the last 60 seconds
+        timestamps = [t for t in RATE_LIMIT_STORE[client_ip] if now - t < 60]
+        RATE_LIMIT_STORE[client_ip] = timestamps
+        
+        if len(timestamps) >= MAX_REQUESTS_PER_MINUTE:
+            logger.warning(f"[{request_id}] Rate limit exceeded for IP {client_ip} on path {path}")
+            return JSONResponse(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                content={"detail": "Rate limit exceeded. Maximum 30 requests per minute allowed."},
+                headers={"X-Request-ID": request_id}
+            )
+        
+        RATE_LIMIT_STORE[client_ip].append(now)
+
+    response = await call_next(request)
+    latency_ms = (time.time() - start_time) * 1000.0
+    response.headers["X-Request-ID"] = request_id
+    response.headers["X-Response-Time"] = f"{latency_ms:.1f}ms"
+
+    return response
+
 app.include_router(auth.router, prefix="/api")
 app.include_router(users.router, prefix="/api")
 app.include_router(branches.router, prefix="/api/branches")
@@ -100,6 +148,7 @@ app.include_router(knowledge.router, prefix="/api/knowledge")
 app.include_router(chats.router, prefix="/api/chats")
 app.include_router(webhooks.router, prefix="/api")
 app.include_router(config.router, prefix="/api")
+app.include_router(events.router, prefix="/api/events")
 
 # --- RAG Integration Router ---
 try:
@@ -109,6 +158,21 @@ try:
 except Exception as e:
     print(f"AI module skipped due to error: {e}")
 
+@app.on_event("startup")
+async def startup_preload_models():
+    """Preloads Cross-Encoder Reranker in background on server startup to eliminate first-request latency."""
+    import asyncio
+    def _preload():
+        try:
+            from app.rag.services.rag_retriever import Reranker
+            r = Reranker()
+            r._ensure_loaded()
+        except Exception as e:
+            logger.warning(f"Background model preloading skipped: {e}")
+
+    asyncio.get_event_loop().run_in_executor(None, _preload)
+
 @app.get("/health", tags=["health"])
 async def health_check():
     return {"status": "ok", "project": settings.PROJECT_NAME}
+

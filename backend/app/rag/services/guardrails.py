@@ -48,10 +48,10 @@ _MEDICAL_DERMA_KEYWORDS: list[str] = [
     "bahan aktif", "active ingredient", "kandungan", "komposisi", "formula",
     "spf", "uva", "uvb", "vitamin c", "vitamin e", "zinc", "copper peptide",
     "hamil", "menyusui", "pregnant", "lactation", "anak", "bayi",
-    "halo", "selamat pagi", "selamat siang", "selamat sore", "selamat malam",
-    "hai", "hi", "hello", "terima kasih", "thanks", "thank you",
+    "halo", "hallo", "hey", "selamat pagi", "selamat siang", "selamat sore", "selamat malam",
+    "pagi", "siang", "sore", "malam", "assalamualaikum", "assalamu'alaikum",
+    "hai", "hi", "hello", "terima kasih", "thanks", "thank you", "tes", "ping",
     "rekomendasi", "recommend", "saran", "suggest", "cara pakai", "how to use",
-    "apa", "bagaimana", "kenapa", "kapan", "dimana", "berapa",
     "jadwal", "cabang", "branch", "promo", "diskon", "harga",
 ]
 
@@ -108,7 +108,7 @@ class InputGuard:
             if pattern.search(query):
                 logger.warning(f"Prompt injection detected in query: {query[:100]}...")
                 return False, (
-                    "Maaf, permintaan Anda tidak dapat diproses karena terdeteksi "
+                    "Maaf Dok, permintaan Anda tidak dapat diproses karena terdeteksi "
                     "sebagai instruksi yang tidak sesuai dengan kebijakan keamanan sistem."
                 )
         return True, None
@@ -128,17 +128,24 @@ class InputGuard:
         if len(query_lower.split()) <= 3:
             return True, None
 
-        # Check if clearly off-topic
-        offtopic_score = sum(1 for kw in _OFFTOPIC_KEYWORDS if kw in query_lower)
-        medical_score = sum(1 for kw in _MEDICAL_DERMA_KEYWORDS if kw in query_lower)
+        try:
+            from app.rag.services.intent import QueryIntentDetector, QueryIntent
+            intent, _ = QueryIntentDetector.detect(query)
+            if intent == QueryIntent.GREETING:
+                return True, None
+        except Exception:
+            pass
 
-        if offtopic_score >= 2 and medical_score == 0:
+        # Check if clearly off-topic using word boundaries to prevent substring false positives (e.g. 'aha' in 'saham')
+        offtopic_score = sum(1 for kw in _OFFTOPIC_KEYWORDS if re.search(r'\b' + re.escape(kw) + r'\b', query_lower))
+        medical_score = sum(1 for kw in _MEDICAL_DERMA_KEYWORDS if re.search(r'\b' + re.escape(kw) + r'\b', query_lower))
+
+        if offtopic_score >= 1 and medical_score == 0:
             logger.info(f"Off-topic query blocked: {query[:100]}... (offtopic={offtopic_score}, medical={medical_score})")
             return False, (
-                "Maaf, saya adalah CHAT AI ERHA yang dirancang khusus untuk membantu "
-                "pertanyaan seputar produk perawatan kulit, tindakan klinis estetika, "
-                "dan layanan ERHA Klinik. Silakan ajukan pertanyaan terkait dermatologi "
-                "atau produk ERHA."
+                "Maaf Dok, saya adalah ERHA Medical Assistant yang dirancang khusus untuk mendukung Dokter "
+                "mencari informasi produk perawatan kulit, tindakan klinis estetika, "
+                "dan knowledge base ERHA. Silakan ajukan pertanyaan terkait produk atau klinis ERHA."
             )
 
         return True, None
@@ -161,6 +168,16 @@ class InputGuard:
         return True, None
 
 
+# ── Patient-facing consultation disclaimer removal patterns ──────────────────
+_PATIENT_DISCLAIMER_PATTERNS: list[re.Pattern] = [
+    re.compile(r"[\r\n\s]*(?:Sebelum\s+(?:memulai|menggunakan|melakukan)[^\.\n\?!]*,?\s*)?(?:Pastikan|Harap|Mohon|Disarankan|Sebaiknya|Silakan|Jangan lupa)?\s*(?:untuk\s+)?(?:selalu\s+)?(?:melakukan\s+)?(?:ber)?konsultasi(?:\s+lebih\s+lanjut)?(?:\s+terlebih\s+dahulu)?\s*(?:dengan|kepada|ke)?\s*(?:dokter|tenaga medis|ahli dermatologi|profesional medis)?[^\.\n\?!]*(?:sebelum\s+(?:memulai|melakukan|menggunakan)[^\.\n\?!]*)?[\.\!\?]", re.IGNORECASE),
+    re.compile(r"[\r\n\s]*(?:Sebelum\s+(?:memulai|menggunakan|melakukan)[^\.\n\?!]*,?\s*(?:pastikan|disarankan|harap|silakan|mohon|sebaiknya)?\s*(?:untuk\s+)?(?:ber)?konsultasi[^\.\n\?!]*[\.\!\?])", re.IGNORECASE),
+    re.compile(r"[\r\n\s]*\*?Catatan:\s*Informasi di atas merupakan panduan umum[^\n]*\*?", re.IGNORECASE),
+    re.compile(r"[\r\n\s]*(?:Jika\s+(?:ada|terdapat)\s+pertanyaan\s+(?:lebih\s+lanjut|tambahan|lainnya?)|Jika\s+Dokter\s+(?:membutuhkan|memerlukan)\s+(?:informasi|bantuan)\s+(?:lebih\s+lanjut|tambahan))[^\.\n\?!]*,\s*(?:silakan|harap|mohon)?\s*(?:beri\s+tahu|tanyakan|sampaikan|hubungi)[^\.\n\?!]*[\.\!\?]", re.IGNORECASE),
+    re.compile(r"[\r\n\s]*Silakan\s+beri\s+tahu\s+saya\s+jika\s+ada\s+pertanyaan\s+lebih\s+lanjut[\.\!\?]", re.IGNORECASE),
+]
+
+
 class OutputGuard:
     """Post-generation guard: sanitizes LLM output before returning to user."""
 
@@ -177,6 +194,18 @@ class OutputGuard:
         return redacted
 
     @staticmethod
+    def strip_patient_disclaimers(text: str) -> str:
+        """
+        Removes generic patient-facing disclaimers or warnings (e.g. 'konsultasi lebih lanjut')
+        since the user is already a practicing Doctor.
+        """
+        cleaned = text
+        for pattern in _PATIENT_DISCLAIMER_PATTERNS:
+            cleaned = pattern.sub("", cleaned)
+        cleaned = re.sub(r"\n{3,}", "\n\n", cleaned).strip()
+        return cleaned
+
+    @staticmethod
     def add_medical_disclaimer(text: str) -> str:
         """Appends a medical disclaimer if the answer contains prescriptive advice."""
         text_lower = text.lower()
@@ -188,8 +217,9 @@ class OutputGuard:
 
     @classmethod
     def process(cls, answer: str) -> str:
-        """Runs all output guards on the generated answer (PII redaction)."""
+        """Runs all output guards on the generated answer (PII redaction & disclaimer stripping)."""
         result = cls.redact_pii(answer)
+        result = cls.strip_patient_disclaimers(result)
         return result
 
 

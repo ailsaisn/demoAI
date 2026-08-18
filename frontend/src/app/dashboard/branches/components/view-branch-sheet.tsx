@@ -64,11 +64,25 @@ export function ViewBranchSheet({ branch }: ViewBranchSheetProps) {
 									<span className="text-sm font-medium text-black-500">{branch.name}</span>
 								</div>
 
+								{branch.code && (
+									<div className="flex flex-col gap-1">
+										<span className="text-sm text-black-300">Branch Code</span>
+										<span className="text-sm font-medium text-black-500">{branch.code}</span>
+									</div>
+								)}
+
+								{branch.ecosystem && (
+									<div className="flex flex-col gap-1">
+										<span className="text-sm text-black-300">Ecosystem</span>
+										<span className="text-sm font-medium text-black-500">{branch.ecosystem}</span>
+									</div>
+								)}
+
 								<div className="flex items-center justify-between gap-4">
 									<div className="flex flex-col gap-1">
 										<span className="text-sm text-black-300">Tokens</span>
 										<span className="text-sm font-medium text-blue-600">
-											{branch.tokensMonth} <span className="text-black-500 font-normal">/month</span>
+											{branch.token_limit ?? branch.tokensMonth ?? 0} <span className="text-black-500 font-normal">/month</span>
 										</span>
 									</div>
 									<EditBranchTokenDialog branch={branch} />
@@ -93,13 +107,13 @@ export function ViewBranchSheet({ branch }: ViewBranchSheetProps) {
 									<div className="flex flex-col gap-2">
 										<div className="flex justify-between items-center text-sm font-medium">
 											<span className="text-black-500">
-												<span className="text-blue-600">{branch.remaining}/{branch.tokensMonth}</span> tokens left
+												<span className="text-blue-600">{branch.remaining}/{branch.token_limit ?? branch.tokensMonth ?? 0}</span> tokens left
 											</span>
 										</div>
 										<div className="h-2 w-full bg-black-50 rounded-full overflow-hidden">
 											<div
 												className="h-full bg-blue-500"
-												style={{ width: `${(branch.used / branch.tokensMonth) * 100}%` }}
+												style={{ width: `${(branch.token_limit ?? branch.tokensMonth ?? 0) > 0 ? (branch.used / (branch.token_limit ?? branch.tokensMonth ?? 1)) * 100 : 0}%` }}
 											/>
 										</div>
 									</div>

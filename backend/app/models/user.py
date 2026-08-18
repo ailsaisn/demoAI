@@ -18,11 +18,12 @@ class User(Base, TimestampMixin, SoftDeleteMixin):
     name: Mapped[str] = mapped_column(String, nullable=False)
     email: Mapped[str] = mapped_column(String, unique=True, nullable=False)
     password_hash: Mapped[Optional[str]] = mapped_column(String, nullable=True)
-    cis_id: Mapped[Optional[str]] = mapped_column(String, unique=True, nullable=True)
+    cis_id: Mapped[Optional[int]] = mapped_column(Integer, unique=True, nullable=True)
     token_limit: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     
     employee_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     dr_type: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    user_type_code: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     ecosystem: Mapped[str] = mapped_column(String, default="ERHA", server_default="ERHA", nullable=False)
 
     __table_args__ = (

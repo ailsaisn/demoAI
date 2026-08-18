@@ -1,4 +1,4 @@
-export type KnowledgeType = "PRODUCT" | "TREATMENT" | "PROMOTIONAL";
+export type KnowledgeType = "PRODUCT" | "TREATMENT" | "PROMOTIONAL" | "GENERAL" | "OTHER";
 export type KnowledgeStatus = "PENDING" | "PROCESSING" | "APPROVED" | "REJECTED";
 
 export interface KnowledgeCreate {
@@ -9,6 +9,12 @@ export interface KnowledgeCreate {
 	mime_type?: string | null;
 	file_size?: number | null;
 	type: KnowledgeType;
+}
+
+export interface VisibilitySettings {
+	clinics: string[];
+	doctor_types: string[];
+	doctors: string[];
 }
 
 export interface KnowledgeResponse {
@@ -25,7 +31,10 @@ export interface KnowledgeResponse {
 	ai_confidence?: number | null;
 	uploaded_by: string; // UUID
 	approved_by?: string | null; // UUID
-	metadata?: Record<string, unknown> | null;
+	metadata?: {
+		visibility_settings?: VisibilitySettings;
+		[key: string]: unknown;
+	} | null;
 	created_at: string;
 	updated_at: string;
 }

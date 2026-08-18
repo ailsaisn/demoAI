@@ -2,6 +2,7 @@ import { api } from "@/lib/axios";
 import { getErrorMessage } from "@/lib/utils";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
+import { branchKeys } from "../../configuration/api/keys";
 import { userKeys } from "../api/keys";
 import type {
 	DoctorUpdate,
@@ -67,7 +68,8 @@ export const useUpdateDoctorAccess = () => {
 		},
 		onSuccess: () => {
 			toast.success("Doctor access updated successfully!");
-			queryClient.invalidateQueries({ queryKey: userKeys.lists() });
+			queryClient.invalidateQueries({ queryKey: userKeys.all });
+			queryClient.invalidateQueries({ queryKey: branchKeys.all });
 		},
 		onError: (error: unknown) => {
 			toast.error(getErrorMessage(error, "Failed to update doctor access."));

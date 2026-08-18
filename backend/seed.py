@@ -6,6 +6,7 @@ from sqlalchemy.orm import sessionmaker
 from app.core.config import settings
 from app.models.base import Base
 from app.models.user import User, UserType, Role, UserRole, Access, RoleAccess, UserAccess
+from app.models.category import Category
 from app.core.security import get_password_hash
 import app.models # Ensure all models are loaded
 
@@ -91,53 +92,22 @@ async def init_db():
         else:
             print("Admin user already exists.")
             
-        # Seed Functional user
-        result = await session.execute(__import__('sqlalchemy').select(User).where(User.email == 'dept@mail.com'))
-        func_user = result.scalar_one_or_none()
-        if not func_user:
-            func_user = User(
-                email="dept@mail.com",
-                name="Functional 1",
-                type=UserType.STAFF,
-                password_hash=get_password_hash("dept123")
-            )
-            session.add(func_user)
-            await session.commit()
+
             
-            result = await session.execute(__import__('sqlalchemy').select(Role).where(Role.name == "FUNCTIONAL"))
-            func_role = result.scalar_one_or_none()
-            if func_role:
-                session.add(UserRole(user_id=func_user.id, role_id=func_role.id))
-                await session.commit()
-            print("Successfully seeded functional user: dept@mail.com / dept123")
-            
-        # Seed Functional user with Write Access via UserAccess
-        result = await session.execute(__import__('sqlalchemy').select(User).where(User.email == 'dept2@mail.com'))
-        func_user2 = result.scalar_one_or_none()
-        if not func_user2:
-            func_user2 = User(
-                email="dept2@mail.com",
-                name="Functional 2",
-                type=UserType.STAFF,
-                password_hash=get_password_hash("dept123")
-            )
-            session.add(func_user2)
-            await session.commit()
-            
-            result = await session.execute(__import__('sqlalchemy').select(Role).where(Role.name == "FUNCTIONAL"))
-            func_role = result.scalar_one_or_none()
-            if func_role:
-                session.add(UserRole(user_id=func_user2.id, role_id=func_role.id))
-                await session.commit()
-                
-            # Assign UserAccess directly for DELETE
-            result_acc = await session.execute(__import__('sqlalchemy').select(Access).where(Access.name == "knowledge:delete"))
-            delete_acc = result_acc.scalar_one_or_none()
-            if delete_acc:
-                session.add(UserAccess(user_id=func_user2.id, access_id=delete_acc.id))
-                await session.commit()
-            
-            print("Successfully seeded functional user with delete access: dept2@mail.com / dept123")
+        # Seed initial categories
+        initial_categories = [
+            "Acne", "Anti-Aging", "Hair Loss", "Dermatitis", 
+            "Pigmentation", "Sensitive Skin", "Eczema", "Psoriasis", 
+            "Rosacea", "Melasma"
+        ]
+        
+        print("Seeding initial categories...")
+        for cat_name in initial_categories:
+            result = await session.execute(__import__('sqlalchemy').select(Category).where(Category.name == cat_name))
+            if not result.scalar_one_or_none():
+                session.add(Category(name=cat_name))
+        await session.commit()
+        print("Successfully seeded initial categories.")
 
 
     await engine.dispose()

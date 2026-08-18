@@ -95,8 +95,11 @@ The mock service includes a reference React implementation (`frontend/src/compon
 ### Running the complete Mock CIS (Backend + Frontend)
 
 ```bash
-# Starts the FastAPI webhook service and the Vite React Frontend
-docker compose up --build mock-cis
+# From within the mock-cis directory:
+docker compose up --build
+
+# Or from the project root:
+docker compose -f mock-cis/docker-compose.yaml up --build
 ```
 
 - **Mock CIS Dashboard (UI)**: `http://localhost:8001/dashboard`

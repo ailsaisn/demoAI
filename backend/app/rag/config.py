@@ -35,11 +35,14 @@ class Settings(BaseSettings):
     reranker_model_name: str = "BAAI/bge-reranker-base"
     rerank_confidence_threshold: float = 0.1
     
+    # Ingestion Concurrency Settings
+    max_ingestion_concurrency: int = 3
+
     # BM25 Settings
     bm25_index_path: str = "./data/output/bm25_index.pkl"
 
     # AI Agent Settings (ReAct Agent with Tool Calling)
-    rag_agent_enabled: bool = False
+    rag_agent_enabled: bool = True
     rag_agent_max_iterations: int = 5
 
     # Guardrails Settings

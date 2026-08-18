@@ -53,8 +53,8 @@ export default function Dashboard() {
       <FloatingChatbot 
         token={localStorage.getItem('cis_token')}
         doctorName={doctor ? doctor.name : 'Unknown'}
-        branchId="11111111-1111-1111-1111-111111111111" // In a real app, this would be fetched from context or state
-        apiBaseUrl="http://localhost:8000"
+        branchId="838" // Mock CIS internal ID
+        apiBaseUrl="http://localhost:8001"
       />
     </div>
   )

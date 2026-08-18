@@ -6,7 +6,7 @@ import { useEffect } from "react";
 
 interface RouteGuardProps {
 	children: React.ReactNode;
-	allowedTypes?: Array<"STAFF" | "DOCTOR">;
+	allowedTypes?: Array<"STAFF">;
 	requiredAccess?: string;
 }
 
@@ -24,11 +24,7 @@ export function RouteGuard({ children, allowedTypes, requiredAccess }: RouteGuar
 		}
 
 		if (allowedTypes && !(allowedTypes as string[]).includes(user.type)) {
-			if (user.type === "DOCTOR") {
-				router.replace("/doctor");
-			} else {
-				router.replace("/dashboard/knowledge");
-			}
+			router.replace("/dashboard/knowledge");
 			return;
 		}
 

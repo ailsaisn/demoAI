@@ -2,7 +2,8 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { api } from "@/lib/axios";
 import { getErrorMessage } from "@/lib/utils";
-import { configKeys } from "../api/keys";
+import { configKeys, branchKeys } from "../api/keys";
+import { userKeys } from "@/app/dashboard/users/api/keys";
 import type { ConfigResponse, ConfigUpdate } from "../api/types";
 
 export const useConfigs = () => {
@@ -25,6 +26,8 @@ export const useUpdateConfig = () => {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: configKeys.lists() });
+      queryClient.invalidateQueries({ queryKey: branchKeys.all });
+      queryClient.invalidateQueries({ queryKey: userKeys.all });
     },
     onError: (error: unknown) => {
       toast.error(getErrorMessage(error, "Failed to update settings."));
