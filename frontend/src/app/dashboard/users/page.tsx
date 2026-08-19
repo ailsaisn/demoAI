@@ -190,7 +190,7 @@ export default function UsersPage() {
 												: "No Branch"}
 										</TableCell>
 										<TableCell className="text-gray-900">{doc.ecosystem || "ERHA"}</TableCell>
-										<TableCell className="text-gray-900">{doc.email}</TableCell>
+										<TableCell className="text-gray-900">{doc.email || "-"}</TableCell>
 										<TableCell className="text-right">
 											<div className="flex justify-end gap-2">
 												<Button

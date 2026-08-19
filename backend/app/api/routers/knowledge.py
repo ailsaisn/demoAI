@@ -15,6 +15,7 @@ from app.api.dependencies import get_current_user, RequireAccess
 from app.models.user import User, UserType
 from app.models.knowledge import Knowledge, KnowledgeStatus, KnowledgeType
 from app.schemas.knowledge import KnowledgeCreate, KnowledgeUpdateStatus, KnowledgeResponse
+from app.services.token_service import check_ingestion_quota, record_ingestion_token_usage
 from datetime import datetime, timezone
 
 from app.rag.deps import get_ingestion_pipeline, get_llm, get_bm25_index, get_vector_store, get_generation_pipeline, get_medical_agent
@@ -35,6 +36,15 @@ from app.rag.router import (
 from app.rag.schemas import EditApprovedDocumentRequest, RefineRequest, ChatRequest, ChatResponse, UserContext
 
 router = APIRouter(tags=["Knowledge"])
+
+@router.get("/quota")
+async def get_ingestion_quota_endpoint(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(RequireAccess("knowledge:read"))
+):
+    """Fetch monthly knowledge ingestion token quota and warning status."""
+    _, quota_info = await check_ingestion_quota(db)
+    return quota_info
 
 @router.get("/", response_model=List[KnowledgeResponse])
 async def list_knowledge(
@@ -445,8 +455,24 @@ async def upload_knowledge_file(
         if target_file.content_type not in ALLOWED_MIME_TYPES:
             raise HTTPException(status_code=400, detail=f"File type {target_file.content_type} not allowed for file {target_file.filename}")
         
+    # Check monthly ingestion quota (soft warning / notice model)
+    allowed, quota_info = await check_ingestion_quota(db)
+    if quota_info.get("exceeded"):
+        logger.warning(f"Monthly knowledge ingestion threshold exceeded ({quota_info['tokens_used']:,} / {quota_info['token_limit']:,} tokens). Ingestion proceeding with soft warning.")
+    elif quota_info.get("warning"):
+        logger.info(f"Monthly knowledge ingestion threshold near limit ({quota_info['percentage']}% used).")
+
     pipeline = get_ingestion_pipeline(request)
     
+    # Record estimated/base ingestion token usage for each document
+    estimated_doc_tokens = 500 * len(upload_list) # Base parsing overhead estimation
+    await record_ingestion_token_usage(
+        db=db,
+        input_tokens=estimated_doc_tokens,
+        output_tokens=200 * len(upload_list),
+        documents_count=len(upload_list)
+    )
+
     return await ingest_document(
         background_tasks=background_tasks,
         file=file,

@@ -14,79 +14,85 @@ export function GlobalTokenConfig() {
 
 	const isGlobalLimitActive =
 		configs?.find((c) => c.key === "GLOBAL_TOKEN_LIMIT_ACTIVE")?.value === "true";
-	const globalTokenLimit = configs?.find((c) => c.key === "GLOBAL_TOKEN_LIMIT")?.value || "1000";
+	const globalThreshold = configs?.find((c) => c.key === "GLOBAL_TOKEN_THRESHOLD")?.value || "1000000";
+	const branchTokenLimit = configs?.find((c) => c.key === "GLOBAL_TOKEN_LIMIT")?.value || "3000000";
+	const spdveLimit = configs?.find((c) => c.key === "TOKEN_LIMIT_SPKK")?.value || "500000";
+	const gpPlusLimit = configs?.find((c) => c.key === "TOKEN_LIMIT_GP")?.value || "250000";
 
 	const [isActive, setIsActive] = React.useState(true);
-	const [isEditing, setIsEditing] = React.useState(false);
-	const [tokenAmount, setTokenAmount] = React.useState("1000");
 
+	// Per-field value states with realistic default production limits
+	const [thresholdAmount, setThresholdAmount] = React.useState("1000000");
+	const [branchAmount, setBranchAmount] = React.useState("3000000");
+	const [spdveAmount, setSpdveAmount] = React.useState("500000");
+	const [gpPlusAmount, setGpPlusAmount] = React.useState("250000");
+
+	// Per-field edit states
+	const [editingThreshold, setEditingThreshold] = React.useState(false);
+	const [editingBranch, setEditingBranch] = React.useState(false);
+	const [editingSpdve, setEditingSpdve] = React.useState(false);
+	const [editingGpPlus, setEditingGpPlus] = React.useState(false);
+
+	const [savingKey, setSavingKey] = React.useState<string | null>(null);
 	const [showWarning, setShowWarning] = React.useState(false);
 	const warningTimeoutRef = React.useRef<NodeJS.Timeout | undefined>(undefined);
 
-	const handleSetIsEditing = (val: boolean) => {
-		setIsEditing(val);
-		if (val) {
-			setShowWarning(true);
-			if (warningTimeoutRef.current) clearTimeout(warningTimeoutRef.current);
-		} else {
-			setShowWarning(false);
-		}
-	};
-
-	// Sync state when configs load, keeping it simple
+	// Sync state when configs load
 	React.useEffect(() => {
 		if (configs) {
-			// Use setTimeout to avoid synchronous setState during render phase warning in React 19 / strict mode
 			setTimeout(() => {
 				setIsActive(isGlobalLimitActive);
-				setTokenAmount(globalTokenLimit);
+				setThresholdAmount(globalThreshold);
+				setBranchAmount(branchTokenLimit);
+				setSpdveAmount(spdveLimit);
+				setGpPlusAmount(gpPlusLimit);
 			}, 0);
 		}
-	}, [configs, isGlobalLimitActive, globalTokenLimit]);
+	}, [configs, isGlobalLimitActive, globalThreshold, branchTokenLimit, spdveLimit, gpPlusLimit]);
 
-	const handleSave = () => {
-		updateConfig.mutate(
-			{ key: "GLOBAL_TOKEN_LIMIT", data: { value: tokenAmount } },
-			{
-				onSuccess: () => {
-					handleSetIsEditing(false);
-					toast.success("Global token limit updated successfully!");
-				},
-			},
-		);
+	const handleSaveField = async (
+		key: "GLOBAL_TOKEN_THRESHOLD" | "GLOBAL_TOKEN_LIMIT" | "TOKEN_LIMIT_SPKK" | "TOKEN_LIMIT_GP",
+		value: string,
+		setEditing: (val: boolean) => void
+	) => {
+		try {
+			setSavingKey(key);
+			await updateConfig.mutateAsync({ key, data: { value } });
+			setEditing(false);
+			toast.success("Token configuration updated successfully!");
+		} catch {
+			toast.error("Failed to update token configuration.");
+		} finally {
+			setSavingKey(null);
+		}
 	};
 
 	const handleToggle = (checked: boolean) => {
 		setIsActive(checked);
 
-		// Show warning briefly when toggled
 		setShowWarning(true);
 		if (warningTimeoutRef.current) clearTimeout(warningTimeoutRef.current);
 		warningTimeoutRef.current = setTimeout(() => {
-			// Don't hide it if we are currently editing the amount
-			setShowWarning((prev) => {
-				if (!isEditing) return false;
-				return prev;
-			});
+			setShowWarning(false);
 		}, 5000);
 
 		updateConfig.mutate(
 			{ key: "GLOBAL_TOKEN_LIMIT_ACTIVE", data: { value: checked.toString() } },
 			{
 				onSuccess: () => {
-					toast.success(`Global token limit ${checked ? "activated" : "deactivated"}!`);
+					toast.success(`Global token configuration ${checked ? "activated" : "deactivated"}!`);
 				},
 			}
 		);
 	};
 
 	if (isLoading) {
-		return <div className="p-4 text-center text-sm text-gray-500">Loading configuration...</div>;
+		return <div className="p-4 text-center text-sm text-zinc-500">Loading configuration...</div>;
 	}
 
 	return (
 		<div className="flex flex-col w-full">
-			<div className="flex flex-col gap-6 border border-black-50 rounded-lg p-4 bg-white">
+			<div className="flex flex-col gap-6 border border-white-600 rounded-lg p-4 bg-white">
 				{/* Top Part: Title and Toggle */}
 				<div className="flex flex-col gap-4">
 					<div className="flex flex-col gap-1">
@@ -109,77 +115,280 @@ export function GlobalTokenConfig() {
 					</div>
 				</div>
 
-				{/* Bottom Part: Token Amount */}
+				{/* Active Configuration Content */}
 				{isActive && (
-					<div className="flex flex-col gap-6.5 border-t border-black-50 pt-6 mt-2">
-						<div className="flex flex-col gap-1.5">
-							<h4 className="text-base font-medium text-black-500">Token Amount (per month)</h4>
-							<p className="text-sm text-black-300">
-								The token is represented by the conversations held in the chatbot, and it will be
-								calculated on a monthly basis.
-							</p>
-						</div>
-
-						<div className="flex items-center gap-4">
-							<div className="flex flex-col gap-2">
-								<span className="text-sm text-black-300">Token Amount (per month)</span>
-								<div className="relative">
-									<Input
-										type="number"
-										disabled={!isEditing}
-										value={tokenAmount}
-										onChange={(e) => setTokenAmount(e.target.value)}
-										className="w-60 bg-black-50 border-black-50 text-black-500 h-10 rounded-lg [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none disabled:opacity-75"
-									/>
-									<span className="absolute right-3 top-1/2 -translate-y-1/2 text-sm text-black-200 pointer-events-none">
-										per month
-									</span>
+					<div className="flex flex-col gap-6 border-t border-white-600 pt-6">
+						{/* 1. Global Token Threshold */}
+						<div className="flex flex-col gap-3">
+							<h4 className="text-base font-medium text-black-500">
+								Global Token Threshold (per month)
+							</h4>
+							<div className="flex flex-col gap-1.5">
+								<span className="text-sm text-black-300">Global Token Threshold</span>
+								<div className="flex items-center gap-4">
+									<div className="relative w-64">
+										<Input
+											type="number"
+											disabled={!editingThreshold}
+											value={thresholdAmount}
+											placeholder="1000000"
+											onChange={(e) => setThresholdAmount(e.target.value)}
+											className="w-full bg-[#f0f0f0] border-white-600 text-black-500 h-10 rounded-lg pr-20 disabled:opacity-80 focus-visible:ring-blue-500"
+										/>
+										<span className="absolute right-3 top-1/2 -translate-y-1/2 text-sm text-black-200 pointer-events-none">
+											per month
+										</span>
+									</div>
+									{editingThreshold ? (
+										<div className="flex items-center gap-2">
+											<Button
+												variant="ghost"
+												className="text-black-400 hover:bg-zinc-100 px-3 rounded-lg font-medium h-10 text-sm"
+												onClick={() => {
+													setEditingThreshold(false);
+													setThresholdAmount(globalThreshold);
+												}}
+												disabled={savingKey === "GLOBAL_TOKEN_THRESHOLD"}
+											>
+												Cancel
+											</Button>
+											<Button
+												className="bg-blue-500 hover:bg-blue-600 text-white shadow-none px-4 rounded-lg font-medium h-10 text-sm"
+												onClick={() =>
+													handleSaveField(
+														"GLOBAL_TOKEN_THRESHOLD",
+														thresholdAmount,
+														setEditingThreshold
+													)
+												}
+												disabled={savingKey === "GLOBAL_TOKEN_THRESHOLD"}
+											>
+												{savingKey === "GLOBAL_TOKEN_THRESHOLD" ? (
+													<RiLoader4Line className="size-4 animate-spin" />
+												) : (
+													<RiCheckLine className="size-4 mr-1" />
+												)}
+												Save
+											</Button>
+										</div>
+									) : (
+										<Button
+											variant="outline"
+											className="border-white-600 bg-white text-black-400 hover:bg-zinc-50 shadow-none px-4 rounded-lg h-10 text-sm font-medium"
+											onClick={() => setEditingThreshold(true)}
+										>
+											<RiEdit2Line className="size-4 mr-1.5 text-black-400" />
+											Edit
+										</Button>
+									)}
 								</div>
 							</div>
-							<div className="flex items-end h-17">
-								{isEditing ? (
-									<div className="flex items-center gap-2">
-										<Button
-											variant="ghost"
-											className="text-black-500 hover:text-black-600 hover:bg-zinc-100 px-5 rounded-lg font-medium"
-											onClick={() => {
-												handleSetIsEditing(false);
-												setTokenAmount(globalTokenLimit);
-											}}
-											disabled={updateConfig.isPending}
-										>
-											Cancel
-										</Button>
-										<Button
-											className="bg-blue-600 hover:bg-blue-700 text-white shadow-none px-5 rounded-lg font-medium"
-											onClick={handleSave}
-											disabled={updateConfig.isPending}
-										>
-											{updateConfig.isPending ? (
-												<RiLoader4Line className="size-4.5 mr-2 animate-spin" />
-											) : (
-												<RiCheckLine className="size-4.5 mr-2" />
-											)}
-											Save and Apply
-										</Button>
+						</div>
+
+						{/* 2. Token Amount (per month) Section */}
+						<div className="flex flex-col gap-6 border-t border-white-600 pt-5">
+							<div className="flex flex-col gap-1">
+								<h4 className="text-base font-medium text-black-500">Token Amount (per month)</h4>
+								<p className="text-sm text-black-300">
+									The token is represented by the conversations held in the chatbot, and it will be
+									calculated on a monthly basis.
+								</p>
+							</div>
+
+							{/* Token Amount (per Branch) */}
+							<div className="flex flex-col gap-1.5">
+								<span className="text-sm text-black-300">Token Amount (per Branch)</span>
+								<div className="flex items-center gap-4">
+									<div className="relative w-64">
+										<Input
+											type="number"
+											disabled={!editingBranch}
+											value={branchAmount}
+											placeholder="3000000"
+											onChange={(e) => setBranchAmount(e.target.value)}
+											className="w-full bg-[#f0f0f0] border-white-600 text-black-500 h-10 rounded-lg pr-20 disabled:opacity-80 focus-visible:ring-blue-500"
+										/>
+										<span className="absolute right-3 top-1/2 -translate-y-1/2 text-sm text-black-200 pointer-events-none">
+											per month
+										</span>
 									</div>
-								) : (
-									<Button
-										variant="outline"
-										className="border-blue-500 text-blue-500 hover:text-blue-600 hover:bg-blue-50 bg-transparent shadow-none px-5 rounded-lg"
-										onClick={() => handleSetIsEditing(true)}
-										disabled={!isActive}
-									>
-										<RiEdit2Line className="size-4.5 mr-2" />
-										Edit
-									</Button>
-								)}
+									{editingBranch ? (
+										<div className="flex items-center gap-2">
+											<Button
+												variant="ghost"
+												className="text-black-400 hover:bg-zinc-100 px-3 rounded-lg font-medium h-10 text-sm"
+												onClick={() => {
+													setEditingBranch(false);
+													setBranchAmount(branchTokenLimit);
+												}}
+												disabled={savingKey === "GLOBAL_TOKEN_LIMIT"}
+											>
+												Cancel
+											</Button>
+											<Button
+												className="bg-blue-500 hover:bg-blue-600 text-white shadow-none px-4 rounded-lg font-medium h-10 text-sm"
+												onClick={() =>
+													handleSaveField(
+														"GLOBAL_TOKEN_LIMIT",
+														branchAmount,
+														setEditingBranch
+													)
+												}
+												disabled={savingKey === "GLOBAL_TOKEN_LIMIT"}
+											>
+												{savingKey === "GLOBAL_TOKEN_LIMIT" ? (
+													<RiLoader4Line className="size-4 animate-spin" />
+												) : (
+													<RiCheckLine className="size-4 mr-1" />
+												)}
+												Save
+											</Button>
+										</div>
+									) : (
+										<Button
+											variant="outline"
+											className="border-white-600 bg-white text-black-400 hover:bg-zinc-50 shadow-none px-4 rounded-lg h-10 text-sm font-medium"
+											onClick={() => setEditingBranch(true)}
+										>
+											<RiEdit2Line className="size-4 mr-1.5 text-black-400" />
+											Edit
+										</Button>
+									)}
+								</div>
+							</div>
+
+							{/* Row: Token Amount (SpDVE) & Token Amount (GP Plus) */}
+							<div className="flex flex-wrap items-start gap-8">
+								{/* Token Amount (SpDVE) */}
+								<div className="flex flex-col gap-1.5">
+									<span className="text-sm text-black-300">Token Amount (SpDVE)</span>
+									<div className="flex items-center gap-4">
+										<div className="relative w-64">
+											<Input
+												type="number"
+												disabled={!editingSpdve}
+												value={spdveAmount}
+												placeholder="500000"
+												onChange={(e) => setSpdveAmount(e.target.value)}
+												className="w-full bg-[#f0f0f0] border-white-600 text-black-500 h-10 rounded-lg pr-20 disabled:opacity-80 focus-visible:ring-blue-500"
+											/>
+											<span className="absolute right-3 top-1/2 -translate-y-1/2 text-sm text-black-200 pointer-events-none">
+												per month
+											</span>
+										</div>
+										{editingSpdve ? (
+											<div className="flex items-center gap-2">
+												<Button
+													variant="ghost"
+													className="text-black-400 hover:bg-zinc-100 px-3 rounded-lg font-medium h-10 text-sm"
+													onClick={() => {
+														setEditingSpdve(false);
+														setSpdveAmount(spdveLimit);
+													}}
+													disabled={savingKey === "TOKEN_LIMIT_SPKK"}
+												>
+													Cancel
+												</Button>
+												<Button
+													className="bg-blue-500 hover:bg-blue-600 text-white shadow-none px-4 rounded-lg font-medium h-10 text-sm"
+													onClick={() =>
+														handleSaveField(
+															"TOKEN_LIMIT_SPKK",
+															spdveAmount,
+															setEditingSpdve
+														)
+													}
+													disabled={savingKey === "TOKEN_LIMIT_SPKK"}
+												>
+													{savingKey === "TOKEN_LIMIT_SPKK" ? (
+														<RiLoader4Line className="size-4 animate-spin" />
+													) : (
+														<RiCheckLine className="size-4 mr-1" />
+													)}
+													Save
+												</Button>
+											</div>
+										) : (
+											<Button
+												variant="outline"
+												className="border-white-600 bg-white text-black-400 hover:bg-zinc-50 shadow-none px-4 rounded-lg h-10 text-sm font-medium"
+												onClick={() => setEditingSpdve(true)}
+											>
+												<RiEdit2Line className="size-4 mr-1.5 text-black-400" />
+												Edit
+											</Button>
+										)}
+									</div>
+								</div>
+
+								{/* Token Amount (GP Plus) */}
+								<div className="flex flex-col gap-1.5">
+									<span className="text-sm text-black-300">Token Amount (GP Plus)</span>
+									<div className="flex items-center gap-4">
+										<div className="relative w-64">
+											<Input
+												type="number"
+												disabled={!editingGpPlus}
+												value={gpPlusAmount}
+												placeholder="250000"
+												onChange={(e) => setGpPlusAmount(e.target.value)}
+												className="w-full bg-[#f0f0f0] border-white-600 text-black-500 h-10 rounded-lg pr-20 disabled:opacity-80 focus-visible:ring-blue-500"
+											/>
+											<span className="absolute right-3 top-1/2 -translate-y-1/2 text-sm text-black-200 pointer-events-none">
+												per month
+											</span>
+										</div>
+										{editingGpPlus ? (
+											<div className="flex items-center gap-2">
+												<Button
+													variant="ghost"
+													className="text-black-400 hover:bg-zinc-100 px-3 rounded-lg font-medium h-10 text-sm"
+													onClick={() => {
+														setEditingGpPlus(false);
+														setGpPlusAmount(gpPlusLimit);
+													}}
+													disabled={savingKey === "TOKEN_LIMIT_GP"}
+												>
+													Cancel
+												</Button>
+												<Button
+													className="bg-blue-500 hover:bg-blue-600 text-white shadow-none px-4 rounded-lg font-medium h-10 text-sm"
+													onClick={() =>
+														handleSaveField(
+															"TOKEN_LIMIT_GP",
+															gpPlusAmount,
+															setEditingGpPlus
+														)
+													}
+													disabled={savingKey === "TOKEN_LIMIT_GP"}
+												>
+													{savingKey === "TOKEN_LIMIT_GP" ? (
+														<RiLoader4Line className="size-4 animate-spin" />
+													) : (
+														<RiCheckLine className="size-4 mr-1" />
+													)}
+													Save
+												</Button>
+											</div>
+										) : (
+											<Button
+												variant="outline"
+												className="border-white-600 bg-white text-black-400 hover:bg-zinc-50 shadow-none px-4 rounded-lg h-10 text-sm font-medium"
+												onClick={() => setEditingGpPlus(true)}
+											>
+												<RiEdit2Line className="size-4 mr-1.5 text-black-400" />
+												Edit
+											</Button>
+										)}
+									</div>
+								</div>
 							</div>
 						</div>
 					</div>
 				)}
 			</div>
 
+			{/* Informational Toast / Banner */}
 			<div
 				className={`transition-all duration-300 ease-in-out overflow-hidden ${
 					showWarning ? "opacity-100 max-h-40 mt-4" : "opacity-0 max-h-0 mt-0"

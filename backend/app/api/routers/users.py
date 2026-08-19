@@ -100,8 +100,25 @@ async def _hydrate_user(user: User, db: AsyncSession) -> dict:
         tokens_used = result_token.scalar() or 0
         user_dict["tokens_used"] = tokens_used
         
-        # Override status for doctors if tokens are low
-        if user_dict["status"] == "Active" and user.token_limit and user.token_limit > 0:
+        # Check global token mode for status
+        from app.models.config import AppConfig
+        cfg_stmt = select(AppConfig.value).where(AppConfig.key == "GLOBAL_TOKEN_LIMIT_ACTIVE")
+        cfg_res = await db.execute(cfg_stmt)
+        cfg_val = cfg_res.scalar_one_or_none()
+        is_global_mode = (cfg_val or "false").lower() == "true"
+
+        if is_global_mode:
+            # Check Doctor Type limits (SpDVE vs GP Plus)
+            dr_type_clean = (user.dr_type or "").upper()
+            type_key = "TOKEN_LIMIT_SPKK" if any(k in dr_type_clean for k in ["SPDVE", "SP.DVE", "SPKK", "SP.KK", "SPDV"]) else ("TOKEN_LIMIT_GP" if any(k in dr_type_clean for k in ["GP", "GP PLUS", "UMUM"]) else "TOKEN_LIMIT_DEFAULT")
+            t_stmt = select(AppConfig.value).where(AppConfig.key == type_key)
+            t_res = await db.execute(t_stmt)
+            t_val = t_res.scalar_one_or_none()
+            if t_val and t_val.isdigit() and int(t_val) > 0:
+                user_dict["token_limit"] = int(t_val)
+                if user_dict["status"] == "Active" and tokens_used >= int(t_val) * 0.9:
+                    user_dict["status"] = "Warning"
+        elif user_dict["status"] == "Active" and user.token_limit and user.token_limit > 0:
             if tokens_used >= user.token_limit * 0.9:
                 user_dict["status"] = "Warning"
                 

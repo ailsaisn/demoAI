@@ -1,6 +1,5 @@
 "use client";
 
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { SearchBar } from "@/components/shared/search-bar";
@@ -20,6 +19,7 @@ import {
 	DropdownMenuRadioItem,
 } from "@/components/ui/dropdown-menu";
 import {
+	RiBookOpenLine,
 	RiDatabase2Line,
 	RiEyeLine,
 	RiLoader4Line,
@@ -52,7 +52,10 @@ export function KnowledgeTable({ type = "PRODUCT" }: { type?: string }) {
 		const normItem = itemType?.toUpperCase();
 		const normFilter = filterType?.toUpperCase();
 		if (normItem === normFilter) return true;
-		if ((normFilter === "OTHER" || normFilter === "GENERAL") && (normItem === "OTHER" || normItem === "GENERAL")) {
+		if (
+			(normFilter === "OTHER" || normFilter === "GENERAL") &&
+			(normItem === "OTHER" || normItem === "GENERAL")
+		) {
 			return true;
 		}
 		return false;
@@ -230,20 +233,14 @@ export function KnowledgeTable({ type = "PRODUCT" }: { type?: string }) {
 									onClick={() => handleRowClick(row)}
 								>
 									<TableCell>
-										<div className="flex items-center gap-3">
-											<Avatar className="w-10 h-10 rounded-md after:rounded-md">
-												<AvatarImage
-													src="/mini-placeholder.svg"
-													alt={row.title}
-													className="object-cover rounded-md"
-												/>
-												<AvatarFallback className="rounded-md bg-blue-50 text-blue-600 font-semibold text-xs">
-													{row.type?.substring(0, 2) || "KB"}
-												</AvatarFallback>
-											</Avatar>
-											<div className="flex flex-col min-w-0 w-full max-w-50 sm:max-w-62.5">
-												<span className="font-medium text-gray-900 truncate" title={row.title || undefined}>{row.title}</span>
-											</div>
+										<div className="flex items-center gap-2 min-w-0 max-w-50 sm:max-w-62.5">
+											<RiBookOpenLine className="size-4 shrink-0 text-gray-600" />
+											<span
+												className="font-medium text-gray-900 truncate"
+												title={row.title || undefined}
+											>
+												{row.title}
+											</span>
 										</div>
 									</TableCell>
 									<TableCell>
@@ -260,11 +257,14 @@ export function KnowledgeTable({ type = "PRODUCT" }: { type?: string }) {
 													day: "2-digit",
 													month: "short",
 													year: "numeric",
-											  })
+												})
 											: "-"}
 									</TableCell>
 									<TableCell className="max-w-xl">
-										<p className="text-sm text-gray-600 truncate" title={row.ai_summary || row.content || undefined}>
+										<p
+											className="text-sm text-gray-600 truncate"
+											title={row.ai_summary || row.content || undefined}
+										>
 											{row.ai_summary || row.content || "No description available."}
 										</p>
 									</TableCell>

@@ -9,6 +9,7 @@ import { useState } from "react";
 import { UserResponse } from "../api/types";
 import { DoctorAdjustLimitDialog } from "./doctor-adjust-limit-dialog";
 import { DoctorManageKnowledgeDialog } from "./doctor-manage-knowledge-dialog";
+import { useConfigs } from "../../configuration/hooks/use-config";
 
 export function DoctorDetailsSheet({
 	isOpen,
@@ -21,6 +22,22 @@ export function DoctorDetailsSheet({
 }) {
 	const [isManageKnowledgeOpen, setIsManageKnowledgeOpen] = useState(false);
 	const [isAdjustLimitOpen, setIsAdjustLimitOpen] = useState(false);
+
+	const { data: configs } = useConfigs();
+	const isGlobalLimitActive =
+		configs?.find((c) => c.key === "GLOBAL_TOKEN_LIMIT_ACTIVE")?.value === "true";
+	const spdveLimit = configs?.find((c) => c.key === "TOKEN_LIMIT_SPKK")?.value || "500000";
+	const gpPlusLimit = configs?.find((c) => c.key === "TOKEN_LIMIT_GP")?.value || "250000";
+
+	// Determine doctor type quota label if global mode is active
+	const drTypeUpper = (doctor?.dr_type || "").toUpperCase();
+	const isSpDVE = drTypeUpper.includes("SPKK") || drTypeUpper.includes("SPDVE") || drTypeUpper.includes("SPDV");
+	const isGP = drTypeUpper.includes("GP") || drTypeUpper.includes("UMUM");
+	const effectiveGlobalLimit = isSpDVE ? Number(spdveLimit) : isGP ? Number(gpPlusLimit) : (doctor?.token_limit ?? 0);
+	const effectiveLimit = isGlobalLimitActive ? effectiveGlobalLimit : (doctor?.token_limit ?? 0);
+	const tokensUsed = doctor?.tokens_used ?? 0;
+	const tokensRemaining = Math.max(0, effectiveLimit - tokensUsed);
+
 	return (
 		<Sheet open={isOpen} onOpenChange={onOpenChange}>
 			<SheetContent className="sm:max-w-100 p-0 flex flex-col h-full bg-white gap-0">
@@ -52,7 +69,7 @@ export function DoctorDetailsSheet({
 
 									<div className="flex flex-col gap-2">
 										<span className="text-sm text-gray-500">Email</span>
-										<span className="text-sm text-gray-900">{doctor.email}</span>
+										<span className="text-sm text-gray-900">{doctor.email || "-"}</span>
 									</div>
 
 									<div className="flex flex-col gap-2">
@@ -62,7 +79,14 @@ export function DoctorDetailsSheet({
 
 									<div className="flex flex-col gap-2">
 										<span className="text-sm text-gray-500">Dr Type</span>
-										<span className="text-sm text-gray-900">{doctor.dr_type || "-"}</span>
+										<div className="flex items-center gap-2">
+											<span className="text-sm text-gray-900">{doctor.dr_type || "-"}</span>
+											{isGlobalLimitActive && (
+												<span className="text-xs bg-blue-50 text-blue-600 px-2 py-0.5 rounded-full font-medium border border-blue-100">
+													{isSpDVE ? "SpDVE Global Quota" : isGP ? "GP Plus Global Quota" : "Global Quota"}
+												</span>
+											)}
+										</div>
 									</div>
 
 									<div className="flex flex-col gap-2">
@@ -72,23 +96,27 @@ export function DoctorDetailsSheet({
 
 									<div className="flex flex-col gap-2">
 										<div className="flex justify-between items-center">
-											<div className="flex flex-col gap-2">
+											<div className="flex flex-col gap-1">
 												<span className="text-sm text-gray-500">Tokens Remaining</span>
-												<span className="text-sm text-gray-900">
-													{doctor.token_limit !== undefined && doctor.tokens_used !== undefined
-														? doctor.token_limit - doctor.tokens_used
-														: 0}{" "}
-													/ {doctor.token_limit ?? 0} tokens
+												<span className="text-sm font-medium text-gray-900">
+													{tokensRemaining.toLocaleString()} / {effectiveLimit.toLocaleString()} tokens
 												</span>
+												{isGlobalLimitActive && (
+													<span className="text-xs text-blue-600 font-normal">
+														Managed by Global Doctor Type Quota
+													</span>
+												)}
 											</div>
-											<Button
-												variant="outline"
-												className=""
-												onClick={() => setIsAdjustLimitOpen(true)}
-											>
-												<RiEdit2Line className="mr-2 h-4 w-4" />
-												Adjust Limit
-											</Button>
+											{!isGlobalLimitActive && (
+												<Button
+													variant="outline"
+													className=""
+													onClick={() => setIsAdjustLimitOpen(true)}
+												>
+													<RiEdit2Line className="mr-2 h-4 w-4" />
+													Adjust Limit
+												</Button>
+											)}
 										</div>
 									</div>
 
@@ -99,13 +127,14 @@ export function DoctorDetailsSheet({
 												{doctor.branches.map((branch) => (
 													<div
 														key={branch.id}
-														className="border border-gray-200 rounded-md p-3 flex flex-col gap-3"
+														className="border border-gray-200 rounded-md p-3 flex flex-col gap-1"
 													>
-														<div className="flex flex-col">
-															<span className="text-sm font-medium text-gray-900">
-																{branch.name}
-															</span>
-														</div>
+														<span className="text-sm font-medium text-gray-900">
+															{branch.name}
+														</span>
+														<span className="text-xs text-gray-500">
+															Branch Token Pool: {branch.token_limit ? `${branch.token_limit.toLocaleString()} tokens/mo` : "Default"}
+														</span>
 													</div>
 												))}
 											</div>

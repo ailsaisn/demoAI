@@ -98,7 +98,11 @@ async def upsert_doctor_payload(db: AsyncSession, data: Dict[str, Any]) -> User:
         
     cis_id = int(raw_id)
     name = data.get("name", "")
-    email = data.get("email")
+    raw_email = data.get("email")
+    email = raw_email.strip() if isinstance(raw_email, str) and raw_email.strip() else None
+    if email and ("@" not in email or len(email) < 5):
+        email = None
+
     employee_id = data.get("nik") or data.get("employee_id")
     dr_type = data.get("user_type_name") or data.get("dr_type")
     user_type_code = str(data.get("user_type")) if data.get("user_type") is not None else None
@@ -112,7 +116,7 @@ async def upsert_doctor_payload(db: AsyncSession, data: Dict[str, Any]) -> User:
     
     if not user:
         user = User(
-            email=email or f"doc_{cis_id}@placeholder.com",
+            email=email,
             name=name,
             cis_id=cis_id,
             employee_id=employee_id,
@@ -127,8 +131,7 @@ async def upsert_doctor_payload(db: AsyncSession, data: Dict[str, Any]) -> User:
         db.add(user)
     else:
         user.name = name
-        if email:
-            user.email = email
+        user.email = email
         user.employee_id = employee_id
         user.dr_type = dr_type
         if user_type_code:
@@ -144,10 +147,16 @@ async def upsert_doctor_payload(db: AsyncSession, data: Dict[str, Any]) -> User:
     # Process nested branch associations if provided in doctor payload
     branches_list = data.get("user_branchs") or data.get("user_branches")
     if branches_list and isinstance(branches_list, list):
+        seen_branches = set()
         for item in branches_list:
             b_raw_id = item.get("branch_id")
             b_code = item.get("branch_code")
             b_status = str(item.get("status", "1"))
+            
+            dedup_key = (str(b_raw_id) if b_raw_id is not None else None, str(b_code) if b_code else None)
+            if dedup_key in seen_branches:
+                continue
+            seen_branches.add(dedup_key)
             
             branch = None
             if b_code:
@@ -194,6 +203,7 @@ async def upsert_doctor_payload(db: AsyncSession, data: Dict[str, Any]) -> User:
 
 async def upsert_user_branch_payload(db: AsyncSession, data_list: List[Dict[str, Any]]):
     """Process a list of user-branch association updates."""
+    seen_mappings = set()
     for item in data_list:
         raw_user_id = item.get("user_id")
         raw_branch_id = item.get("branch_id")
@@ -203,6 +213,11 @@ async def upsert_user_branch_payload(db: AsyncSession, data_list: List[Dict[str,
         if raw_user_id is None or (raw_branch_id is None and not branch_code):
             logger.warning(f"Skipping user_branch mapping, missing user_id or branch info: {item}")
             continue
+            
+        dedup_key = (str(raw_user_id), str(raw_branch_id) if raw_branch_id is not None else None, str(branch_code) if branch_code else None)
+        if dedup_key in seen_mappings:
+            continue
+        seen_mappings.add(dedup_key)
             
         user_cis_id = int(raw_user_id)
         

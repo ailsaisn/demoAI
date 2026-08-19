@@ -9,12 +9,14 @@ import "./FloatingChatbot.css";
  * @param {Object} props
  * @param {string} props.token - The JWT token provided by the CIS system (used for authorization).
  * @param {string} props.doctorName - The name of the doctor currently logged in (for display).
- * @param {string} props.branchId - The UUID of the branch the doctor is currently operating in.
+ * @param {string} [props.branchCode] - The code of the branch (e.g. "011").
+ * @param {string} [props.branchId] - The CIS external ID of the branch (e.g. "838").
  * @param {string} [props.apiBaseUrl] - The base URL of the Chatbot API (e.g., https://api.arya-noble.com).
  */
 export default function FloatingChatbot({
 	token,
 	doctorName = "Doctor",
+	branchCode,
 	branchId,
 	apiBaseUrl = "http://localhost:8000",
 }) {
@@ -44,13 +46,11 @@ export default function FloatingChatbot({
 				method: "POST",
 				headers: {
 					"Content-Type": "application/json",
-					// Authentication Note for CIS Team:
-					// The token provided via props should be a valid RS256 JWT signed by the CIS system.
-					// The AI Backend will verify this token using the CIS public key (SSO).
 					Authorization: `Bearer ${token}`,
 				},
 				body: JSON.stringify({
-					cis_branch_id: branchId,
+					...(branchCode ? { branch_code: branchCode } : {}),
+					...(branchId && !branchCode ? { cis_branch_id: branchId } : {}),
 				}),
 			});
 

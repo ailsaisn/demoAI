@@ -10,10 +10,16 @@ import {
 	TableRow,
 } from "@/components/ui/table";
 import { useBranches } from "../hooks/use-branches";
+import { useConfigs } from "../../configuration/hooks/use-config";
 import { ViewBranchSheet } from "./view-branch-sheet";
 
 export function BranchTokenTable() {
 	const { data: branches, isLoading } = useBranches();
+	const { data: configs } = useConfigs();
+
+	const isGlobalLimitActive =
+		configs?.find((c) => c.key === "GLOBAL_TOKEN_LIMIT_ACTIVE")?.value === "true";
+	const globalBranchLimit = configs?.find((c) => c.key === "GLOBAL_TOKEN_LIMIT")?.value || "3000000";
 
 	return (
 		<div className="flex flex-col gap-4 w-full">
@@ -57,26 +63,42 @@ export function BranchTokenTable() {
 								</TableCell>
 							</TableRow>
 						) : (
-							branches?.map((branch) => (
-								<TableRow key={branch.id} className="border-b-black-50">
-									<TableCell className="max-w-50">
-										<div className="flex items-center gap-3">
+							branches?.map((branch) => {
+								const limit = isGlobalLimitActive
+									? Number(globalBranchLimit)
+									: (branch.token_limit ?? branch.tokensMonth ?? 0);
+								const used = branch.used ?? 0;
+								const remaining = Math.max(0, limit - used);
 
-											<div className="flex flex-col justify-center overflow-hidden">
-												<span className="font-medium text-black-500 truncate">{branch.name}</span>
+								return (
+									<TableRow key={branch.id} className="border-b-black-50">
+										<TableCell className="max-w-50">
+											<div className="flex items-center gap-3">
+												<div className="flex flex-col justify-center overflow-hidden">
+													<span className="font-medium text-black-500 truncate">{branch.name}</span>
+													{branch.code && (
+														<span className="text-xs text-zinc-400">{branch.code}</span>
+													)}
+												</div>
 											</div>
-										</div>
-									</TableCell>
-									<TableCell className="text-blue-600 font-medium">{branch.token_limit ?? branch.tokensMonth ?? 0}</TableCell>
-									<TableCell className="text-blue-600 font-medium">{branch.used}</TableCell>
-									<TableCell className="text-blue-600 font-medium">{branch.remaining}</TableCell>
-									<TableCell className="text-right">
-										<div className="flex justify-end">
-											<ViewBranchSheet branch={branch} />
-										</div>
-									</TableCell>
-								</TableRow>
-							))
+										</TableCell>
+										<TableCell className="text-blue-600 font-medium">
+											{limit.toLocaleString()}
+										</TableCell>
+										<TableCell className="text-blue-600 font-medium">
+											{used.toLocaleString()}
+										</TableCell>
+										<TableCell className="text-blue-600 font-medium">
+											{remaining.toLocaleString()}
+										</TableCell>
+										<TableCell className="text-right">
+											<div className="flex justify-end">
+												<ViewBranchSheet branch={branch} />
+											</div>
+										</TableCell>
+									</TableRow>
+								);
+							})
 						)}
 					</TableBody>
 				</Table>

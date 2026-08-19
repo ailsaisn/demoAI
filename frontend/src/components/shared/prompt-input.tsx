@@ -16,6 +16,7 @@ import {
 	RiMegaphoneLine,
 	RiCornerDownLeftLine,
 	RiArchiveLine,
+	RiUploadCloud2Line,
 } from "@remixicon/react";
 import {
 	Attachment,
@@ -52,11 +53,67 @@ export function PromptInput({
 	const [categoryError, setCategoryError] = React.useState(false);
 	const [inputValue, setInputValue] = React.useState("");
 	const [attachedFiles, setAttachedFiles] = React.useState<File[]>([]);
+	const [isDragging, setIsDragging] = React.useState(false);
+	const dragCounter = React.useRef(0);
 
 	const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
 		const files = e.target.files;
 		if (files && files.length > 0) {
 			setAttachedFiles((prev) => [...prev, ...Array.from(files)]);
+		}
+	};
+
+	const handleDragEnter = (e: React.DragEvent<HTMLDivElement>) => {
+		e.preventDefault();
+		e.stopPropagation();
+		if (disabled) return;
+
+		if (e.dataTransfer.types && Array.from(e.dataTransfer.types).includes("Files")) {
+			dragCounter.current += 1;
+			setIsDragging(true);
+		}
+	};
+
+	const handleDragLeave = (e: React.DragEvent<HTMLDivElement>) => {
+		e.preventDefault();
+		e.stopPropagation();
+		if (disabled) return;
+
+		dragCounter.current -= 1;
+		if (dragCounter.current <= 0) {
+			dragCounter.current = 0;
+			setIsDragging(false);
+		}
+	};
+
+	const handleDragOver = (e: React.DragEvent<HTMLDivElement>) => {
+		e.preventDefault();
+		e.stopPropagation();
+		if (disabled) return;
+
+		if (e.dataTransfer) {
+			e.dataTransfer.dropEffect = "copy";
+		}
+	};
+
+	const handleDrop = (e: React.DragEvent<HTMLDivElement>) => {
+		e.preventDefault();
+		e.stopPropagation();
+		if (disabled) return;
+
+		dragCounter.current = 0;
+		setIsDragging(false);
+
+		if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+			setAttachedFiles((prev) => [...prev, ...Array.from(e.dataTransfer.files)]);
+		}
+	};
+
+	const handlePaste = (e: React.ClipboardEvent) => {
+		if (disabled) return;
+		if (e.clipboardData.files && e.clipboardData.files.length > 0) {
+			e.preventDefault();
+			setAttachedFiles((prev) => [...prev, ...Array.from(e.clipboardData.files)]);
 		}
 	};
 
@@ -104,7 +161,44 @@ export function PromptInput({
 	};
 
 	return (
-		<div className={cn("w-full bg-zinc-100/50 rounded-md p-2.5", className)} {...props}>
+		<div
+			className={cn(
+				"relative w-full rounded-md p-2.5 transition-colors border",
+				isDragging
+					? "border-blue-500 bg-blue-50/50"
+					: "border-transparent bg-zinc-100/50",
+				className,
+			)}
+			onDragEnter={handleDragEnter}
+			onDragLeave={handleDragLeave}
+			onDragOver={handleDragOver}
+			onDrop={handleDrop}
+			onPaste={handlePaste}
+			{...props}
+		>
+			{/* Drag & Drop Visual Overlay (Flat) */}
+			{isDragging && (
+				<div className="absolute inset-0 z-30 flex flex-col items-center justify-center rounded-md border-2 border-dashed border-blue-500 bg-blue-50/95 pointer-events-none gap-2 p-4 text-center">
+					<div className="flex items-center justify-center size-10 rounded-full bg-blue-100 text-blue-600">
+						<RiUploadCloud2Line className="size-5" />
+					</div>
+					<div className="flex flex-col items-center gap-0.5">
+						<span className="text-xs font-semibold text-zinc-900">
+							Drop files here to attach
+						</span>
+						<span className="text-[11px] text-zinc-500">
+							Release to add files to your prompt
+						</span>
+					</div>
+					<div className="flex items-center gap-1.5 text-[10px]">
+						<span className="px-1.5 py-0.5 rounded bg-white border border-blue-200 font-medium text-zinc-700">PDF</span>
+						<span className="px-1.5 py-0.5 rounded bg-white border border-blue-200 font-medium text-zinc-700">DOCX</span>
+						<span className="px-1.5 py-0.5 rounded bg-white border border-blue-200 font-medium text-zinc-700">XLSX</span>
+						<span className="px-1.5 py-0.5 rounded bg-white border border-blue-200 font-medium text-zinc-700">Images</span>
+					</div>
+				</div>
+			)}
+
 			{/* Attached Files Preview */}
 			{attachedFiles.length > 0 && (
 				<div className="flex gap-2 mb-2 overflow-x-auto pb-2 custom-scrollbar">

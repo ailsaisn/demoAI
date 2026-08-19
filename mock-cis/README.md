@@ -58,14 +58,14 @@ The mock service includes a reference React implementation (`frontend/src/compon
    <FloatingChatbot
    	token="eyJhbGciOiJSUzI1Ni... (SSO Token)"
    	doctorName="Dr. Jane Doe, Sp.D.V.E."
-   	branchId="11111111-1111-1111-1111-111111111111"
+   	branchCode="011"
    	apiBaseUrl="https://api.chatbot.aryanoble.com"
    />
    ```
 3. **API Flow inside the Component**:
-   - **Start Session**: Calls `POST /api/chats/` with the `branch_id`.
-   - **Send Message**: Calls `POST /api/chats/{session_id}/messages` using `FormData` (supports text and file attachments).
-   - **Receive Message**: Polls `GET /api/chats/{session_id}/messages` to get the AI's response (or uses WebSockets/SSE in production).
+   - **Start Session**: Calls `POST /api/chats/` with `branch_code` (e.g. `"011"`) or `cis_branch_id`.
+   - **Send Message**: Calls `POST /api/chats/{session_id}/messages/stream` (SSE Stream).
+   - **Receive Message**: Receives streaming response tokens in real-time.
 
 ---
 

@@ -66,12 +66,14 @@ services:
     build:
       context: ./frontend
       target: production
+      args:
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-https://dokterpedia-api-dev.aryanoble.web.id/api}
     container_name: skin_clinic_frontend_prod
     restart: always
     ports:
       - "3000:3000"
     environment:
-      - NEXT_PUBLIC_API_URL=http://localhost:8000/api
+      - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-https://dokterpedia-api-dev.aryanoble.web.id/api}
     depends_on:
       backend:
         condition: service_healthy

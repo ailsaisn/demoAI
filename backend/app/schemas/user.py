@@ -12,10 +12,11 @@ class RoleResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 class UserBase(BaseModel):
-    email: EmailStr
     name: str
+    email: Optional[EmailStr] = None
 
 class UserCreateStaff(UserBase):
+    email: EmailStr
     password: str
     employee_id: Optional[str] = None
     roles: Optional[List[str]] = ["Staff"]

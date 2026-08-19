@@ -15,6 +15,8 @@ import {
 	AttachmentContent,
 	AttachmentTitle,
 	AttachmentDescription,
+	AttachmentActions,
+	AttachmentAction,
 } from "@/components/ui/attachment";
 import { api } from "@/lib/axios";
 import {
@@ -30,6 +32,7 @@ import {
 	RiLoader4Line,
 	RiRobot2Line,
 	RiUser3Line,
+	RiUploadCloud2Line,
 } from "@remixicon/react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useState, useEffect, useRef } from "react";
@@ -71,6 +74,7 @@ interface Message {
 	role: "user" | "assistant";
 	content: string;
 	attachmentName?: string;
+	attachmentNames?: string[];
 }
 
 export function ChatPreview({
@@ -135,7 +139,7 @@ export function ChatPreview({
 	};
 
 	const [input, setInput] = useState("");
-	const [attachedFile, setAttachedFile] = useState<File | null>(null);
+	const [attachedFiles, setAttachedFiles] = useState<File[]>([]);
 	const [isLoading, setIsLoading] = useState(false);
 	const [activeTab, setActiveTab] = useState<string | null>(null);
 
@@ -144,6 +148,62 @@ export function ChatPreview({
 
 	const fileInputRef = useRef<HTMLInputElement>(null);
 	const queryClient = useQueryClient();
+	const [isDragging, setIsDragging] = useState(false);
+	const dragCounter = useRef(0);
+
+	const handleDragEnter = (e: React.DragEvent<HTMLDivElement>) => {
+		e.preventDefault();
+		e.stopPropagation();
+		if (isInputDisabled) return;
+
+		if (e.dataTransfer.types && Array.from(e.dataTransfer.types).includes("Files")) {
+			dragCounter.current += 1;
+			setIsDragging(true);
+		}
+	};
+
+	const handleDragLeave = (e: React.DragEvent<HTMLDivElement>) => {
+		e.preventDefault();
+		e.stopPropagation();
+		if (isInputDisabled) return;
+
+		dragCounter.current -= 1;
+		if (dragCounter.current <= 0) {
+			dragCounter.current = 0;
+			setIsDragging(false);
+		}
+	};
+
+	const handleDragOver = (e: React.DragEvent<HTMLDivElement>) => {
+		e.preventDefault();
+		e.stopPropagation();
+		if (isInputDisabled) return;
+
+		if (e.dataTransfer) {
+			e.dataTransfer.dropEffect = "copy";
+		}
+	};
+
+	const handleDrop = (e: React.DragEvent<HTMLDivElement>) => {
+		e.preventDefault();
+		e.stopPropagation();
+		if (isInputDisabled) return;
+
+		dragCounter.current = 0;
+		setIsDragging(false);
+
+		if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+			setAttachedFiles((prev) => [...prev, ...Array.from(e.dataTransfer.files)]);
+		}
+	};
+
+	const handlePaste = (e: React.ClipboardEvent) => {
+		if (isInputDisabled) return;
+		if (e.clipboardData.files && e.clipboardData.files.length > 0) {
+			e.preventDefault();
+			setAttachedFiles((prev) => [...prev, ...Array.from(e.clipboardData.files)]);
+		}
+	};
 
 	useEffect(() => {
 		if (typeof window !== "undefined") {
@@ -248,28 +308,32 @@ export function ChatPreview({
 		);
 	};
 
-	// handleAddCategory and availableCategories are now handled in CategorySettings,
-	// but we keep them here if anything else uses them (though they are not used).
-	// We can safely remove them since CategorySettings manages its own local state.
-
 	const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
-		if (e.target.files && e.target.files[0]) {
-			setAttachedFile(e.target.files[0]);
+		const files = e.target.files;
+		if (files && files.length > 0) {
+			setAttachedFiles((prev) => [...prev, ...Array.from(files)]);
 		}
 	};
 
-	const handleSend = async () => {
-		if ((!input.trim() && !attachedFile) || isLoading) return;
+	const removeAttachedFile = (indexToRemove: number) => {
+		setAttachedFiles((prev) => prev.filter((_, idx) => idx !== indexToRemove));
+	};
 
+	const handleSend = async () => {
+		if ((!input.trim() && attachedFiles.length === 0) || isLoading) return;
+
+		const fileNames = attachedFiles.map((f) => f.name);
 		const userMsg: Message = {
 			role: "user",
-			content: input.trim() || (attachedFile ? `Attached file: ${attachedFile.name}` : ""),
-			attachmentName: attachedFile ? attachedFile.name : undefined,
+			content:
+				input.trim() || (fileNames.length > 0 ? `Attached files: ${fileNames.join(", ")}` : ""),
+			attachmentNames: fileNames.length > 0 ? fileNames : undefined,
+			attachmentName: fileNames.length > 0 ? fileNames[0] : undefined,
 		};
 
 		setUserChatMessages((prev) => [...prev, userMsg]);
 		setInput("");
-		setAttachedFile(null);
+		setAttachedFiles([]);
 		setIsLoading(true);
 
 		try {
@@ -467,12 +531,39 @@ export function ChatPreview({
 													</div>
 												);
 											})()}
-										{messages[0].attachmentName && (
-											<div className="flex items-center gap-2 px-3 py-1.5 bg-zinc-100 border border-zinc-200 rounded-md text-xs font-medium text-zinc-800 w-fit mb-2 shadow-none">
-												<RiFileTextLine className="size-3.5 text-blue-600 shrink-0" />
-												<span className="truncate max-w-xs">{messages[0].attachmentName}</span>
-											</div>
-										)}
+										{(() => {
+											const names =
+												messages[0].attachmentNames ||
+												(messages[0].attachmentName ? [messages[0].attachmentName] : []);
+											if (names.length === 0) return null;
+											return (
+												<div className="flex flex-wrap gap-2 mb-2">
+													{names.map((name, i) => {
+														const { Icon, bgColor, textColor } = getFileIconAndColor(name);
+														return (
+															<Attachment
+																key={i}
+																className="bg-white border border-zinc-200 shadow-none p-1.5 min-w-35 max-w-50 shrink-0 rounded-lg"
+															>
+																<AttachmentMedia
+																	className={`${bgColor} ${textColor} rounded-lg p-2 shrink-0`}
+																>
+																	<Icon className="w-5 h-5" />
+																</AttachmentMedia>
+																<AttachmentContent className="overflow-hidden min-w-0 pr-2">
+																	<AttachmentTitle className="text-[13px] font-medium text-zinc-950 truncate block">
+																		{name}
+																	</AttachmentTitle>
+																	<AttachmentDescription className="text-[11px] text-zinc-500 uppercase">
+																		DOCUMENT
+																	</AttachmentDescription>
+																</AttachmentContent>
+															</Attachment>
+														);
+													})}
+												</div>
+											);
+										})()}
 										{preHeaderNode}
 										<div
 											className={`flex items-start gap-3 w-full ${messages[0].role === "user" ? "flex-row-reverse" : ""}`}
@@ -519,12 +610,39 @@ export function ChatPreview({
 										<div
 											className={`flex flex-col w-full ${msg.role === "user" ? "items-end" : "items-start"}`}
 										>
-											{msg.attachmentName && (
-												<div className="flex items-center gap-2 px-3 py-1.5 bg-zinc-100 border border-zinc-200 rounded-md text-xs font-medium text-zinc-800 w-fit mb-2 shadow-none">
-													<RiFileTextLine className="size-3.5 text-blue-600 shrink-0" />
-													<span className="truncate max-w-xs">{msg.attachmentName}</span>
-												</div>
-											)}
+											{(() => {
+												const names =
+													msg.attachmentNames ||
+													(msg.attachmentName ? [msg.attachmentName] : []);
+												if (names.length === 0) return null;
+												return (
+													<div className="flex flex-wrap gap-2 mb-2">
+														{names.map((name, i) => {
+															const { Icon, bgColor, textColor } = getFileIconAndColor(name);
+															return (
+																<Attachment
+																	key={i}
+																	className="bg-white border border-zinc-200 shadow-none p-1.5 min-w-35 max-w-50 shrink-0 rounded-lg"
+																>
+																	<AttachmentMedia
+																		className={`${bgColor} ${textColor} rounded-lg p-2 shrink-0`}
+																	>
+																		<Icon className="w-5 h-5" />
+																	</AttachmentMedia>
+																	<AttachmentContent className="overflow-hidden min-w-0 pr-2">
+																		<AttachmentTitle className="text-[13px] font-medium text-zinc-950 truncate block">
+																			{name}
+																		</AttachmentTitle>
+																		<AttachmentDescription className="text-[11px] text-zinc-500 uppercase">
+																			DOCUMENT
+																		</AttachmentDescription>
+																	</AttachmentContent>
+																</Attachment>
+															);
+														})}
+													</div>
+												);
+											})()}
 											<div
 												className={`flex items-start gap-3 w-full ${msg.role === "user" ? "flex-row-reverse" : ""}`}
 											>
@@ -572,19 +690,74 @@ export function ChatPreview({
 
 			{/* Chatbox Input */}
 			<div className="px-8 py-4 shrink-0">
-				<div className="bg-white rounded-md p-4 flex flex-col gap-3 border border-black/10 shadow-xs">
-					{/* File Attachment Pill Preview in Input */}
-					{attachedFile && (
-						<div className="flex items-center gap-2 px-3 py-1.5 bg-blue-50 border border-blue-200 text-blue-800 rounded-md text-xs font-medium w-fit">
-							<RiFileTextLine className="size-3.5 text-blue-600 shrink-0" />
-							<span className="truncate max-w-xs">{attachedFile.name}</span>
-							<button
-								type="button"
-								onClick={() => setAttachedFile(null)}
-								className="text-blue-600 hover:text-blue-900 ml-1 p-0.5 rounded-full hover:bg-blue-100"
-							>
-								<RiCloseLine className="size-3.5" />
-							</button>
+				<div
+					className={`relative rounded-md p-4 flex flex-col gap-3 transition-colors border ${
+						isDragging
+							? "border-blue-500 bg-blue-50/50"
+							: "border-black/10 bg-white"
+					}`}
+					onDragEnter={handleDragEnter}
+					onDragLeave={handleDragLeave}
+					onDragOver={handleDragOver}
+					onDrop={handleDrop}
+					onPaste={handlePaste}
+				>
+					{/* Drag & Drop Visual Overlay (Flat) */}
+					{isDragging && (
+						<div className="absolute inset-0 z-30 flex flex-col items-center justify-center rounded-md border-2 border-dashed border-blue-500 bg-blue-50/95 pointer-events-none gap-2 p-4 text-center">
+							<div className="flex items-center justify-center size-10 rounded-full bg-blue-100 text-blue-600">
+								<RiUploadCloud2Line className="size-5" />
+							</div>
+							<div className="flex flex-col items-center gap-0.5">
+								<span className="text-xs font-semibold text-zinc-900">
+									Drop file here to attach
+								</span>
+								<span className="text-[11px] text-zinc-500">
+									Release to add file to your message
+								</span>
+							</div>
+							<div className="flex items-center gap-1.5 text-[10px]">
+								<span className="px-1.5 py-0.5 rounded bg-white border border-blue-200 font-medium text-zinc-700">PDF</span>
+								<span className="px-1.5 py-0.5 rounded bg-white border border-blue-200 font-medium text-zinc-700">DOCX</span>
+								<span className="px-1.5 py-0.5 rounded bg-white border border-blue-200 font-medium text-zinc-700">XLSX</span>
+								<span className="px-1.5 py-0.5 rounded bg-white border border-blue-200 font-medium text-zinc-700">Images</span>
+							</div>
+						</div>
+					)}
+
+					{/* File Attachment Cards Preview in Input */}
+					{attachedFiles.length > 0 && (
+						<div className="flex gap-2 overflow-x-auto pb-1 custom-scrollbar">
+							{attachedFiles.map((file, idx) => {
+								const { Icon, bgColor, textColor } = getFileIconAndColor(file.name);
+								return (
+									<Attachment
+										key={idx}
+										className="bg-white border border-zinc-200 shadow-none p-1.5 min-w-35 max-w-50 shrink-0 rounded-lg"
+									>
+										<AttachmentMedia className={`${bgColor} ${textColor} rounded-lg p-2 shrink-0`}>
+											<Icon className="w-5 h-5" />
+										</AttachmentMedia>
+										<AttachmentContent className="overflow-hidden min-w-0 pr-1">
+											<AttachmentTitle className="text-[13px] font-medium text-zinc-950 truncate block">
+												{file.name}
+											</AttachmentTitle>
+											<AttachmentDescription className="text-[11px] text-zinc-500">
+												{(file.size / 1024).toFixed(1)} KB
+											</AttachmentDescription>
+										</AttachmentContent>
+										<AttachmentActions>
+											<AttachmentAction
+												variant="ghost"
+												className="hover:bg-zinc-100 text-zinc-500 hover:text-zinc-950 ml-1"
+												onClick={() => removeAttachedFile(idx)}
+											>
+												<RiCloseLine className="w-4 h-4" />
+											</AttachmentAction>
+										</AttachmentActions>
+									</Attachment>
+								);
+							})}
 						</div>
 					)}
 
@@ -603,7 +776,13 @@ export function ChatPreview({
 						className="w-full bg-transparent border-none shadow-none focus-visible:ring-0 px-0 outline-none text-sm text-gray-700 placeholder:text-gray-500"
 					/>
 
-					<input type="file" ref={fileInputRef} onChange={handleFileSelect} className="hidden" />
+					<input
+						type="file"
+						ref={fileInputRef}
+						onChange={handleFileSelect}
+						multiple
+						className="hidden"
+					/>
 
 					<div className="flex items-center justify-between pt-1">
 						<Button
@@ -613,13 +792,13 @@ export function ChatPreview({
 							onClick={() => fileInputRef.current?.click()}
 							disabled={isInputDisabled}
 							className="text-zinc-500 hover:text-zinc-900 hover:bg-zinc-100"
-							title="Attach a file"
+							title="Attach files"
 						>
 							<RiAttachment2 className="size-4" />
 						</Button>
 						<Button
 							onClick={handleSend}
-							disabled={isInputDisabled || (!input.trim() && !attachedFile)}
+							disabled={isInputDisabled || (!input.trim() && attachedFiles.length === 0)}
 							size="icon"
 							className="bg-blue-500 text-white hover:bg-blue-600 shrink-0"
 						>

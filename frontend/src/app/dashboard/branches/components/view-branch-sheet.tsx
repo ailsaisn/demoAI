@@ -8,6 +8,7 @@ import { RiEyeLine } from "@remixicon/react";
 import * as React from "react";
 import { BranchResponse } from "../../configuration/api/types";
 import { EditBranchTokenDialog } from "./edit-branch-token-dialog";
+import { useConfigs } from "../../configuration/hooks/use-config";
 
 interface ViewBranchSheetProps {
 	branch: BranchResponse;
@@ -15,6 +16,18 @@ interface ViewBranchSheetProps {
 
 export function ViewBranchSheet({ branch }: ViewBranchSheetProps) {
 	const [open, setOpen] = React.useState(false);
+
+	const { data: configs } = useConfigs();
+	const isGlobalLimitActive =
+		configs?.find((c) => c.key === "GLOBAL_TOKEN_LIMIT_ACTIVE")?.value === "true";
+	const globalBranchLimit = configs?.find((c) => c.key === "GLOBAL_TOKEN_LIMIT")?.value || "3000000";
+
+	const effectiveBranchLimit = isGlobalLimitActive
+		? Number(globalBranchLimit)
+		: (branch.token_limit ?? branch.tokensMonth ?? 0);
+
+	const branchUsed = branch.used ?? 0;
+	const branchRemaining = Math.max(0, effectiveBranchLimit - branchUsed);
 
 	return (
 		<>
@@ -35,7 +48,6 @@ export function ViewBranchSheet({ branch }: ViewBranchSheetProps) {
 					</SheetHeader>
 
 					<div className="flex-1 overflow-y-auto pb-6">
-
 						<Tabs defaultValue="information" className="w-full">
 							<div className="px-6 pt-4">
 								<TabsList
@@ -81,21 +93,33 @@ export function ViewBranchSheet({ branch }: ViewBranchSheetProps) {
 								<div className="flex items-center justify-between gap-4">
 									<div className="flex flex-col gap-1">
 										<span className="text-sm text-black-300">Tokens</span>
-										<span className="text-sm font-medium text-blue-600">
-											{branch.token_limit ?? branch.tokensMonth ?? 0} <span className="text-black-500 font-normal">/month</span>
-										</span>
+										<div className="flex items-center gap-2">
+											<span className="text-sm font-medium text-blue-600">
+												{effectiveBranchLimit.toLocaleString()}{" "}
+												<span className="text-black-500 font-normal">/month</span>
+											</span>
+											{isGlobalLimitActive && (
+												<span className="text-[11px] bg-blue-50 text-blue-600 px-2 py-0.5 rounded-full font-medium border border-blue-100">
+													Global Pool
+												</span>
+											)}
+										</div>
 									</div>
-									<EditBranchTokenDialog branch={branch} />
+									{!isGlobalLimitActive && <EditBranchTokenDialog branch={branch} />}
 								</div>
 
 								<div className="flex items-center gap-4">
 									<div className="flex flex-col gap-1 flex-1">
 										<span className="text-sm text-black-300">Used</span>
-										<span className="text-sm font-medium text-blue-600">{branch.used}</span>
+										<span className="text-sm font-medium text-blue-600">
+											{branchUsed.toLocaleString()}
+										</span>
 									</div>
 									<div className="flex flex-col gap-1 flex-1">
 										<span className="text-sm text-black-300">Remaining</span>
-										<span className="text-sm font-medium text-blue-600">{branch.remaining}</span>
+										<span className="text-sm font-medium text-blue-600">
+											{branchRemaining.toLocaleString()}
+										</span>
 									</div>
 								</div>
 							</TabsContent>
@@ -103,17 +127,22 @@ export function ViewBranchSheet({ branch }: ViewBranchSheetProps) {
 							<TabsContent value="doctors" className="p-6 m-0 flex flex-col gap-6">
 								{/* Token Usage Bar */}
 								<div className="bg-blue-50 rounded-lg p-4 flex flex-col gap-3">
-									<span className="text-sm text-black-300">Token Usage</span>
+									<span className="text-sm text-black-300">Branch Token Usage</span>
 									<div className="flex flex-col gap-2">
 										<div className="flex justify-between items-center text-sm font-medium">
 											<span className="text-black-500">
-												<span className="text-blue-600">{branch.remaining}/{branch.token_limit ?? branch.tokensMonth ?? 0}</span> tokens left
+												<span className="text-blue-600">
+													{branchRemaining.toLocaleString()} / {effectiveBranchLimit.toLocaleString()}
+												</span>{" "}
+												tokens left
 											</span>
 										</div>
 										<div className="h-2 w-full bg-black-50 rounded-full overflow-hidden">
 											<div
-												className="h-full bg-blue-500"
-												style={{ width: `${(branch.token_limit ?? branch.tokensMonth ?? 0) > 0 ? (branch.used / (branch.token_limit ?? branch.tokensMonth ?? 1)) * 100 : 0}%` }}
+												className="h-full bg-blue-500 transition-all duration-300"
+												style={{
+													width: `${effectiveBranchLimit > 0 ? (branchUsed / effectiveBranchLimit) * 100 : 0}%`,
+												}}
 											/>
 										</div>
 									</div>
@@ -122,7 +151,7 @@ export function ViewBranchSheet({ branch }: ViewBranchSheetProps) {
 								{/* Doctor List */}
 								<div className="flex flex-col gap-3">
 									<span className="text-sm text-black-300">
-										Doctor ({branch.doctors?.length || 0})
+										Doctors ({branch.doctors?.length || 0})
 									</span>
 									<div className="flex flex-col divide-y divide-black-50">
 										{branch.doctors?.map((doc) => (
@@ -137,9 +166,15 @@ export function ViewBranchSheet({ branch }: ViewBranchSheetProps) {
 													/>
 												</div>
 												<div className="flex flex-col gap-1 flex-1">
-													<span className="text-sm font-medium text-black-500">{doc.name}</span>
+													<div className="flex items-center justify-between">
+														<span className="text-sm font-medium text-black-500">{doc.name}</span>
+														<span className="text-xs text-zinc-400">{doc.dr_type || doc.speciality}</span>
+													</div>
 													<span className="text-xs text-black-300">
-														<span className="text-blue-600 font-medium">{doc.tokensLeft}/{doc.maxTokens}</span> tokens left
+														<span className="text-blue-600 font-medium">
+															{doc.tokensLeft?.toLocaleString() || 0} / {doc.maxTokens?.toLocaleString() || 0}
+														</span>{" "}
+														tokens remaining
 													</span>
 												</div>
 											</div>

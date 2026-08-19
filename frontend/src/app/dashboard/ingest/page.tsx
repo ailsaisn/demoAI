@@ -6,15 +6,16 @@ import {
 	RiMedicineBottleLine,
 	RiRobot2Line,
 	RiSyringeLine,
+	RiAlertLine
 } from "@remixicon/react";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
-import { RiAlertLine } from "@remixicon/react";
-import { useUploadKnowledge } from "../knowledge/hooks/use-knowledge";
+import { useUploadKnowledge, useIngestionQuota } from "../knowledge/hooks/use-knowledge";
 
 export default function IngestPage() {
 	const router = useRouter();
 	const uploadMutation = useUploadKnowledge();
+	const { data: quota } = useIngestionQuota();
 
 	const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
@@ -25,7 +26,7 @@ export default function IngestPage() {
 		}
 
 		if (!category) {
-			setErrorMsg("Please select a category (Product, Treatment, Promotional, or Other).");
+			setErrorMsg("Please select a category.");
 			return false;
 		}
 
@@ -38,7 +39,7 @@ export default function IngestPage() {
 		formData.append("category_type", category.toUpperCase());
 
 		files.forEach((file) => {
-			formData.append("file", file); // Adjust based on your backend field name for files
+			formData.append("file", file);
 		});
 
 		uploadMutation.mutate(formData, {
@@ -69,6 +70,34 @@ export default function IngestPage() {
 					</p>
 				</div>
 			</div>
+
+			{/* Ingestion Quota Warning Banner (Only displayed when approaching or reaching threshold) */}
+			{quota && (quota.exceeded || quota.warning) && (
+				<div className="mb-5 w-full">
+					{quota.exceeded ? (
+						<div className="flex items-start gap-3 p-3.5 rounded-lg border border-amber-300 bg-white text-xs">
+							<RiAlertLine className="size-4 text-amber-600 shrink-0 mt-0.5" />
+							<div className="flex flex-col gap-0.5">
+								<span className="font-semibold text-zinc-900">Monthly Ingestion Threshold Reached ({quota.percentage}%)</span>
+								<span className="text-zinc-500">
+									You have used {quota.tokens_used.toLocaleString()} of {quota.token_limit.toLocaleString()} tokens this month. Ingestion will proceed normally, but you can adjust the threshold anytime in Configuration.
+								</span>
+							</div>
+						</div>
+					) : (
+						<div className="flex items-start gap-3 p-3.5 rounded-lg border border-amber-300 bg-white text-xs">
+							<RiAlertLine className="size-4 text-amber-600 shrink-0 mt-0.5" />
+							<div className="flex flex-col gap-0.5">
+								<span className="font-semibold text-zinc-900">Monthly Ingestion Quota Near Limit</span>
+								<span className="text-zinc-500">
+									{quota.tokens_used.toLocaleString()} of {quota.token_limit.toLocaleString()} tokens used ({quota.percentage}%). Approaching monthly capacity.
+								</span>
+							</div>
+						</div>
+					)}
+				</div>
+			)}
+
 			{/* Shortcuts */}
 			<div className="grid grid-cols-2 gap-3 w-full mb-4 shrink-0">
 				<button className="flex flex-col items-start p-2.5 text-left rounded-md border border-border hover:border-zinc-300 hover:bg-zinc-50 transition-colors">
@@ -90,7 +119,7 @@ export default function IngestPage() {
 			{/* Prompt Input */}
 			<div className="shrink-0 mt-4 flex flex-col items-center relative">
 				<div className="w-full">
-					<PromptInput minRows={3} onSend={handleSend} />
+					<PromptInput minRows={3} onSend={handleSend} disabled={uploadMutation.isPending} />
 				</div>
 
 				{errorMsg && (

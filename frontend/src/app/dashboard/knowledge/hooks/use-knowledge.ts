@@ -159,20 +159,23 @@ export const useEditKnowledge = () => {
 	});
 };
 
-export const useRefineKnowledge = () => {
-	const queryClient = useQueryClient();
-
-	return useMutation({
-		mutationFn: async ({ id, prompt }: { id: string; prompt: string }) => {
-			const response = await api.post(`/knowledge/${id}/refine`, { prompt });
+export const useIngestionQuota = () => {
+	return useQuery({
+		queryKey: ["knowledge-ingestion-quota"],
+		queryFn: async (): Promise<{
+			year_month: string;
+			tokens_used: number;
+			input_tokens: number;
+			output_tokens: number;
+			token_limit: number;
+			percentage: number;
+			documents_count: number;
+			warning: boolean;
+			exceeded: boolean;
+		}> => {
+			const response = await api.get("/knowledge/quota");
 			return response.data;
-		},
-		onSuccess: (_, variables) => {
-			toast.success("Document refined successfully!");
-			queryClient.invalidateQueries({ queryKey: knowledgeKeys.detail(variables.id) });
-		},
-		onError: (error: unknown) => {
-			toast.error(getErrorMessage(error, "Failed to refine document."));
 		},
 	});
 };
+

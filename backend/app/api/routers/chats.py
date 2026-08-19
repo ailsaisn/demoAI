@@ -21,7 +21,8 @@ from app.schemas.chat import (
     ChatSessionCreate, ChatSessionUpdate, ChatSessionResponse,
     ChatHistoryResponse, ChatMessageCreate, ChatMessageResponse
 )
-from app.models.config import AppConfig
+from app.core.token_counter import count_chat_prompt_tokens, count_chat_completion_tokens
+from app.services.token_service import check_chat_token_quota, record_chat_token_usage
 from datetime import datetime, timezone, timedelta
 
 router = APIRouter(tags=["Chats"])
@@ -493,6 +494,11 @@ async def create_chat_message(
         from fastapi.responses import JSONResponse
         return JSONResponse(status_code=status.HTTP_201_CREATED, content=jsonable_encoder(message))
 
+    # Token pre-check
+    allowed, reason, _ = await check_chat_token_quota(db, current_user, chat_session.branch_id)
+    if not allowed:
+        raise HTTPException(status_code=403, detail=reason)
+
     # For user message, we stream the AI response back via SSE
     async def sse_generator():
         try:
@@ -527,6 +533,7 @@ async def create_chat_message(
                     history.pop()
 
                 ai_response_text = ""
+                context_chunks = []
                 
                 # We consume the generator token by token
                 async for chunk in pipeline.generate_answer_stream(
@@ -538,6 +545,11 @@ async def create_chat_message(
                     # check if the chunk is the initial JSON context string
                     if chunk.startswith('{"type": "context"'):
                         yield f"data: {chunk}\n\n"
+                        try:
+                            ctx_json = json.loads(chunk)
+                            context_chunks = [c.get("content", "") for c in ctx_json.get("chunks", [])]
+                        except Exception:
+                            pass
                     else:
                         ai_response_text += chunk
                         # Send text token
@@ -555,29 +567,21 @@ async def create_chat_message(
                 )
                 session.add(ai_msg)
                 
-                # Update Token Usage
-                if current_user.token_limit is not None and current_user.token_limit > 0:
-                    estimated_tokens = int(len(ai_response_text) * 1.3)
-                    now_ym = datetime.now(timezone.utc).strftime("%Y-%m")
-                    
-                    stmt_usage = select(UserTokenUsage).where(
-                        UserTokenUsage.user_id == current_user.id,
-                        UserTokenUsage.year_month == now_ym
-                    )
-                    result_usage = await session.execute(stmt_usage)
-                    usage_record = result_usage.scalar_one_or_none()
-                    
-                    if usage_record:
-                        usage_record.tokens_used += estimated_tokens
-                    else:
-                        usage_record = UserTokenUsage(
-                            user_id=current_user.id,
-                            year_month=now_ym,
-                            tokens_used=estimated_tokens
-                        )
-                        session.add(usage_record)
+                # Accurately calculate Input & Output tokens and record usage
+                in_tokens = count_chat_prompt_tokens(
+                    user_query=content,
+                    context_chunks=context_chunks,
+                    history=history
+                )
+                out_tokens = count_chat_completion_tokens(ai_response_text)
                 
-                await session.commit()
+                await record_chat_token_usage(
+                    db=session,
+                    user_id=current_user.id,
+                    branch_id=chat_session.branch_id,
+                    input_tokens=in_tokens,
+                    output_tokens=out_tokens
+                )
                 
             except Exception as e:
                 logger.error(f"Error streaming AI response: {e}")
@@ -671,18 +675,9 @@ async def stream_chat_message(
         return JSONResponse(status_code=status.HTTP_201_CREATED, content=jsonable_encoder(message))
 
     # Token pre-check
-    if current_user.token_limit is not None and current_user.token_limit > 0:
-        now_ym = datetime.now(timezone.utc).strftime("%Y-%m")
-        stmt_usage = select(UserTokenUsage).where(
-            UserTokenUsage.user_id == current_user.id,
-            UserTokenUsage.year_month == now_ym
-        )
-        result_usage = await db.execute(stmt_usage)
-        usage = result_usage.scalar_one_or_none()
-        
-        tokens_used = usage.tokens_used if usage else 0
-        if tokens_used >= current_user.token_limit:
-            raise HTTPException(status_code=403, detail="Token limit exceeded for this month")
+    allowed, reason, _ = await check_chat_token_quota(db, current_user, chat_session.branch_id)
+    if not allowed:
+        raise HTTPException(status_code=403, detail=reason)
 
     async def sse_generator():
         try:
@@ -717,6 +712,7 @@ async def stream_chat_message(
                     history.pop()
 
                 ai_response_text = ""
+                context_chunks = []
                 
                 async for chunk in pipeline.generate_answer_stream(
                     query=content,
@@ -730,6 +726,11 @@ async def stream_chat_message(
 
                     if chunk.startswith('{"type": "context"'):
                         yield f"data: {chunk}\n\n"
+                        try:
+                            ctx_json = json.loads(chunk)
+                            context_chunks = [c.get("content", "") for c in ctx_json.get("chunks", [])]
+                        except Exception:
+                            pass
                     else:
                         ai_response_text += chunk
                         yield f"data: {json.dumps({'type': 'token', 'content': chunk})}\n\n"
@@ -742,7 +743,22 @@ async def stream_chat_message(
                     content=ai_response_text
                 )
                 session.add(ai_msg)
-                await session.commit()
+                
+                # Accurately calculate Input & Output tokens and record usage
+                in_tokens = count_chat_prompt_tokens(
+                    user_query=content,
+                    context_chunks=context_chunks,
+                    history=history
+                )
+                out_tokens = count_chat_completion_tokens(ai_response_text)
+                
+                await record_chat_token_usage(
+                    db=session,
+                    user_id=current_user.id,
+                    branch_id=chat_session.branch_id,
+                    input_tokens=in_tokens,
+                    output_tokens=out_tokens
+                )
                 
             except Exception as e:
                 logger.error(f"Error streaming AI response: {e}")

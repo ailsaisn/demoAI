@@ -28,6 +28,9 @@ class Settings(BaseSettings):
     S3_REGION: str = "us-east-1"
     S3_USE_PATH_STYLE: bool = True
 
+    # Token Quotas
+    INGESTION_MONTHLY_TOKEN_LIMIT: int = 1000000
+
     model_config = SettingsConfigDict(env_file=".env", env_ignore_empty=True, extra="ignore")
 
     def validate_security(self):

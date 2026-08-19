@@ -28,11 +28,12 @@ export interface CategoryResponse {
 }
 
 export interface UserBase {
-  email: string;
   name: string;
+  email?: string | null;
 }
 
 export interface UserCreateStaff extends UserBase {
+  email: string;
   password: string;
   roles?: string[]; // Defaults to ["Staff"] in backend
 }
