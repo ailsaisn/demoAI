@@ -1,4 +1,5 @@
 from typing import Optional
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
@@ -17,7 +18,7 @@ class Settings(BaseSettings):
     # RAG & LLM Settings
     EMBEDDING_PROVIDER: str = "huggingface"
     EMBEDDING_MODEL_NAME: str = "BAAI/bge-m3"
-    LLM_MODEL_NAME: str = "gpt-4o-mini"
+    LLM_MODEL_NAME: str = "gpt-5.4-mini"
     OPENAI_API_KEY: Optional[str] = None
 
     # MinIO / S3 Object Storage Settings
@@ -28,10 +29,28 @@ class Settings(BaseSettings):
     S3_REGION: str = "us-east-1"
     S3_USE_PATH_STYLE: bool = True
 
+    COOKIE_DOMAIN: Optional[str] = None # e.g. ".aryanoble.web.id"
+    CORS_ORIGINS: list[str] = [
+        "http://localhost:3000",
+        "http://localhost:8000",
+        "https://dokterpedia-dev.aryanoble.web.id",
+        "https://dokterpedia-staging.aryanoble.web.id",
+        "https://dokterpedia.aryanoble.co.id",
+    ]
+
     # Token Quotas
     INGESTION_MONTHLY_TOKEN_LIMIT: int = 1000000
 
     model_config = SettingsConfigDict(env_file=".env", env_ignore_empty=True, extra="ignore")
+
+    @field_validator("CORS_ORIGINS", mode="before")
+    @classmethod
+    def assemble_cors_origins(cls, v: object) -> list[str]:
+        if isinstance(v, str) and not v.startswith("["):
+            return [i.strip() for i in v.split(",") if i.strip()]
+        elif isinstance(v, (list, str)):
+            return v # type: ignore
+        return []
 
     def validate_security(self):
         """Validates production environment security settings."""

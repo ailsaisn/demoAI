@@ -18,7 +18,7 @@ from app.schemas.knowledge import KnowledgeCreate, KnowledgeUpdateStatus, Knowle
 from app.services.token_service import check_ingestion_quota, record_ingestion_token_usage
 from datetime import datetime, timezone
 
-from app.rag.deps import get_ingestion_pipeline, get_llm, get_bm25_index, get_vector_store, get_generation_pipeline, get_medical_agent
+from app.rag.deps import get_ingestion_pipeline, get_llm, get_bm25_index, get_vector_store, get_generation_pipeline
 from app.rag.services.interfaces import BaseLLMAdapter
 from app.rag.router import (
     ingest_document, 
@@ -397,8 +397,7 @@ async def knowledge_chat(
     request: ChatRequest,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(RequireAccess("knowledge:read")),
-    pipeline = Depends(get_generation_pipeline),
-    agent = Depends(get_medical_agent)
+    pipeline = Depends(get_generation_pipeline)
 ):
     # Fetch user branches (active connections only)
     stmt_branches = select(UserBranch.branch_id).where(
@@ -426,7 +425,7 @@ async def knowledge_chat(
         excluded_categories=excluded_cats
     )
 
-    return await chat_endpoint(request=request, pipeline=pipeline, agent=agent)
+    return await chat_endpoint(request=request, pipeline=pipeline)
 
 ALLOWED_MIME_TYPES = {
     "application/pdf",

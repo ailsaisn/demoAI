@@ -25,11 +25,6 @@ export function TitleSettings({ title, onChangeTitle, onSave }: TitleSettingsPro
 		}
 	}, [isLocalEditing]);
 
-	// If the parent enters Edit Mode, we don't strictly have to enter local edit mode,
-	// because the user's design has an explicit edit pencil button.
-	// But we only show this component if we want to allow title edits.
-	// We'll show it always, since the parent (ChatPreview) might render it unconditionally.
-
 	const handleSave = () => {
 		setIsLocalEditing(false);
 		onChangeTitle(localTitle);
@@ -46,15 +41,15 @@ export function TitleSettings({ title, onChangeTitle, onSave }: TitleSettingsPro
 	if (isLocalEditing) {
 		return (
 			<div className="flex items-center gap-2 w-fit max-w-full">
-				<div className="flex items-center gap-2 px-3 py-2 border border-zinc-200 rounded-md bg-white transition-colors flex-1 min-w-0 overflow-hidden">
+				<div className="flex items-center gap-2 h-9 px-3 border border-zinc-200 rounded-lg bg-white transition-colors flex-1 min-w-0 overflow-hidden">
 					<RiBookReadLine className="size-4 text-zinc-400 shrink-0" />
 					<div className="relative inline-grid items-center min-w-0 overflow-hidden flex-1">
-						<span className="invisible whitespace-pre text-[13px] font-medium col-start-1 row-start-1 pr-1 truncate">
+						<span className="invisible whitespace-pre text-xs font-medium col-start-1 row-start-1 pr-1 truncate">
 							{localTitle || " "}
 						</span>
 						<input 
 							ref={inputRef}
-							className="text-[13px] font-medium text-zinc-950 outline-none w-full bg-transparent col-start-1 row-start-1 min-w-0"
+							className="text-xs font-medium text-zinc-950 outline-none w-full bg-transparent col-start-1 row-start-1 min-w-0"
 							value={localTitle}
 							onChange={(e) => setLocalTitle(e.target.value)}
 							onBlur={handleSave}
@@ -66,20 +61,22 @@ export function TitleSettings({ title, onChangeTitle, onSave }: TitleSettingsPro
 					</div>
 				</div>
 				<button 
+					type="button"
 					onMouseDown={(e) => {
 						e.preventDefault();
 						handleCancel();
 					}} 
-					className="px-3 py-2 text-[13px] font-medium border border-zinc-200 bg-white text-zinc-700 rounded-md hover:bg-zinc-50 transition-colors shrink-0"
+					className="h-9 px-3.5 text-xs font-medium border border-zinc-200 bg-white text-zinc-700 rounded-lg hover:bg-zinc-50 transition-colors shrink-0 cursor-pointer shadow-none"
 				>
 					Cancel
 				</button>
 				<button 
+					type="button"
 					onMouseDown={(e) => {
 						e.preventDefault();
 						handleSave();
 					}} 
-					className="px-3 py-2 text-[13px] font-medium bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors shrink-0 shadow-sm"
+					className="h-9 px-3.5 text-xs font-medium bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors shrink-0 cursor-pointer shadow-none"
 				>
 					Save
 				</button>
@@ -89,13 +86,16 @@ export function TitleSettings({ title, onChangeTitle, onSave }: TitleSettingsPro
 
 	return (
 		<div className="flex items-center gap-2 w-fit max-w-full">
-			<div className="flex items-center gap-2 px-3 py-2 border border-zinc-200 rounded-md bg-white flex-1 min-w-0 overflow-hidden">
+			<div className="flex items-center gap-2 h-9 px-3 border border-zinc-200 rounded-lg bg-white flex-1 min-w-0 overflow-hidden">
 				<RiBookReadLine className="size-4 text-zinc-900 shrink-0" />
-				<span className="text-[13px] font-medium text-zinc-950 truncate min-w-0">{localTitle}</span>
+				<span className="text-xs font-medium text-zinc-950 truncate min-w-0">{localTitle}</span>
 			</div>
 			<button 
+				type="button"
 				onClick={() => setIsLocalEditing(true)} 
-				className="p-2 border border-zinc-200 rounded-md bg-white hover:bg-zinc-50 transition-colors text-zinc-700 shrink-0"
+				className="size-9 flex items-center justify-center border border-zinc-200 rounded-lg bg-white hover:bg-zinc-50 transition-colors text-zinc-700 shrink-0 cursor-pointer shadow-none"
+				title="Edit title"
+				aria-label="Edit title"
 			>
 				<RiEdit2Line className="size-4" />
 			</button>

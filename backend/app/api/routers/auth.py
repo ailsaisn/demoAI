@@ -61,6 +61,7 @@ async def login(
         httponly=True,
         secure=is_prod,
         samesite="lax",
+        domain=settings.COOKIE_DOMAIN,
         path="/",
         max_age=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60
     )
@@ -71,6 +72,7 @@ async def login(
         httponly=True,
         secure=is_prod,
         samesite="lax",
+        domain=settings.COOKIE_DOMAIN,
         path="/",
         max_age=settings.REFRESH_TOKEN_EXPIRE_DAYS * 24 * 60 * 60
     )
@@ -80,8 +82,8 @@ async def login(
 @router.post("/logout")
 async def logout(response: Response):
     is_prod = settings.ENVIRONMENT.lower() in ("production", "prod")
-    response.delete_cookie(key="access_token", path="/", httponly=True, samesite="lax", secure=is_prod)
-    response.delete_cookie(key="refresh_token", path="/", httponly=True, samesite="lax", secure=is_prod)
+    response.delete_cookie(key="access_token", path="/", domain=settings.COOKIE_DOMAIN, httponly=True, samesite="lax", secure=is_prod)
+    response.delete_cookie(key="refresh_token", path="/", domain=settings.COOKIE_DOMAIN, httponly=True, samesite="lax", secure=is_prod)
     return {"message": "Logged out successfully"}
 
 @router.post("/refresh")
@@ -149,6 +151,7 @@ async def refresh_token(request: Request, response: Response, db: AsyncSession =
             httponly=True,
             secure=is_prod,
             samesite="lax",
+            domain=settings.COOKIE_DOMAIN,
             path="/",
             max_age=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60
         )

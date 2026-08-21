@@ -448,12 +448,12 @@ class DocumentParser:
                         api_key = env_key
 
                 base_url = db_base_url or os.getenv("OPENAI_BASE_URL") or getattr(settings, "openai_base_url", None)
-                model_name = db_model_name or os.getenv("VISION_MODEL_NAME") or getattr(settings, "openai_model_name", None) or "gpt-4o-mini"
+                model_name = db_model_name or os.getenv("VISION_MODEL_NAME") or getattr(settings, "openai_model_name", None) or "gpt-5.4-mini"
 
                 # Guard against mismatched OpenAI vs Gemini model name / base_url
                 if api_key and api_key.startswith("sk-"):
                     if not model_name or "gemini" in model_name.lower() or not any(model_name.startswith(p) for p in ["gpt-", "o1", "o3", "chatgpt"]):
-                        model_name = "gpt-4o-mini"
+                        model_name = "gpt-5.4-mini"
                     if base_url and "googleapis.com" in base_url:
                         base_url = None
 
@@ -523,9 +523,9 @@ class DocumentParser:
                         "Output valid JSON ONLY without any preamble or markdown wrapper."
                     )
 
-                    response = client.chat.completions.create(
-                        model=model_name,
-                        messages=[
+                    completion_kwargs = {
+                        "model": model_name,
+                        "messages": [
                             {
                                 "role": "user",
                                 "content": [
@@ -534,9 +534,22 @@ class DocumentParser:
                                 ]
                             }
                         ],
-                        temperature=0.0,
-                        max_tokens=2000
-                    )
+                        "temperature": 0.0
+                    }
+                    try:
+                        response = client.chat.completions.create(
+                            **completion_kwargs,
+                            max_completion_tokens=2000
+                        )
+                    except Exception as tok_err:
+                        err_str = str(tok_err).lower()
+                        if "max_completion_tokens" in err_str or "unsupported" in err_str:
+                            response = client.chat.completions.create(
+                                **completion_kwargs,
+                                max_tokens=2000
+                            )
+                        else:
+                            raise tok_err
                     if response.choices and len(response.choices) > 0:
                         raw_content = (response.choices[0].message.content or "").strip()
                         try:

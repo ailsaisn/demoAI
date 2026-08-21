@@ -386,8 +386,8 @@ export function ChatPreview({
 		<div className="flex flex-col flex-1 bg-white overflow-hidden min-h-0 h-full">
 			<MessageScrollerProvider>
 				<MessageScroller className="flex-1 min-h-0">
-					<MessageScrollerViewport className="px-8">
-						<MessageScrollerContent className="py-10 gap-6 w-full max-w-4xl mx-auto">
+					<MessageScrollerViewport className="px-6 sm:px-8">
+						<MessageScrollerContent className="py-8 gap-6 w-full max-w-5xl mx-auto">
 							{isDetailLoading && (
 								<MessageScrollerItem>
 									<div className="flex items-start gap-3 w-full">
@@ -494,7 +494,7 @@ export function ChatPreview({
 							{messages.length > 0 && (
 								<MessageScrollerItem key="msg-0" scrollAnchor={messages.length === 1 && !isLoading}>
 									<div
-										className={`flex flex-col w-full ${messages[0].role === "user" ? "items-end" : "items-start"}`}
+										className={`flex flex-col w-full min-w-0 ${messages[0].role === "user" ? "items-end" : "items-start"}`}
 									>
 										{title !== undefined && onChangeTitle && messages[0].role === "assistant" && (
 											<div className="flex justify-center w-full mb-4">
@@ -566,7 +566,7 @@ export function ChatPreview({
 										})()}
 										{preHeaderNode}
 										<div
-											className={`flex items-start gap-3 w-full ${messages[0].role === "user" ? "flex-row-reverse" : ""}`}
+											className={`flex items-start gap-3 w-full min-w-0 ${messages[0].role === "user" ? "flex-row-reverse" : ""}`}
 										>
 											<div className="bg-zinc-100 rounded text-zinc-950 flex items-center justify-center p-1.5 mt-0.5 shrink-0">
 												{messages[0].role === "user" ? (
@@ -576,7 +576,7 @@ export function ChatPreview({
 												)}
 											</div>
 											<div
-												className={`${messages[0].role === "user" ? "bg-blue-500 text-white" : "bg-transparent border border-zinc-200 text-zinc-950"} p-3.5 rounded-md text-sm w-full prose prose-sm max-w-none prose-p:leading-relaxed prose-pre:bg-zinc-800 prose-pre:text-zinc-100 prose-p:my-1.5 prose-ul:my-1.5 prose-ul:pl-4 prose-ol:my-1.5 prose-ol:pl-4 prose-li:my-0.5 prose-headings:my-2.5 prose-table:w-full prose-table:border prose-table:border-blue-200/60 prose-table:rounded-md prose-table:overflow-hidden prose-table:my-3 prose-table:bg-white prose-th:bg-blue-100/50 prose-th:px-3 prose-th:py-2.5 prose-th:text-left prose-th:font-semibold prose-th:text-blue-900 prose-th:border-b prose-th:border-blue-200/60 prose-td:px-3 prose-td:py-2.5 prose-td:border-b prose-td:border-blue-100/60 last:prose-td:border-0 whitespace-pre-wrap`}
+												className={`${messages[0].role === "user" ? "bg-blue-500 text-white" : "bg-transparent border border-zinc-200 text-zinc-950"} p-3.5 rounded-md text-sm w-full min-w-0 overflow-hidden prose prose-sm max-w-none prose-p:leading-relaxed prose-pre:bg-zinc-800 prose-pre:text-zinc-100 prose-p:my-1.5 prose-ul:my-1.5 prose-ul:pl-4 prose-ol:my-1.5 prose-ol:pl-4 prose-li:my-0.5 prose-headings:my-2.5 prose-table:w-full prose-table:border prose-table:border-blue-200/60 prose-table:rounded-md prose-table:overflow-hidden prose-table:my-3 prose-table:bg-white prose-th:bg-blue-100/50 prose-th:px-3 prose-th:py-2.5 prose-th:text-left prose-th:font-semibold prose-th:text-blue-900 prose-th:border-b prose-th:border-blue-200/60 prose-td:px-3 prose-td:py-2.5 prose-td:border-b prose-td:border-blue-100/60 last:prose-td:border-0 whitespace-pre-wrap`}
 											>
 												{messages[0].role === "assistant" ? (
 													<>
@@ -689,12 +689,12 @@ export function ChatPreview({
 			</MessageScrollerProvider>
 
 			{/* Chatbox Input */}
-			<div className="px-8 py-4 shrink-0">
+			<div className="px-6 sm:px-8 py-4 shrink-0 w-full">
 				<div
-					className={`relative rounded-md p-4 flex flex-col gap-3 transition-colors border ${
+					className={`max-w-5xl mx-auto relative rounded-lg p-4 flex flex-col gap-3 transition-colors border shadow-none ${
 						isDragging
 							? "border-blue-500 bg-blue-50/50"
-							: "border-black/10 bg-white"
+							: "border-zinc-200 bg-white"
 					}`}
 					onDragEnter={handleDragEnter}
 					onDragLeave={handleDragLeave}

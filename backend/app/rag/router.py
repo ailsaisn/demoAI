@@ -395,10 +395,13 @@ async def process_ingestion_background(
                     3. **Professional Markdown Formatting**:
                        - Fix any OCR noise, broken line breaks, or formatting typos while preserving 100% factual accuracy.
                        - Start directly with `# [Document Title]`. Do NOT add meta introductions like "Here is the summary".
+                    4. **DO NOT Include Category Sections in Markdown Body**:
+                       - DO NOT add sections like "Kategori Terkait", "Related Categories", "Categories", or "Tags" in the `summary` markdown text.
+                       - Categories belong ONLY in the `suggested_categories` JSON field, as the user interface already displays and manages categories separately via UI badge tags.
 
                     Perform the following tasks:
                     1. **AI Recommended Title (`title`)**: Provide a clean, short, professional document title WITHOUT any prefixes like "Knowledge Ingestment" or "Knowledge Base" (e.g. "Standard Operating Procedure (SOP) Brightening Center" or "ERHA Acne Spot Gel Protocol").
-                    2. **Structured Full Document Markdown (`summary`)**: Present the complete content in beautifully organized Markdown matching the document's domain.
+                    2. **Structured Full Document Markdown (`summary`)**: Present the complete content in beautifully organized Markdown matching the document's domain (WITHOUT category lists at the bottom).
                     3. **Multi-Category Selection (`suggested_categories`)**: Recommend ALL relevant matching categories (array of objects with "id" and "name") from Available System Categories.
                     4. **Dynamic Executive Feedback (`feedback`)**: Provide a crisp 1-2 sentence executive summary in Indonesian explaining exactly what this specific document covers and its main points.
                     5. **Text Accuracy (`text_accuracy`)**: Grade the overall text confidence score (e.g. "99%" or "100%").
@@ -440,6 +443,15 @@ async def process_ingestion_background(
                         recommended_title = clean_title_fallback
 
                     summary = parsed_review.get("summary", summary)
+                    
+                    # Strip any accidental category sections generated in markdown body
+                    import re
+                    summary = re.sub(
+                        r"(?i)\n*#+\s*(\d+[\.\)]\s*)?(Kategori\s*Terkait|Related\s*Categories|Categories|Kategori)[\s\S]*$",
+                        "",
+                        summary
+                    ).strip()
+                    
                     text_accuracy = parsed_review.get("text_accuracy", "100%")
                     feedback = parsed_review.get("feedback", feedback)
                     suggested_categories = parsed_review.get("suggested_categories", [])
@@ -564,13 +576,6 @@ async def process_ingestion_background(
                 os.remove(output_file)
             except Exception:
                 pass
-            
-        # If this document is part of a multi-file batch, synthesize a unified Batch Executive Summary
-        if batch_id and llm:
-            try:
-                await synthesize_batch_executive_summary(batch_id, llm)
-            except Exception as batch_summary_err:
-                logger.warning(f"Could not synthesize batch summary: {batch_summary_err}")
 
         # Update Knowledge DB table status to PENDING
         t0_db = _time.time()
@@ -603,10 +608,19 @@ async def process_ingestion_background(
         timing_metrics["database_insert_ms"] = int((_time.time() - t0_db) * 1000)
         timing_metrics["total_ingestion_ms"] = int((_time.time() - t0_total) * 1000)
 
-        # Update staged document with final timing metrics
+        # Update staged document with final timing metrics and save to pending folder
         staged_document["timing_metrics"] = timing_metrics
         with open(pending_file_path, 'w', encoding='utf-8') as f:
             json.dump(staged_document, f, indent=4, ensure_ascii=False)
+
+        # If this document is part of a multi-file batch, synthesize/update a unified Batch Executive Summary
+        if batch_id and llm:
+            try:
+                b_summary = await synthesize_batch_executive_summary(batch_id, llm)
+                if b_summary:
+                    staged_document["batch_summary"] = b_summary
+            except Exception as batch_summary_err:
+                logger.warning(f"Could not synthesize batch summary: {batch_summary_err}")
 
         logger.info(
             f"\n"
@@ -624,57 +638,92 @@ async def synthesize_batch_executive_summary(batch_id: str, llm: BaseLLMAdapter)
     """
     Synthesizes multiple uploaded document feedbacks/summaries into a concise, unified Executive Summary paragraph.
     Identifies whether documents are clinically/operationally interrelated or independent.
-    Updates all JSON documents in data/pending for this batch.
+    Updates all JSON documents in data/pending and data/output for this batch, as well as DB records.
     """
     if not batch_id or not llm:
         return None
 
-    pending_dir = "data/pending"
-    if not os.path.exists(pending_dir):
-        return None
-
+    dirs_to_check = ["data/pending", "data/output"]
     batch_docs = []
     batch_file_paths = []
 
-    for f in os.listdir(pending_dir):
-        if f.endswith(".json"):
-            fp = os.path.join(pending_dir, f)
-            try:
-                with open(fp, "r", encoding="utf-8") as f_json:
-                    data = json.load(f_json)
-                if isinstance(data, dict) and data.get("batch_id") == batch_id:
-                    batch_docs.append(data)
-                    batch_file_paths.append(fp)
-            except Exception:
-                pass
+    for d in dirs_to_check:
+        if os.path.exists(d):
+            for f in os.listdir(d):
+                if f.endswith(".json") and f != "bm25_index.pkl":
+                    fp = os.path.join(d, f)
+                    try:
+                        with open(fp, "r", encoding="utf-8") as f_json:
+                            data = json.load(f_json)
+                        if isinstance(data, dict) and data.get("batch_id") == batch_id:
+                            batch_docs.append(data)
+                            batch_file_paths.append(fp)
+                    except Exception:
+                        pass
 
     if len(batch_docs) < 2:
         return None
 
-    docs_text = "\n\n".join([
-        f"- Dokumen {i+1} ('{d.get('file_name', '')}' - {d.get('title', '')}):\n  Tipe/Kategori: {d.get('type', 'General')}\n  Deskripsi/Poin Utama: {d.get('feedback', '') or d.get('summary', '')[:250]}"
-        for i, d in enumerate(batch_docs)
-    ])
+    docs_text_parts = []
+    for i, d in enumerate(batch_docs):
+        fname = d.get('file_name', '')
+        title = d.get('title', '')
+        doctype = d.get('type', 'General')
+        ext = os.path.splitext(fname)[1].lower()
+        
+        summary_text = d.get('summary', '') or d.get('feedback', '')
+        chunks = d.get('chunks', [])
+        all_chunk_texts = []
+        if chunks:
+            for c in chunks:
+                c_text = c.get('text', '') if isinstance(c, dict) else str(c)
+                if c_text and c_text.strip():
+                    all_chunk_texts.append(c_text.strip())
+        
+        full_content = "\n\n".join(all_chunk_texts) if all_chunk_texts else summary_text
+        if len(full_content) > 25000:
+            full_content = full_content[:25000]
+        
+        doc_entry = f"=== DOKUMEN {i+1}: '{fname}' (Tipe File: {ext or 'unknown'} | Kategori: {doctype} | Judul: {title}) ===\n"
+        doc_entry += f"ISI / DATA LENGKAP:\n{full_content}\n"
+            
+        docs_text_parts.append(doc_entry)
+
+    docs_text = "\n\n".join(docs_text_parts)
 
     batch_prompt = f"""
-Anda adalah AI Knowledge Specialist untuk klinik ERHA (PT Arya Noble).
-Pengguna baru saja mengunggah {len(batch_docs)} dokumen sekaligus dalam satu batch ingest.
+Anda adalah AI Knowledge Specialist & Clinical Data Integrator untuk klinik ERHA (PT Arya Noble).
+Pengguna mengunggah {len(batch_docs)} dokumen sekaligus dalam satu batch ingest.
 
-Berikut rincian dokumen yang diunggah dalam batch ini:
+Berikut isi lengkap seluruh dokumen yang diunggah dalam batch ini:
 {docs_text}
 
 Tugas Anda:
-Buatlah SATU paragraf "Executive Summary" (Bahasa Indonesia) yang singkat, padat, profesional, dan jelas (3-5 kalimat).
-Ketentuan Wajib:
-1. Rangkum topik utama dari seluruh dokumen yang diunggah dalam batch ini.
-2. Analisis hubungan antar dokumen:
-   - Jika dokumen saling berhubungan (misal: SOP treatment + katalog produk pendukung, atau protokol jerawat aktif + dark spot enhancer), jelaskan keterkaitan alur klinis/fungsionalnya.
-   - Jika dokumen tidak berhubungan langsung (topik berbeda/independen), jelaskan secara ringkas masing-masing fokus dokumennya.
-3. Langsung mulai dengan kalimat ringkasan (tanpa awalan seperti "Berikut adalah...", tanpa judul, dan tanpa bullet points).
+Lakukan rekonsiliasi dan cross-reference antar dokumen di atas secara teliti.
+Hitung seluruh produk / entitas unik yang ada pada masing-masing dokumen.
+
+ATURAN FORMAT OUTPUT WAJIB (SANGAT PENTING):
+- JANGAN gunakan heading/judul apapun (DILARANG menulis '### Batch Executive Summary', '### Executive Summary', dsb.).
+- JANGAN gunakan penomoran section seperti '1. **Status...**', '2. **Berikut...**', atau '3. **Batasan...**'.
+- Ikuti PERSIS struktur 3 bagian berikut dalam teks biasa / bullet sederhana:
+
+[Paragraf 1 - Status Retrieval & Rekonsiliasi Jumlah]:
+Retrieval selesai. Saya menemukan [Jumlah X] produk pada [katalog PPT/PDF/nama dokumen A] dan [Jumlah Y] produk pada [product knowledge Excel/nama dokumen B]. Dari [Jumlah X] produk di [dokumen A], [Jumlah Z] produk berhasil dicocokkan dengan [dokumen B]. [Jumlah W] produk lainnya ditemukan di [dokumen A] tetapi belum memiliki informasi detail pada [dokumen B].
+
+Berikut beberapa hasil cross-reference:
+[Nama Produk 1] → mengandung [Komposisi aktif & persentase]. Digunakan [Aturan pakai / frekuensi].
+[Nama Produk 2] → mengandung [Komposisi aktif & persentase]. Digunakan [Aturan pakai / frekuensi].
+[Nama Produk 3] → mengandung [Komposisi aktif & persentase]. Digunakan [Aturan pakai / frekuensi].
+
+Saya tidak akan mengasumsikan komposisi, penggunaan, kontraindikasi, atau efek samping untuk [Jumlah W] produk yang hanya ditemukan di [dokumen A/katalog].
 """
     try:
         batch_summary = await asyncio.to_thread(llm.generate, batch_prompt)
         batch_summary = batch_summary.strip().strip('"').strip("'")
+        
+        # Clean up any accidental leading header if generated
+        import re
+        batch_summary = re.sub(r"^#+\s*(Batch\s+)?Executive\s+Summary\s*\n+", "", batch_summary, flags=re.IGNORECASE).strip()
 
         # Save batch_summary to each document's metadata maintaining exact key order
         ordered_keys = [
@@ -696,6 +745,31 @@ Ketentuan Wajib:
 
             with open(fp, "w", encoding="utf-8") as out_f:
                 json.dump(reordered, out_f, indent=4, ensure_ascii=False)
+
+        # Sync batch_summary to Postgres DB records metadata_
+        try:
+            from app.core.database import AsyncSessionLocal
+            from app.models.knowledge import Knowledge
+            from sqlalchemy import select
+            import uuid as _uuid
+
+            async with AsyncSessionLocal() as session:
+                for doc_data in batch_docs:
+                    k_id_str = doc_data.get("knowledge_id")
+                    if k_id_str:
+                        try:
+                            k_uuid = _uuid.UUID(str(k_id_str))
+                            res = await session.execute(select(Knowledge).where(Knowledge.id == k_uuid))
+                            k_obj = res.scalars().first()
+                            if k_obj:
+                                meta = dict(k_obj.metadata_) if isinstance(k_obj.metadata_, dict) else {}
+                                meta["batch_summary"] = batch_summary
+                                k_obj.metadata_ = meta
+                        except Exception:
+                            pass
+                await session.commit()
+        except Exception as db_sync_err:
+            logger.warning(f"Could not sync batch_summary to DB: {db_sync_err}")
 
         logger.info(f"Synthesized batch executive summary for batch {batch_id}: {batch_summary[:80]}...")
         return batch_summary
@@ -1362,10 +1436,14 @@ async def get_approved_document_details(knowledge_id: str):
 
         return ApprovedDocumentResponse(
             knowledge_id=knowledge_id,
+            batch_id=data.get("batch_id") if isinstance(data, dict) else None,
             file_name=file_name,
+            file_hash=data.get("file_hash") if isinstance(data, dict) else None,
             title=title,
             status="Approved",
             summary=summary,
+            image_url=data.get("image_url") if isinstance(data, dict) else None,
+            batch_summary=data.get("batch_summary") if isinstance(data, dict) else None,
             categories=parsed_categories,
             visibility_settings=vis_settings,
             chunks=chunks
@@ -1428,10 +1506,16 @@ async def edit_approved_document(
 
         approved_doc_structure = {
             "knowledge_id": knowledge_id,
+            "batch_id": existing_doc.get("batch_id") if isinstance(existing_doc, dict) else None,
             "file_name": existing_doc.get("file_name", ""),
+            "file_hash": existing_doc.get("file_hash") if isinstance(existing_doc, dict) else None,
             "title": updated_title,
+            "type": existing_doc.get("type", "Product") if isinstance(existing_doc, dict) else "Product",
+            "document_type": existing_doc.get("document_type", "product") if isinstance(existing_doc, dict) else "product",
             "status": "Approved",
             "summary": updated_summary,
+            "image_url": existing_doc.get("image_url") if isinstance(existing_doc, dict) else None,
+            "batch_summary": existing_doc.get("batch_summary") if isinstance(existing_doc, dict) else None,
             "categories": updated_categories,
             "visibility_settings": vis_settings,
             "chunks": updated_chunks
@@ -1627,10 +1711,18 @@ async def refine_approved_document(
 
         approved_doc_structure = {
             "knowledge_id": knowledge_id,
+            "batch_id": existing_doc.get("batch_id") if isinstance(existing_doc, dict) else None,
             "file_name": file_name,
+            "file_hash": existing_doc.get("file_hash") if isinstance(existing_doc, dict) else None,
+            "title": existing_doc.get("title", file_name) if isinstance(existing_doc, dict) else file_name,
+            "type": existing_doc.get("type", "Product") if isinstance(existing_doc, dict) else "Product",
+            "document_type": existing_doc.get("document_type", "product") if isinstance(existing_doc, dict) else "product",
             "status": "Approved",
             "summary": updated_summary,
+            "image_url": existing_doc.get("image_url") if isinstance(existing_doc, dict) else None,
+            "batch_summary": existing_doc.get("batch_summary") if isinstance(existing_doc, dict) else None,
             "categories": updated_categories,
+            "visibility_settings": existing_doc.get("visibility_settings") if isinstance(existing_doc, dict) else None,
             "chunks": updated_chunks
         }
         with open(approved_file, "w", encoding="utf-8") as f:
@@ -1748,6 +1840,8 @@ async def approve_document(
                 "document_type": data.get("document_type", "product") if isinstance(data, dict) else "product",
                 "status": "Approved",
                 "summary": data.get("summary", "") if isinstance(data, dict) else "",
+                "image_url": data.get("image_url") if isinstance(data, dict) else None,
+                "batch_summary": data.get("batch_summary") if isinstance(data, dict) else None,
                 "categories": parsed_cats,
                 "suggested_categories": raw_cats,
                 "visibility_settings": vis_settings,

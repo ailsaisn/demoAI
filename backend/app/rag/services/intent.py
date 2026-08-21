@@ -43,12 +43,16 @@ def get_current_time_period() -> str:
 def get_time_greeting_response(query: str = "") -> str:
     """
     Generates a concise, polite, and objective greeting response for Doctors,
-    adjusted to the current time of day.
+    adjusted to the current time of day and identity questions.
     """
     period = get_current_time_period()
     time_greeting = f"Selamat {period}"
 
-    return f"Halo Dok! {time_greeting}. Saya ERHA Medical Assistant, siap membantu Dokter."
+    q_lower = query.lower().strip()
+    if any(k in q_lower for k in ["siapa", "kamu siapa", "anda siapa", "bot apa", "kamu siapa?"]):
+        return f"Halo Dok! {time_greeting}. Saya ERHA Medical Assistant, asisten klinis yang siap membantu Dokter mencari informasi SOP tindakan medis, indikasi, dan panduan produk ERHA."
+
+    return f"Halo Dok! {time_greeting}. Saya ERHA Medical Assistant, siap membantu Dokter terkait protokol tindakan atau produk ERHA."
 
 
 class QueryIntent(str, Enum):
@@ -68,7 +72,7 @@ class QueryIntent(str, Enum):
 
 
 _INTENT_PATTERNS = [
-    # 0. GREETING / SAPAAN
+    # 0. GREETING / SAPAAN & IDENTITY
     (
         QueryIntent.GREETING,
         [
@@ -80,14 +84,16 @@ _INTENT_PATTERNS = [
             r"^\s*(tes|test|ping)\s*[\.\,\!\?]*\s*$",
             r"^\s*(halo|hallo|hai|hi|hello)\s+(ada\s+orang|apakah\s+ada\s+orang|bisa\s+bantu|apa\s+kabar)\s*[\.\,\!\?]*\s*$",
             r"^\s*(halo|hallo|hai|hi|hello)\s+(admin|cs|asisten|bot|erha)\s*[\.\,\!\?]*\s*$",
+            r"^\s*(kamu|anda|siapa\s+kamu|siapa\s+anda|kamu\s+siapa|anda\s+siapa|kamu\s+bot\s+apa|siapa\s+kamu\?|kamu\s+siapa\?)\s*[\.\,\!\?]*\s*$",
         ]
     ),
-    # 0.1 CLOSING / TERIMA KASIH
+    # 0.1 CLOSING / TERIMA KASIH & ACKNOWLEDGMENT
     (
         QueryIntent.CLOSING,
         [
-            r"^\s*(oke|ok)?\s*(kalo|kalau)?\s*(gitu|begitu)?\s*(terima\s*kasih|terimaksih|makasih|thanks|thank\s*you|trims)(\s+dok|\s+dokter)?\s*[\.\,\!\?]*\s*$",
-            r"^\s*(sama[- ]sama|siap|baik|mantap|sip)\s*(dok|dokter)?\s*[\.\,\!\?]*\s*$"
+            r"^\s*(oke|ok|okay|kalo\s+begitu|kalau\s+gitu|kalau\s+begitu|kalo\s+gitu)?\s*(terima\s*kasih|terimakasih|terimaksih|makasih|makasi|thanks|thank\s*you|thx|trims|tengkyu)(\s+dok|\s+dokter)?\s*[\.\,\!\?]*\s*$",
+            r"^\s*(oke|ok|okay|sip|siap|baik|baiklah|mantap|noted|clear|paham|mengerti|cukup|sudah\s+cukup|cukup\s+jelas|sudah\s+jelas|sama[- ]sama)(\s+deh|\s+ya|\s+nih|\s+sip|\s+dok|\s+dokter|\s+terima\s*kasih|\s+makasih)?\s*[\.\,\!\?]*\s*$",
+            r"^\s*(oke|ok|okay)\s+(dok|dokter|sip|siap|baik|noted)\s*[\.\,\!\?]*\s*$"
         ]
     ),
     # 1. PRICE
@@ -201,29 +207,15 @@ class QueryIntentDetector:
     def get_recommended_top_k(query: str, intent: QueryIntent, requested_top_k: int = 5) -> int:
         """
         Calculates dynamic top_k:
-        - Simple factual queries (price, single product name, availability) -> 3-5
-        - Multi-condition, protocol, comparison, or routine queries -> 8-10
+        - Greeting / Closing -> 1
+        - Simple price/single product queries -> min(requested_top_k, 4)
+        - All clinical queries, multi-condition, aftercare, cross-doc, or general queries -> max(requested_top_k, 9)
         """
-        query_lower = query.lower()
-        complex_recommendation_keywords = [
-            "rangkaian", "rutinitas", "perbandingan", "urutan", "pagi", "malam", 
-            "perbedaan", "membandingkan", "kombinasi", "langkah", "semua produk", 
-            "persentase", "rekomendasi", "resep", "tindakan", "treatment", "active acne", 
-            "post acne", "post-acne", "papules", "jerawat aktif", "bekas jerawat", 
-            "protokol", "program", "treatment + produk", "treatment dan produk"
-        ]
-
-        is_complex = any(kw in query_lower for kw in complex_recommendation_keywords) or intent in (
-            QueryIntent.COMPARISON, QueryIntent.HOW_TO_USE, QueryIntent.SUITABLE_FOR
-        )
-
-        if is_complex:
-            return max(requested_top_k, 9)
-        elif intent == QueryIntent.GREETING:
+        if intent == QueryIntent.GREETING:
             return 1
-        elif intent in (QueryIntent.PRODUCT_NAME, QueryIntent.PRICE, QueryIntent.AVAILABILITY, QueryIntent.INGREDIENTS):
+        elif intent in (QueryIntent.PRICE, QueryIntent.AVAILABILITY):
             return min(requested_top_k, 4) if requested_top_k > 4 else requested_top_k
-        return requested_top_k
+        return max(requested_top_k, 9)
 
     @staticmethod
     def should_use_agent(query: str, intent: QueryIntent) -> bool:
@@ -257,6 +249,12 @@ class QueryIntentDetector:
                 "max_sentences": 2,
                 "length_instruction": "Acknowledge the greeting warmly and politely in Indonesian, adjusted to the current time of day (Selamat pagi/siang/sore/malam). Offer assistance with ERHA products or treatments.",
                 "missing_fallback": get_time_greeting_response()
+            }
+        elif intent == QueryIntent.CLOSING:
+            return {
+                "max_sentences": 1,
+                "length_instruction": "Respond with a polite, brief acknowledgment/closing in Indonesian ('Sama-sama, Dok!' or 'Baik, Dok. Siap membantu jika ada pertanyaan lain.').",
+                "missing_fallback": "Sama-sama, Dokter! Siap membantu kembali jika ada pertanyaan seputar protokol tindakan atau produk ERHA."
             }
         elif intent == QueryIntent.PRODUCT_NAME:
             return {

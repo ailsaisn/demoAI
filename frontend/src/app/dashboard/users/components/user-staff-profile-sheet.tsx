@@ -1,12 +1,15 @@
 import { Button } from "@/components/ui/button";
 import { Field, FieldContent, FieldLabel, FieldTitle } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
+import { Badge } from "@/components/ui/badge";
 import { RiDeleteBinLine, RiEyeLine, RiEyeOffLine, RiLoader4Line, RiEdit2Line, RiCheckLine, RiCloseLine } from "@remixicon/react";
 import Image from "next/image";
 import { useEffect, useState } from "react";
 import { UserResponse } from "../api/types";
-import { useDeleteUser, useUpdateStaffDetails } from "../hooks/use-users";
+import { useDeleteUser, useUpdateStaffDetails, useUpdateUserRoles } from "../hooks/use-users";
+import { useRoles } from "../hooks/use-roles";
 
 export function UserStaffProfileSheet({
 	isOpen,
@@ -21,10 +24,13 @@ export function UserStaffProfileSheet({
 	const [name, setName] = useState("");
 	const [email, setEmail] = useState("");
 	const [password, setPassword] = useState("");
+	const [role, setRole] = useState("");
 	const [showPassword, setShowPassword] = useState(false);
 
 	const deleteUser = useDeleteUser();
 	const updateStaff = useUpdateStaffDetails();
+	const updateRoles = useUpdateUserRoles();
+	const { data: rolesList = [] } = useRoles();
 
 	useEffect(() => {
 		if (staff && isOpen) {
@@ -32,6 +38,7 @@ export function UserStaffProfileSheet({
 				setName(staff.name || "");
 				setEmail(staff.email || "");
 				setPassword("");
+				setRole(staff.roles && staff.roles.length > 0 ? staff.roles[0].name : "Staff");
 				setIsEditing(false);
 				setShowPassword(false);
 			}, 0);
@@ -49,6 +56,13 @@ export function UserStaffProfileSheet({
 
 	const handleSave = () => {
 		if (!staff) return;
+
+		// If role changed, update role
+		const currentRole = staff.roles && staff.roles.length > 0 ? staff.roles[0].name : "Staff";
+		if (role && role !== currentRole) {
+			updateRoles.mutate({ userId: staff.id, roles: [role] });
+		}
+
 		updateStaff.mutate(
 			{
 				userId: staff.id,
@@ -108,9 +122,31 @@ export function UserStaffProfileSheet({
 											<FieldTitle>Role</FieldTitle>
 										</FieldLabel>
 										<FieldContent>
-											<span className="text-sm text-gray-900">
-												{staff.roles && staff.roles.length > 0 ? staff.roles[0].name : "Staff"}
-											</span>
+											{isEditing ? (
+												<Select value={role} onValueChange={(val) => setRole(val ?? "")}>
+													<SelectTrigger className="w-full border-gray-200 bg-white text-gray-700">
+														<SelectValue placeholder="Select one role" />
+													</SelectTrigger>
+													<SelectContent alignItemWithTrigger={false} sideOffset={4}>
+														{rolesList.length === 0 ? (
+															<SelectItem value="Staff">Staff</SelectItem>
+														) : (
+															rolesList.map((r) => (
+																<SelectItem key={r.id} value={r.name}>
+																	{r.name}
+																</SelectItem>
+															))
+														)}
+													</SelectContent>
+												</Select>
+											) : (
+												<Badge
+													variant="secondary"
+													className="bg-blue-50 text-blue-700 border-blue-200 font-medium text-xs uppercase"
+												>
+													{staff.roles && staff.roles.length > 0 ? staff.roles[0].name : "Staff"}
+												</Badge>
+											)}
 										</FieldContent>
 									</Field>
 

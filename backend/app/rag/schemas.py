@@ -113,6 +113,7 @@ class ApprovedDocumentResponse(BaseModel):
     status: str = Field("Approved", description="Document status")
     summary: str = Field("", description="Document summary")
     image_url: Optional[str] = Field(None, description="Image URL of the document or product in MinIO")
+    batch_summary: Optional[str] = Field(None, description="Batch Executive Summary if multi-file")
     categories: List[str] = Field(default=[], description="Document categories")
     visibility_settings: Optional[VisibilitySettings] = Field(default_factory=VisibilitySettings, description="Access control visibility settings (Clinic, Doctor Type, Doctor)")
     chunks: List[Dict[str, Any]] = Field(..., description="Document text chunks")

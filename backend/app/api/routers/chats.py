@@ -11,12 +11,14 @@ except ImportError:
     import logging
     logger = logging.getLogger(__name__)
 from app.core.database import AsyncSessionLocal
-from app.models.branch import Branch
+from app.models.branch import Branch, UserBranch
+from app.models.category import Category, UserCategoryExclusion
 
 from app.core.database import get_db
 from app.api.dependencies import get_current_user, get_current_user_from_proxy, get_current_user_flexible
 from app.models.user import User, UserType, UserTokenUsage
 from app.models.chat import ChatSession, ChatMessage, ChatStatus
+from app.models.config import AppConfig
 from app.schemas.chat import (
     ChatSessionCreate, ChatSessionUpdate, ChatSessionResponse,
     ChatHistoryResponse, ChatMessageCreate, ChatMessageResponse
@@ -142,6 +144,40 @@ async def has_chats_read_access(user: User, db: AsyncSession) -> bool:
     )
     result = await db.execute(stmt)
     return "chats:read" in result.scalars().all()
+
+async def _build_doctor_filter_metadata(db: AsyncSession, user: User) -> dict:
+    """Build filter_metadata dict for doctor-level knowledge restrictions.
+    
+    Mirrors the logic in knowledge.py to ensure consistent access control
+    across both the Knowledge Chat and Live Chat endpoints.
+    """
+    # Fetch user branches (active connections only)
+    stmt_branches = select(UserBranch.branch_id).where(
+        UserBranch.user_id == user.id,
+        UserBranch.status == 1,
+        UserBranch.deleted_at.is_(None)
+    )
+    result_branches = await db.execute(stmt_branches)
+    branch_ids = [str(b_id) for b_id in result_branches.scalars().all()]
+
+    # Fetch excluded category names
+    stmt_exclusions = (
+        select(Category.name)
+        .join(UserCategoryExclusion, UserCategoryExclusion.category_id == Category.id)
+        .where(UserCategoryExclusion.user_id == user.id)
+    )
+    result_exclusions = await db.execute(stmt_exclusions)
+    excluded_cats = [name for name in result_exclusions.scalars().all()]
+
+    filter_metadata = {
+        "clinics": branch_ids + ["all"],
+        "doctor_types": [user.dr_type or "all", "all"],
+        "doctors": [str(user.id), "all"],
+    }
+    if excluded_cats:
+        filter_metadata["excluded_categories"] = excluded_cats
+
+    return filter_metadata
 
 async def _hydrate_chat_session(session: ChatSession, db: AsyncSession) -> dict:
     session_dict = {
@@ -499,6 +535,9 @@ async def create_chat_message(
     if not allowed:
         raise HTTPException(status_code=403, detail=reason)
 
+    # Build doctor-level knowledge filter (branch, dr_type, excluded categories)
+    doctor_filter = await _build_doctor_filter_metadata(db, current_user)
+
     # For user message, we stream the AI response back via SSE
     async def sse_generator():
         try:
@@ -540,7 +579,8 @@ async def create_chat_message(
                     query=content,
                     top_k=5,
                     rerank=True,
-                    history=history
+                    history=history,
+                    filter_metadata=doctor_filter or None
                 ):
                     # check if the chunk is the initial JSON context string
                     if chunk.startswith('{"type": "context"'):
@@ -679,6 +719,9 @@ async def stream_chat_message(
     if not allowed:
         raise HTTPException(status_code=403, detail=reason)
 
+    # Build doctor-level knowledge filter (branch, dr_type, excluded categories)
+    doctor_filter = await _build_doctor_filter_metadata(db, current_user)
+
     async def sse_generator():
         try:
             from app.rag.services.factory import AdapterFactory
@@ -718,7 +761,8 @@ async def stream_chat_message(
                     query=content,
                     top_k=5,
                     rerank=True,
-                    history=history
+                    history=history,
+                    filter_metadata=doctor_filter or None
                 ):
                     if await request.is_disconnected():
                         logger.info(f"Client disconnected from chat session {session_id}")

@@ -17,6 +17,7 @@ import {
 import { RiEyeLine, RiEyeOffLine, RiImageAddLine, RiCloseLine, RiAddLine, RiLoader4Line } from "@remixicon/react"
 import { useState, useEffect } from "react"
 import { useCreateStaff } from "../hooks/use-users"
+import { useRoles } from "../hooks/use-roles"
 
 export function UserAddSheet({
   isOpen,
@@ -32,6 +33,7 @@ export function UserAddSheet({
   const [showPassword, setShowPassword] = useState(false)
   
   const createStaff = useCreateStaff()
+  const { data: roles = [] } = useRoles()
 
   useEffect(() => {
     if (!isOpen) {
@@ -53,7 +55,7 @@ export function UserAddSheet({
       name,
       email,
       password: password || "password123",
-      roles: role === "admin" ? ["Admin"] : ["Staff"],
+      roles: role ? [role] : ["Staff"],
     }, {
       onSuccess: () => onOpenChange(false)
     })
@@ -116,8 +118,15 @@ export function UserAddSheet({
                     <SelectValue placeholder="Select one role" />
                   </SelectTrigger>
                   <SelectContent alignItemWithTrigger={false} sideOffset={4}>
-                    <SelectItem value="admin">Admin</SelectItem>
-                    <SelectItem value="dept_functional">Dept Functional</SelectItem>
+                    {roles.length === 0 ? (
+                      <SelectItem value="Staff">Staff</SelectItem>
+                    ) : (
+                      roles.map((r) => (
+                        <SelectItem key={r.id} value={r.name}>
+                          {r.name}
+                        </SelectItem>
+                      ))
+                    )}
                   </SelectContent>
                 </Select>
               </FieldContent>

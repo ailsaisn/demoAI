@@ -6,7 +6,7 @@ class Settings(BaseSettings):
     # LLM Settings
     llm_provider: str = "openai"
     openai_api_key: Optional[str] = None
-    openai_model_name: str = "gpt-4o-mini"
+    openai_model_name: str = "gpt-5.4-mini"
 
     # Vector DB (PGVector) Settings
     pg_host: str = "db"

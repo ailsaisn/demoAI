@@ -95,6 +95,23 @@ export const useUpdateStaffDetails = () => {
 	});
 };
 
+export const useUpdateUserRoles = () => {
+	const queryClient = useQueryClient();
+
+	return useMutation({
+		mutationFn: async ({ userId, roles }: { userId: string; roles: string[] }) => {
+			const response = await api.put(`/users/${userId}/roles`, { roles });
+			return response.data;
+		},
+		onSuccess: () => {
+			queryClient.invalidateQueries({ queryKey: userKeys.lists() });
+		},
+		onError: (error: unknown) => {
+			toast.error(getErrorMessage(error, "Failed to update user role."));
+		},
+	});
+};
+
 export const useUpdateDoctorCategories = () => {
 	const queryClient = useQueryClient();
 

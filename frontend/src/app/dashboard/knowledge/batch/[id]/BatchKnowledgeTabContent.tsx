@@ -1,6 +1,7 @@
 "use client";
 
 import { ChatPreview } from "@/components/shared/knowledge/ChatPreview";
+import { ConfirmationModal } from "@/components/shared/knowledge/ConfirmationModal";
 import { useState, forwardRef, useImperativeHandle } from "react";
 import { useKnowledgeDetail, useEditKnowledge, useDeleteKnowledge } from "../../hooks/use-knowledge";
 import { VisibilitySettings } from "../../api/types";
@@ -35,6 +36,7 @@ export const BatchKnowledgeTabContent = forwardRef<BatchTabHandle, BatchKnowledg
 		const [pendingTitle, setPendingTitle] = useState(data?.title || "");
 		const [prevMetadataStr, setPrevMetadataStr] = useState(JSON.stringify(data?.metadata || {}));
 		const [prevTitle, setPrevTitle] = useState(data?.title);
+		const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
 
 		if (JSON.stringify(data?.metadata || {}) !== prevMetadataStr) {
 			setPrevMetadataStr(JSON.stringify(data?.metadata || {}));
@@ -53,16 +55,16 @@ export const BatchKnowledgeTabContent = forwardRef<BatchTabHandle, BatchKnowledg
 		};
 
 		const handleDelete = async () => {
-			if (window.confirm("Are you sure you want to delete this knowledge? This action cannot be undone.")) {
-				await deleteMutation.mutateAsync(knowledgeId);
-				toast.success("Knowledge deleted successfully");
-				router.push("/dashboard/knowledge");
-			}
+			await deleteMutation.mutateAsync(knowledgeId);
+			toast.success("Knowledge deleted successfully");
+			router.push("/dashboard/knowledge");
 		};
 
 		useImperativeHandle(ref, () => ({
 			handleSave,
-			handleDelete
+			handleDelete: async () => {
+				setIsDeleteModalOpen(true);
+			}
 		}));
 
 		if (error) {
@@ -106,8 +108,21 @@ export const BatchKnowledgeTabContent = forwardRef<BatchTabHandle, BatchKnowledg
 						preHeaderNode={preHeaderNode}
 					/>
 				</div>
+
+				{/* Delete Confirmation Modal */}
+				<ConfirmationModal
+					isOpen={isDeleteModalOpen}
+					onOpenChange={setIsDeleteModalOpen}
+					title="Delete Knowledge?"
+					description="Are you certain you want to delete this knowledge? If you proceed, it will be removed from the chatbot."
+					confirmText="Delete Knowledge"
+					cancelText="Cancel"
+					isLoading={deleteMutation.isPending}
+					onConfirm={handleDelete}
+				/>
 			</div>
 		);
 	}
 );
 BatchKnowledgeTabContent.displayName = "BatchKnowledgeTabContent";
+

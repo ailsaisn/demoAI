@@ -3,7 +3,7 @@ from fastapi import FastAPI
 from contextlib import asynccontextmanager
 from loguru import logger
 from app.core.config import settings
-from app.api.routers import auth, users, branches, categories, knowledge, chats, webhooks, config, events
+from app.api.routers import auth, users, branches, categories, knowledge, chats, webhooks, config, events, roles
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -87,7 +87,7 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=settings.CORS_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -142,6 +142,7 @@ async def observability_and_rate_limit_middleware(request: Request, call_next):
 
 app.include_router(auth.router, prefix="/api")
 app.include_router(users.router, prefix="/api")
+app.include_router(roles.router, prefix="/api/roles")
 app.include_router(branches.router, prefix="/api/branches")
 app.include_router(categories.router, prefix="/api/categories")
 app.include_router(knowledge.router, prefix="/api/knowledge")

@@ -43,9 +43,10 @@ export default function IngestPage() {
 		});
 
 		uploadMutation.mutate(formData, {
-			onSuccess: (data: { upload_batch_id?: string; documents?: { knowledge_id: string }[] }) => {
-				if (data.upload_batch_id) {
-					router.push(`/dashboard/knowledge/batch/${data.upload_batch_id}`);
+			onSuccess: (data: { batch_id?: string; upload_batch_id?: string; documents?: { knowledge_id: string }[] }) => {
+				const batchId = data.batch_id || data.upload_batch_id;
+				if (batchId) {
+					router.push(`/dashboard/knowledge/batch/${batchId}`);
 				} else if (data.documents && data.documents.length > 0) {
 					router.push(`/dashboard/knowledge/${data.documents[0].knowledge_id}`);
 				}

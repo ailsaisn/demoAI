@@ -1,6 +1,7 @@
 "use client";
 
 import { ChatPreview } from "@/components/shared/knowledge/ChatPreview";
+import { ConfirmationModal } from "@/components/shared/knowledge/ConfirmationModal";
 import { Button } from "@/components/ui/button";
 import { RiArrowLeftLine, RiDeleteBin7Line, RiEdit2Line, RiCheckLine } from "@remixicon/react";
 import { toast } from "sonner";
@@ -21,6 +22,8 @@ export default function KnowledgeDetailPage({ params }: { params: Promise<{ id: 
 	const hasWriteAccess = user?.accesses?.includes("knowledge:write");
 	const hasDeleteAccess = user?.accesses?.includes("knowledge:delete");
 	const [isEditMode, setIsEditMode] = useState(false);
+	const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
+	const [isSaveModalOpen, setIsSaveModalOpen] = useState(false);
 	const editKnowledge = useEditKnowledge();
 
 	const initialCategories = (data?.metadata?.categories as string[]) || (data?.metadata?.suggested_categories as Array<{ name: string }>)?.map((c) => c.name) || [];
@@ -43,14 +46,9 @@ export default function KnowledgeDetailPage({ params }: { params: Promise<{ id: 
 		setPendingTitle(data?.title || "");
 	}
 
-	const handleDelete = () => {
-		if (confirm("Are you sure you want to delete this knowledge document?")) {
-			deleteMutation.mutate(id, {
-				onSuccess: () => {
-					router.push("/dashboard/knowledge");
-				},
-			});
-		}
+	const handleDelete = async () => {
+		await deleteMutation.mutateAsync(id);
+		router.push("/dashboard/knowledge");
 	};
 
 	if (error) {
@@ -107,7 +105,7 @@ export default function KnowledgeDetailPage({ params }: { params: Promise<{ id: 
 				<div className="flex items-center gap-2">
 					{hasDeleteAccess && data?.status === "APPROVED" && (
 						<Button
-							onClick={handleDelete}
+							onClick={() => setIsDeleteModalOpen(true)}
 							disabled={deleteMutation.isPending || isLoading}
 							variant="outline"
 							className="gap-2 text-red-600 hover:text-red-700 hover:bg-red-50 border-red-200"
@@ -121,9 +119,9 @@ export default function KnowledgeDetailPage({ params }: { params: Promise<{ id: 
 							variant={isEditMode ? "default" : "outline"}
 							className={`gap-2 ${isEditMode ? "bg-emerald-600 hover:bg-emerald-700 text-white" : "text-zinc-950"}`}
 							disabled={isLoading || editKnowledge.isPending}
-							onClick={async () => {
+							onClick={() => {
 								if (isEditMode) {
-									await handleSave();
+									setIsSaveModalOpen(true);
 								} else {
 									toast.info("You can now edit the document categories below.");
 									setIsEditMode(true);
@@ -159,8 +157,31 @@ export default function KnowledgeDetailPage({ params }: { params: Promise<{ id: 
 					onSave={handleSave}
 					onCancel={handleCancel}
 				/>
-
 			</div>
+
+			{/* Save Knowledge Confirmation Modal */}
+			<ConfirmationModal
+				isOpen={isSaveModalOpen}
+				onOpenChange={setIsSaveModalOpen}
+				title="Save Knowledge?"
+				description="Are you sure you want to save the changes of the  knowledge? If you confirm, it will be implemented into the chatbot."
+				confirmText="Save Knowledge"
+				cancelText="Cancel"
+				isLoading={editKnowledge.isPending}
+				onConfirm={handleSave}
+			/>
+
+			{/* Delete Knowledge Confirmation Modal */}
+			<ConfirmationModal
+				isOpen={isDeleteModalOpen}
+				onOpenChange={setIsDeleteModalOpen}
+				title="Delete Knowledge?"
+				description="Are you certain you want to delete this knowledge? If you proceed, it will be removed from the chatbot."
+				confirmText="Delete Knowledge"
+				cancelText="Cancel"
+				isLoading={deleteMutation.isPending}
+				onConfirm={handleDelete}
+			/>
 		</div>
 	);
 }

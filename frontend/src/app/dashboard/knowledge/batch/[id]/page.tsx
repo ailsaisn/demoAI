@@ -8,7 +8,6 @@ import {
 	AttachmentTitle,
 } from "@/components/ui/attachment";
 import { Button } from "@/components/ui/button";
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useSession } from "@/hooks/use-session";
 import {
 	RiArrowLeftLine,
@@ -27,6 +26,7 @@ import { use, useRef, useState } from "react";
 import { toast } from "sonner";
 import { useDeleteKnowledge, useKnowledgeBatch } from "../../hooks/use-knowledge";
 import { BatchKnowledgeTabContent, BatchTabHandle } from "./BatchKnowledgeTabContent";
+import { BatchDocumentTabs } from "./BatchDocumentTabs";
 
 export default function BatchKnowledgePage({ params }: { params: Promise<{ id: string }> }) {
 	const router = useRouter();
@@ -69,7 +69,11 @@ export default function BatchKnowledgePage({ params }: { params: Promise<{ id: s
 	const currentTab = activeTab || batchDocuments[0].id;
 	const activeDoc = batchDocuments.find((d) => d.id === currentTab) || batchDocuments[0];
 
-	const batchFeedbacks = batchDocuments
+	const batchSummary = (
+		batchDocuments.find((d) => (d.metadata as Record<string, unknown>)?.batch_summary)?.metadata as Record<string, unknown>
+	)?.batch_summary as string | undefined;
+
+	const fallbackFeedbacks = batchDocuments
 		.map((d, i) => {
 			const feedback = (d.metadata as Record<string, unknown>)?.feedback as string | undefined;
 			if (!feedback) return null;
@@ -78,7 +82,7 @@ export default function BatchKnowledgePage({ params }: { params: Promise<{ id: s
 		})
 		.filter(Boolean);
 
-	const batchFeedback = batchFeedbacks.length > 0 ? batchFeedbacks.join("\n\n") : undefined;
+	const displayedSummary = batchSummary || (fallbackFeedbacks.length > 0 ? fallbackFeedbacks.join("\n\n") : undefined);
 
 	const isEditMode = editModes[currentTab] || false;
 
@@ -182,14 +186,14 @@ export default function BatchKnowledgePage({ params }: { params: Promise<{ id: s
 						};
 
 						const preHeaderNode = (
-							<div className="flex flex-row flex-wrap justify-end gap-2 mb-4 self-end">
+							<div className="flex flex-row flex-wrap justify-end gap-2 mb-4 self-end max-h-36 overflow-y-auto w-full pr-1">
 								{batchDocuments.map((tabDoc) => {
 									const fileName = tabDoc.file_name || tabDoc.title || "Document";
 									const { Icon, bgColor, textColor } = getFileIconAndColor(fileName);
 									return (
 										<Attachment
 											key={tabDoc.id}
-											className="bg-white border border-zinc-200 shadow-none p-1.5 w-fit min-w-40 max-w-sm rounded-lg"
+											className="bg-white border border-zinc-200 shadow-none p-1.5 w-fit min-w-40 max-w-xs rounded-lg shrink-0"
 										>
 											<AttachmentMedia
 												className={`${bgColor} ${textColor} shrink-0 rounded-lg p-2`}
@@ -211,49 +215,24 @@ export default function BatchKnowledgePage({ params }: { params: Promise<{ id: s
 						);
 
 						const headerNode = (
-							<div className="flex flex-col gap-4 mb-4 pb-4 border-b border-blue-200/50">
+							<div className="flex flex-col gap-4 mb-4 w-full min-w-0 max-w-full overflow-hidden">
 								{/* Executive Summary Section */}
-								{batchFeedback && (
+								{displayedSummary && (
 									<div className="bg-zinc-100/50 rounded-lg p-4 w-full text-zinc-950 mb-4">
 										<div className="flex items-center gap-2 text-blue-600 mb-2">
 											<RiSparklingLine className="size-5" />
 											<h3 className="font-semibold text-sm">Executive Summary</h3>
 										</div>
-										<p className="text-sm leading-relaxed whitespace-pre-wrap">{batchFeedback}</p>
+										<p className="text-sm leading-relaxed whitespace-pre-wrap">{displayedSummary}</p>
 									</div>
 								)}
 
-								{/* Tabs Layout */}
-								<div>
-									<h4 className="text-xs font-semibold text-blue-900/70 uppercase tracking-wider mb-2">
-										Documents in this batch
-									</h4>
-									<Tabs value={currentTab} onValueChange={setActiveTab} className="w-full">
-										<TabsList variant="line" className="mb-2">
-											{batchDocuments.map((tabDoc, tabIndex) => (
-												<TabsTrigger
-													key={tabDoc.id}
-													value={tabDoc.id}
-													className="font-medium text-xs text-blue-900/60 hover:text-blue-600 data-active:text-blue-600 data-active:after:bg-blue-600"
-												>
-													<span className="truncate max-w-40">
-														{tabDoc.title || `Document ${tabIndex + 1}`}
-													</span>
-													{tabDoc.status === "PROCESSING" && (
-														<span className="ml-2 inline-flex items-center rounded-full bg-blue-100 px-1.5 py-0.5 text-[10px] font-medium text-blue-700 shrink-0">
-															Processing
-														</span>
-													)}
-													{tabDoc.status === "PENDING" && (
-														<span className="ml-2 inline-flex items-center rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 shrink-0">
-															Review
-														</span>
-													)}
-												</TabsTrigger>
-											))}
-										</TabsList>
-									</Tabs>
-								</div>
+								{/* Batch Documents Tabs Bar */}
+								<BatchDocumentTabs
+									documents={batchDocuments}
+									activeId={currentTab}
+									onSelectDoc={setActiveTab}
+								/>
 							</div>
 						);
 
