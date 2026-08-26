@@ -54,15 +54,23 @@ export function AttachProjectDialog({
 	useEffect(() => {
 		const timer = setTimeout(() => {
 			if (isOpen) {
-				setSelectedProjectId(currentProjectId || "none");
+				if (!currentProjectId || currentProjectId === "none") {
+					setSelectedProjectId("none");
+				} else if (projects.length > 0) {
+					const exists = projects.some((p) => p.id === currentProjectId);
+					setSelectedProjectId(exists ? currentProjectId : "none");
+				} else {
+					setSelectedProjectId(currentProjectId);
+				}
 			}
 		}, 0);
 		return () => clearTimeout(timer);
-	}, [isOpen, currentProjectId]);
+	}, [isOpen, currentProjectId, projects]);
 
 	const handleSubmit = async (e: React.FormEvent) => {
 		e.preventDefault();
-		const targetProjectId = selectedProjectId === "none" ? null : selectedProjectId;
+		const isValidProject = selectedProjectId !== "none" && projects.some((p) => p.id === selectedProjectId);
+		const targetProjectId = isValidProject ? selectedProjectId : null;
 		const idsToUpdate = knowledgeIds && knowledgeIds.length > 0 ? knowledgeIds : knowledgeId ? [knowledgeId] : [];
 		if (idsToUpdate.length === 0) return;
 

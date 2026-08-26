@@ -17,7 +17,7 @@ import {
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useState, useMemo, Suspense } from "react";
+import { useState, useEffect, useMemo, Suspense } from "react";
 import { useUploadKnowledge, useIngestionQuota, useCreateGeneralChatSession } from "../knowledge/hooks/use-knowledge";
 import { useProjects } from "../knowledge/hooks/use-projects";
 
@@ -34,6 +34,16 @@ function IngestContent() {
 	const [selectedProjectId, setSelectedProjectId] = useState<string>(projectId || "none");
 	const [errorMsg, setErrorMsg] = useState<string | null>(null);
 	const [promptValue, setPromptValue] = useState("");
+
+	useEffect(() => {
+		const timer = setTimeout(() => {
+			if (projectId && projects.length > 0) {
+				const exists = projects.some((p) => p.id === projectId);
+				setSelectedProjectId(exists ? projectId : "none");
+			}
+		}, 0);
+		return () => clearTimeout(timer);
+	}, [projectId, projects]);
 
 	const isGeneralMode = mode === "general";
 
@@ -78,7 +88,8 @@ function IngestContent() {
 			formData.append("prompt", value);
 		}
 
-		const targetProject = selectedProjectId !== "none" ? selectedProjectId : null;
+		const isValidProject = selectedProjectId !== "none" && projects.some((p) => p.id === selectedProjectId);
+		const targetProject = isValidProject ? selectedProjectId : null;
 		if (targetProject) {
 			formData.append("project_id", targetProject);
 		}

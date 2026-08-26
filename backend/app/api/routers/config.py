@@ -316,14 +316,8 @@ async def get_system_logs(
     Retrieve live backend logs from in-memory ring buffer and rotating file.
     Supports filtering by level (INFO, DEBUG, ERROR, WARNING) and keyword search.
     If raw=True, returns text/plain for direct browser or terminal viewing.
-    Automatically blocked in production environments for security.
+    Protected by RBAC (requires configuration:read access).
     """
-    if str(settings.ENVIRONMENT).lower() in ("production", "prod"):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="System logs endpoint is disabled in production environments."
-        )
-
     from app.core.logger import get_recent_logs
     from fastapi.responses import PlainTextResponse
     
@@ -353,13 +347,8 @@ async def get_system_logs_ui(
     - Live auto-polling stream (every 1.5s)
     - Instant client-side search & level filtering
     - Auto-scroll & pause controls
+    Protected by RBAC (requires configuration:read access).
     """
-    if str(settings.ENVIRONMENT).lower() in ("production", "prod"):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="System logs UI is disabled in production environments."
-        )
-
     from fastapi.responses import HTMLResponse
 
     html_content = """<!DOCTYPE html>
