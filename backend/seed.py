@@ -31,10 +31,12 @@ async def init_db():
         access_list = [
             "knowledge:read", "knowledge:write", "knowledge:delete",
             "users:read", "users:write", 
+            "roles:read", "roles:write", "roles:delete",
             "branches:read", "branches:write", 
             "categories:read", "categories:write", 
             "chats:read",
-            "configuration:read", "configuration:write"
+            "configuration:read", "configuration:write",
+            "notifications:read", "notifications:write"
         ]
         for acc_name in access_list:
             result = await session.execute(__import__('sqlalchemy').select(Access).where(Access.name == acc_name))

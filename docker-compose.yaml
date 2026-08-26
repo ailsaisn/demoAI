@@ -81,6 +81,25 @@ services:
       - /app/node_modules
       - /app/.next
 
+  mock-cis:
+    build:
+      context: ./mock-cis
+    container_name: skin_clinic_mock_cis
+    restart: always
+    ports:
+      - "8001:8001"
+    environment:
+      - BACKEND_URL=http://backend:8000
+      - BACKEND_WEBHOOK_URL=http://backend:8000/api/webhooks/cis
+    depends_on:
+      backend:
+        condition: service_healthy
+    volumes:
+      - ./mock-cis/main.py:/app/main.py
+      - ./mock-cis/keys:/app/keys
+      - ./mock-cis/frontend/dist:/app/frontend/dist
+
 volumes:
   pgdata:
   minio_data:
+

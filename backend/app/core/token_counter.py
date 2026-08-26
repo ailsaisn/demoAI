@@ -69,7 +69,7 @@ async def count_chat_prompt_tokens_api(
     context_chunks: Optional[List[str]] = None,
     history: Optional[List[Dict[str, str]]] = None,
     files: Optional[List[Dict[str, Any]]] = None,
-    model_name: Optional[str] = "gpt-4o-mini",
+    model_name: Optional[str] = "gpt-5.4-mini",
     api_key: Optional[str] = None,
     provider: str = "openai",
     base_url: Optional[str] = None
@@ -81,7 +81,7 @@ async def count_chat_prompt_tokens_api(
     - Fallback: Local tiktoken + image tile calculation if API call fails or offline.
     """
     provider_clean = (provider or "openai").lower()
-    target_model = model_name or ("gemini-1.5-flash" if provider_clean == "gemini" else "gpt-4o-mini")
+    target_model = model_name or ("gemini-1.5-flash" if provider_clean == "gemini" else "gpt-5.4-mini")
 
     # 1. Try Gemini API
     if provider_clean == "gemini" and api_key:

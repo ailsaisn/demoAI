@@ -70,7 +70,7 @@ export function GlobalFileAttachmentConfig() {
 							disabled={updateConfig.isPending || isUpdating}
 						/>
 						<span className="text-sm text-black-400">
-							{localChecked ? "Don't allow file attachment" : "Allow file attachment"}
+							{localChecked ? "Allow file attachment" : "Don't allow file attachment"}
 						</span>
 					</div>
 				</div>

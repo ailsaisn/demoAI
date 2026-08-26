@@ -63,8 +63,8 @@ The mock service includes a reference React implementation (`frontend/src/compon
    />
    ```
 3. **API Flow inside the Component**:
-   - **Start Session**: Calls `POST /api/chats/` with `branch_code` (e.g. `"011"`) or `cis_branch_id`.
-   - **Send Message**: Calls `POST /api/chats/{session_id}/messages/stream` (SSE Stream).
+   - **Start Session**: Calls `POST /api/chats/` with `branch_code` (e.g. `"011"`) or `cis_branch_id` (returns session ID and `allow_file_attachments`).
+   - **Send Message**: Calls `POST /api/chats/{session_id}/messages` (with `FormData` when file attachments are present) or `POST /api/chats/{session_id}/messages/stream` (SSE Stream).
    - **Receive Message**: Receives streaming response tokens in real-time.
 
 ---

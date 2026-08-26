@@ -167,17 +167,22 @@ export function useIdleTimer({
 	useEffect(() => {
 		if (!enabled) return;
 
+		const totalTimeout = idleTimeoutMs + warningTimeoutMs;
+		const now = Date.now();
+
 		try {
 			const stored = localStorage.getItem(STORAGE_KEY);
 			if (stored) {
 				const parsed = parseInt(stored, 10);
-				if (!isNaN(parsed)) {
+				// Only use stored timestamp if it is valid and from the recent active window
+				if (!isNaN(parsed) && (now - parsed) < totalTimeout) {
 					lastRecordedTimeRef.current = parsed;
 				} else {
-					lastRecordedTimeRef.current = Date.now();
+					// Stale or expired past session timestamp: reset to now
+					lastRecordedTimeRef.current = now;
+					localStorage.setItem(STORAGE_KEY, now.toString());
 				}
 			} else {
-				const now = Date.now();
 				lastRecordedTimeRef.current = now;
 				localStorage.setItem(STORAGE_KEY, now.toString());
 			}
@@ -186,7 +191,7 @@ export function useIdleTimer({
 		}
 
 		checkIntervalRef.current = setInterval(() => {
-			const now = Date.now();
+			const currentTime = Date.now();
 			let lastActive = lastRecordedTimeRef.current;
 
 			try {
@@ -202,8 +207,7 @@ export function useIdleTimer({
 				// Ignore
 			}
 
-			const elapsed = now - lastActive;
-			const totalTimeout = idleTimeoutMs + warningTimeoutMs;
+			const elapsed = currentTime - lastActive;
 
 			if (elapsed >= totalTimeout) {
 				setIsWarning(false);

@@ -24,7 +24,8 @@ class ChatSession(Base, TimestampMixin):
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
-    branch_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("branches.id"), nullable=False)
+    branch_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("branches.id"), nullable=True)
+    session_type: Mapped[str] = mapped_column(String(50), default="DOCTOR", server_default="DOCTOR", nullable=False)
     status: Mapped[ChatStatus] = mapped_column(SQLEnum(ChatStatus, name="chat_status"), default=ChatStatus.ACTIVE, nullable=False)
     summary: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     rating: Mapped[Optional[ChatRating]] = mapped_column(SQLEnum(ChatRating, name="chat_rating"), nullable=True)

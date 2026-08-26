@@ -2,22 +2,34 @@
 
 import { useLogin } from "@/app/login/hooks/use-login";
 import { Button } from "@/components/ui/button";
-import { Field, FieldError, FieldGroup, FieldLabel } from "@/components/ui/field";
+import {
+	Field,
+	FieldContent,
+	FieldError,
+	FieldGroup,
+	FieldLabel,
+	FieldTitle,
+} from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { cn, getErrorMessage } from "@/lib/utils";
-import { RiErrorWarningLine, RiLoader4Line } from "@remixicon/react";
+import {
+	RiErrorWarningLine,
+	RiEyeLine,
+	RiEyeOffLine,
+	RiLoader4Line,
+	RiRobot2Line,
+} from "@remixicon/react";
 import { useForm } from "@tanstack/react-form";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useState } from "react";
 import { toast } from "sonner";
 import { loginSchema, type LoginValues } from "./login-schema";
-
-import { useSearchParams } from "next/navigation";
 
 export function LoginForm({ className, ...props }: React.ComponentProps<"form">) {
 	const router = useRouter();
 	const searchParams = useSearchParams();
 	const [loginError, setLoginError] = useState<string | null>(null);
+	const [showPassword, setShowPassword] = useState(false);
 	const { mutate: login, isPending } = useLogin();
 
 	const form = useForm({
@@ -40,18 +52,10 @@ export function LoginForm({ className, ...props }: React.ComponentProps<"form">)
 			login(credentials, {
 				onSuccess: ({ userProfile }) => {
 					const fromParam = searchParams.get("from");
-					let defaultTarget = "/login";
+					let target = "/dashboard/knowledge";
 
-					if (userProfile.type === "STAFF") {
-						defaultTarget = "/dashboard/knowledge";
-					}
-
-					// Check if fromParam is allowed for user
-					let target = defaultTarget;
-					if (fromParam && fromParam.startsWith("/")) {
-						if (fromParam.startsWith("/dashboard") && userProfile.type === "STAFF") {
-							target = fromParam;
-						}
+					if (fromParam && fromParam.startsWith("/") && !fromParam.startsWith("/login")) {
+						target = fromParam;
 					}
 
 					router.push(target);
@@ -87,22 +91,25 @@ export function LoginForm({ className, ...props }: React.ComponentProps<"form">)
 			{...props}
 		>
 			<FieldGroup>
-				<div className="flex flex-col items-center gap-2 text-center mb-6">
-					<h1 className="text-2xl font-bold">Login to your account</h1>
-					<p className="text-sm text-muted-foreground">
-						Enter your email below to login to your account
+				<div className="flex flex-col items-center text-center">
+					<div className="mb-4 flex h-12 w-12 items-center justify-center rounded-lg bg-blue-50">
+						<RiRobot2Line className="h-7 w-7 text-blue-500" />
+					</div>
+					<h1 className="mb-1 text-xl font-semibold text-neutral-900">Hello, welcome back</h1>
+					<p className="text-sm text-neutral-600">
+						Sign in to manage conversations, knowledge, and chatbot performance.
 					</p>
 				</div>
 
 				{reasonMessage && !loginError && (
-					<div className="flex items-center gap-3 text-sm font-medium text-amber-700 bg-amber-50 dark:bg-amber-950/40 dark:text-amber-300 p-3 rounded-md mb-2 border border-amber-200 dark:border-amber-800">
+					<div className="flex items-center gap-3 text-sm font-medium text-amber-700 bg-amber-50 dark:bg-amber-950/40 dark:text-amber-300 p-3 rounded-lg mb-2 border border-amber-200 dark:border-amber-800">
 						<RiErrorWarningLine className="h-5 w-5 shrink-0 text-amber-600 dark:text-amber-400" />
 						<span className="leading-tight">{reasonMessage}</span>
 					</div>
 				)}
 
 				{loginError && (
-					<div className="flex items-center gap-3 text-sm font-medium text-destructive bg-destructive/10 p-3 rounded-md mb-2">
+					<div className="flex items-center gap-3 text-sm font-medium text-destructive bg-destructive/10 p-3 rounded-lg mb-2">
 						<RiErrorWarningLine className="h-5 w-5 shrink-0" />
 						<span className="leading-tight">{loginError}</span>
 					</div>
@@ -113,18 +120,26 @@ export function LoginForm({ className, ...props }: React.ComponentProps<"form">)
 						const isInvalid = field.state.meta.errors && field.state.meta.errors.length > 0;
 						return (
 							<Field data-invalid={isInvalid}>
-								<FieldLabel htmlFor="email">Email</FieldLabel>
-								<Input
-									name={field.name}
-									id="email"
-									type="email"
-									placeholder="name@example.com"
-									value={field.state.value}
-									onChange={(e) => field.handleChange(e.target.value)}
-									onBlur={field.handleBlur}
-									disabled={isPending}
-									aria-invalid={isInvalid}
-								/>
+								<FieldLabel htmlFor="email">
+									<FieldTitle className="text-sm font-normal text-neutral-900">Email</FieldTitle>
+								</FieldLabel>
+								<FieldContent>
+									<div className="relative">
+										<Input
+											name={field.name}
+											id="email"
+											type="email"
+											placeholder="e.g. johndoe@gmail.com"
+											value={field.state.value}
+											onChange={(e) => field.handleChange(e.target.value)}
+											onBlur={field.handleBlur}
+											disabled={isPending}
+											aria-invalid={isInvalid}
+											autoComplete="off"
+											className="border-gray-200 bg-white focus-visible:ring-blue-500"
+										/>
+									</div>
+								</FieldContent>
 								{isInvalid && (
 									<FieldError errors={field.state.meta.errors as Array<{ message?: string }>} />
 								)}
@@ -138,23 +153,39 @@ export function LoginForm({ className, ...props }: React.ComponentProps<"form">)
 						const isInvalid = field.state.meta.errors && field.state.meta.errors.length > 0;
 						return (
 							<Field data-invalid={isInvalid}>
-								<div className="flex items-center">
-									<FieldLabel htmlFor="password">Password</FieldLabel>
-									<a href="#" className="hidden ml-auto text-sm underline-offset-4 hover:underline">
-										Forgot your password?
-									</a>
-								</div>
-								<Input
-									name={field.name}
-									id="password"
-									type="password"
-									placeholder="••••••••"
-									value={field.state.value}
-									onChange={(e) => field.handleChange(e.target.value)}
-									onBlur={field.handleBlur}
-									disabled={isPending}
-									aria-invalid={isInvalid}
-								/>
+								<FieldLabel htmlFor="password">
+									<FieldTitle className="text-sm font-normal text-neutral-900">Password</FieldTitle>
+								</FieldLabel>
+								<FieldContent>
+									<div className="relative">
+										<Input
+											name={field.name}
+											id="password"
+											type={showPassword ? "text" : "password"}
+											placeholder="••••••••"
+											value={field.state.value}
+											onChange={(e) => field.handleChange(e.target.value)}
+											onBlur={field.handleBlur}
+											disabled={isPending}
+											aria-invalid={isInvalid}
+											autoComplete="new-password"
+											className="border-gray-200 bg-white focus-visible:ring-blue-500 pr-10"
+										/>
+										<Button
+											type="button"
+											variant="ghost"
+											size="icon"
+											className="absolute right-0 top-0 h-full px-3 py-2 text-gray-500 hover:text-gray-700 hover:bg-transparent"
+											onClick={() => setShowPassword(!showPassword)}
+										>
+											{showPassword ? (
+												<RiEyeOffLine className="h-4 w-4" />
+											) : (
+												<RiEyeLine className="h-4 w-4" />
+											)}
+										</Button>
+									</div>
+								</FieldContent>
 								{isInvalid && (
 									<FieldError errors={field.state.meta.errors as Array<{ message?: string }>} />
 								)}
@@ -165,12 +196,20 @@ export function LoginForm({ className, ...props }: React.ComponentProps<"form">)
 
 				<form.Subscribe selector={(state) => [state.isSubmitting]}>
 					{([isSubmitting]) => (
-						<Field>
-							<Button type="submit" disabled={isPending || isSubmitting}>
-								{(isPending || isSubmitting) && (
-									<RiLoader4Line className="mr-2 h-4 w-4 animate-spin shrink-0" />
+						<Field className="pt-2">
+							<Button
+								type="submit"
+								disabled={isPending || isSubmitting}
+								className="w-full bg-blue-500 hover:bg-blue-600 text-white font-medium h-10 rounded-lg"
+							>
+								{isPending || isSubmitting ? (
+									<>
+										<RiLoader4Line className="mr-2 h-4 w-4 animate-spin shrink-0" />
+										Logging in...
+									</>
+								) : (
+									"Login"
 								)}
-								{isPending || isSubmitting ? "Logging in..." : "Login"}
 							</Button>
 						</Field>
 					)}

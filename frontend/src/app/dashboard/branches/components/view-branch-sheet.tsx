@@ -33,15 +33,15 @@ export function ViewBranchSheet({ branch }: ViewBranchSheetProps) {
 		<>
 			<Button
 				variant="outline"
-				className="bg-white border-black-50 text-black-500 rounded-lg font-medium hover:bg-zinc-50 shadow-none"
+				className="border-gray-200 font-medium"
 				onClick={() => setOpen(true)}
 			>
 				<RiEyeLine className="size-4 mr-2" />
 				View
 			</Button>
 			<Sheet open={open} onOpenChange={setOpen}>
-				<SheetContent className="sm:max-w-100 w-full p-0 flex flex-col gap-0 border-l border-black-50 bg-white">
-					<SheetHeader className="p-4 border-b border-black-50">
+				<SheetContent className="sm:max-w-100 w-full p-0 flex flex-col gap-0 border-l border-gray-200 bg-white">
+					<SheetHeader className="p-4 border-b border-gray-200">
 						<SheetTitle className="text-base font-medium text-black-500 text-left">
 							Branch Information
 						</SheetTitle>

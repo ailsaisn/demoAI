@@ -12,7 +12,11 @@ export function SearchBar({ className, containerClassName, iconClassName, ...pro
 	return (
 		<div className={cn("relative flex items-center w-full", containerClassName)}>
 			<RiSearchLine className={cn("absolute left-2.5 w-4 h-4 text-gray-400", iconClassName)} />
-			<Input type="search" {...props} className={cn("pl-8 bg-white", className)} />
+			<Input
+				type="search"
+				{...props}
+				className={cn("pl-8 bg-white border-gray-200 focus-visible:ring-blue-500", className)}
+			/>
 		</div>
 	);
 }

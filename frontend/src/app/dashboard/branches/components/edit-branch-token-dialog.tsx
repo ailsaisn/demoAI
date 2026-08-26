@@ -64,7 +64,7 @@ export function EditBranchTokenDialog({ branch }: EditBranchTokenDialogProps) {
 				render={
 					<Button
 						variant="outline"
-						className="bg-white border-black-50 text-black-500 hover:bg-zinc-50 hover:text-black-600 h-9 px-4 py-2 rounded-lg shadow-none text-sm font-medium"
+						className="border-gray-200 h-9 px-4 py-2 font-medium"
 					/>
 				}
 			>
@@ -72,7 +72,7 @@ export function EditBranchTokenDialog({ branch }: EditBranchTokenDialogProps) {
 				Edit Token Limit
 			</DialogTrigger>
 			<DialogContent className="sm:max-w-md w-full bg-white p-0">
-				<DialogHeader className="p-4 border-b border-black-50">
+				<DialogHeader className="p-4 border-b border-gray-200">
 					<DialogTitle className="text-base font-medium text-black-500 text-left">
 						Edit Branch Token Limit
 					</DialogTitle>
@@ -99,7 +99,7 @@ export function EditBranchTokenDialog({ branch }: EditBranchTokenDialogProps) {
 												id="token_limit"
 												type="number"
 												placeholder="1000"
-												className="h-10 rounded-lg border-black-50 bg-white text-sm text-black-500 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+												className="h-10 rounded-lg border-gray-200 bg-white text-sm text-black-500 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none focus-visible:ring-blue-500"
 												value={field.state.value}
 												onChange={(e) => field.handleChange(e.target.value)}
 												onBlur={field.handleBlur}
@@ -118,7 +118,7 @@ export function EditBranchTokenDialog({ branch }: EditBranchTokenDialogProps) {
 						</form.Field>
 					</div>
 
-					<div className="p-4 border-t border-black-50 flex justify-end gap-3 bg-white rounded-b-xl">
+					<div className="p-4 border-t border-gray-200 flex justify-end gap-3 bg-white rounded-b-xl">
 						<Button
 							type="button"
 							variant="outline"

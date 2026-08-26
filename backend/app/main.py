@@ -1,9 +1,13 @@
 import os
-from fastapi import FastAPI
+from fastapi import FastAPI, Request, HTTPException, status
 from contextlib import asynccontextmanager
 from loguru import logger
 from app.core.config import settings
-from app.api.routers import auth, users, branches, categories, knowledge, chats, webhooks, config, events, roles
+from app.core.logger import setup_logging
+from app.api.routers import auth, users, branches, categories, projects, knowledge, chats, webhooks, config, events, roles
+
+# Initialize centralized logging and interceptors immediately
+setup_logging()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -85,6 +89,15 @@ app = FastAPI(
     swagger_ui_parameters={"persistAuthorization": True}
 )
 
+# Pure ASGI Middleware to buffer and replay raw request body when X-Signature is present.
+# This prevents Starlette's MultipartParser from starving signature verification dependencies.
+@app.middleware("http")
+async def cache_raw_body_for_signature(request: Request, call_next):
+    if request.headers.get("X-Signature") or request.headers.get("x-signature"):
+        body_bytes = await request.body()
+        request.scope["_raw_body"] = body_bytes
+    return await call_next(request)
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.CORS_ORIGINS,
@@ -145,6 +158,7 @@ app.include_router(users.router, prefix="/api")
 app.include_router(roles.router, prefix="/api/roles")
 app.include_router(branches.router, prefix="/api/branches")
 app.include_router(categories.router, prefix="/api/categories")
+app.include_router(projects.router, prefix="/api/projects")
 app.include_router(knowledge.router, prefix="/api/knowledge")
 app.include_router(chats.router, prefix="/api/chats")
 app.include_router(webhooks.router, prefix="/api")

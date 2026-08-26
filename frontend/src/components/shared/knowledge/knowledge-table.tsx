@@ -2,7 +2,6 @@
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { SearchBar } from "@/components/shared/search-bar";
 import {
 	Table,
 	TableBody,
@@ -15,6 +14,7 @@ import {
 	DropdownMenu,
 	DropdownMenuTrigger,
 	DropdownMenuContent,
+	DropdownMenuItem,
 	DropdownMenuRadioGroup,
 	DropdownMenuRadioItem,
 } from "@/components/ui/dropdown-menu";
@@ -26,19 +26,24 @@ import {
 	RiFilterOffLine,
 	RiLoader4Line,
 	RiMoneyDollarCircleLine,
+	RiCloseLine,
+	RiMore2Line,
+	RiDeleteBinLine,
 } from "@remixicon/react";
 import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
-import { useKnowledgeBaseList } from "../../../app/dashboard/knowledge/hooks/use-knowledge";
+import { toast } from "sonner";
+import { useKnowledgeBaseList, useDeleteKnowledge } from "../../../app/dashboard/knowledge/hooks/use-knowledge";
 import { useCategories } from "../../../app/dashboard/category/hooks/use-categories";
 import { KnowledgeResponse } from "@/app/dashboard/knowledge/api/types";
+import { AttachProjectDialog } from "@/app/dashboard/knowledge/components/attach-project-dialog";
+import { ConfirmationModal } from "@/components/shared/knowledge/ConfirmationModal";
 
 interface DisplayRowItem {
 	id: string;
 	isBatch: boolean;
 	batchId?: string;
 	title: string;
-	type: string;
 	status: string;
 	created_at?: string;
 	description: string;
@@ -46,17 +51,70 @@ interface DisplayRowItem {
 	rawItem: KnowledgeResponse;
 	allFileNames: string[];
 	categories: string[];
+	projectId?: string | null;
+	allDocIds?: string[];
 }
 
-export function KnowledgeTable({ type = "PRODUCT" }: { type?: string }) {
+interface KnowledgeTableProps {
+	searchQuery?: string;
+	selectedProjectId?: string | null;
+	onClearProjectFilter?: () => void;
+}
+
+export function KnowledgeTable({
+	searchQuery = "",
+	selectedProjectId,
+	onClearProjectFilter,
+}: KnowledgeTableProps) {
 	const router = useRouter();
-	const [searchQuery, setSearchQuery] = useState("");
 	const [statusFilter, setStatusFilter] = useState("ALL");
 	const [categoryFilter, setCategoryFilter] = useState("ALL");
 	const { data: knowledgeList, isLoading, isError } = useKnowledgeBaseList();
 	const { data: availableCategories = [] } = useCategories();
+	const deleteMutation = useDeleteKnowledge();
+
+	// Delete Confirmation Modal State
+	const [deleteModalOpen, setDeleteModalOpen] = useState(false);
+	const [itemToDelete, setItemToDelete] = useState<DisplayRowItem | null>(null);
+
+	// Attach Project Modal State
+	const [isAttachModalOpen, setIsAttachModalOpen] = useState(false);
+	const [attachKnowledgeId, setAttachKnowledgeId] = useState<string | null>(null);
+	const [attachKnowledgeIds, setAttachKnowledgeIds] = useState<string[] | undefined>(undefined);
+	const [attachKnowledgeTitle, setAttachKnowledgeTitle] = useState("");
+	const [attachCurrentProjectId, setAttachCurrentProjectId] = useState<string | null>(null);
 
 	const basePath = "/dashboard/knowledge";
+
+	const handleDeleteClick = (row: DisplayRowItem, e: React.MouseEvent) => {
+		e.stopPropagation();
+		setItemToDelete(row);
+		setDeleteModalOpen(true);
+	};
+
+	const handleConfirmDelete = async () => {
+		if (itemToDelete) {
+			const idsToDelete =
+				itemToDelete.allDocIds && itemToDelete.allDocIds.length > 0
+					? itemToDelete.allDocIds
+					: [itemToDelete.id];
+
+			try {
+				if (idsToDelete.length > 1) {
+					await Promise.all(
+						idsToDelete.map((id) => deleteMutation.mutateAsync({ id, hideToast: true })),
+					);
+					toast.success(`All ${idsToDelete.length} documents deleted successfully!`);
+				} else {
+					await deleteMutation.mutateAsync(idsToDelete[0]);
+				}
+			} catch {
+				// handled by mutation
+			}
+			setDeleteModalOpen(false);
+			setItemToDelete(null);
+		}
+	};
 
 	const handleRowClick = (row: DisplayRowItem) => {
 		if (row.isBatch && row.batchId) {
@@ -64,20 +122,6 @@ export function KnowledgeTable({ type = "PRODUCT" }: { type?: string }) {
 		} else {
 			router.push(`${basePath}/${row.id}`);
 		}
-	};
-
-	const isTypeMatch = (itemType?: string, filterType?: string) => {
-		if (!filterType || filterType === "ALL") return true;
-		const normItem = itemType?.toUpperCase();
-		const normFilter = filterType?.toUpperCase();
-		if (normItem === normFilter) return true;
-		if (
-			(normFilter === "OTHER" || normFilter === "GENERAL") &&
-			(normItem === "OTHER" || normItem === "GENERAL")
-		) {
-			return true;
-		}
-		return false;
 	};
 
 	const isCategoryMatch = (itemCategories: string[], filterCat: string) => {
@@ -129,7 +173,6 @@ export function KnowledgeTable({ type = "PRODUCT" }: { type?: string }) {
 					catSet.add((s as { name: string }).name.trim());
 				}
 			}
-			if (doc.type) catSet.add(doc.type);
 			return Array.from(catSet);
 		};
 
@@ -146,7 +189,6 @@ export function KnowledgeTable({ type = "PRODUCT" }: { type?: string }) {
 					isBatch: true,
 					batchId,
 					title: doc.title || doc.file_name,
-					type: doc.type,
 					status: doc.status,
 					created_at: doc.created_at,
 					description: doc.ai_summary || doc.content || "No description available.",
@@ -154,6 +196,8 @@ export function KnowledgeTable({ type = "PRODUCT" }: { type?: string }) {
 					rawItem: doc,
 					allFileNames: [doc.file_name],
 					categories: combinedCategories,
+					projectId: doc.project_id,
+					allDocIds: [doc.id],
 				});
 			} else {
 				let aggStatus = "APPROVED";
@@ -190,7 +234,6 @@ export function KnowledgeTable({ type = "PRODUCT" }: { type?: string }) {
 					isBatch: true,
 					batchId,
 					title: displayTitle,
-					type: docs[0].type,
 					status: aggStatus,
 					created_at: mostRecentDate,
 					description: batchSummary || `Batch upload containing ${docs.length} documents.`,
@@ -198,6 +241,8 @@ export function KnowledgeTable({ type = "PRODUCT" }: { type?: string }) {
 					rawItem: docs[0],
 					allFileNames: allNames,
 					categories: combinedCategories,
+					projectId: docs[0].project_id,
+					allDocIds: docs.map((d) => d.id),
 				});
 			}
 		}
@@ -208,7 +253,6 @@ export function KnowledgeTable({ type = "PRODUCT" }: { type?: string }) {
 				id: doc.id,
 				isBatch: false,
 				title: doc.title || doc.file_name,
-				type: doc.type,
 				status: doc.status,
 				created_at: doc.created_at,
 				description: doc.ai_summary || doc.content || "No description available.",
@@ -216,23 +260,24 @@ export function KnowledgeTable({ type = "PRODUCT" }: { type?: string }) {
 				rawItem: doc,
 				allFileNames: [doc.file_name],
 				categories: extractCategories(doc),
+				projectId: doc.project_id,
+				allDocIds: [doc.id],
 			});
 		}
 
 		return rows;
 	}, [knowledgeList]);
 
-	const hasActiveFilters =
-		searchQuery.trim() !== "" || statusFilter !== "ALL" || categoryFilter !== "ALL";
+	const hasActiveFilters = statusFilter !== "ALL" || categoryFilter !== "ALL" || !!selectedProjectId;
 
 	const handleResetFilters = () => {
-		setSearchQuery("");
 		setStatusFilter("ALL");
 		setCategoryFilter("ALL");
+		if (onClearProjectFilter) onClearProjectFilter();
 	};
 
 	const filteredList = displayRows
-		?.filter((item) => isTypeMatch(item.type, type))
+		?.filter((item) => (selectedProjectId ? item.projectId === selectedProjectId : true))
 		?.filter((item) => (statusFilter !== "ALL" ? item.status === statusFilter : true))
 		?.filter((item) => isCategoryMatch(item.categories, categoryFilter))
 		?.filter(
@@ -253,24 +298,24 @@ export function KnowledgeTable({ type = "PRODUCT" }: { type?: string }) {
 			case "APPROVED":
 				return (
 					<Badge className="bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-50">
-						{status}
+						APPROVED
 					</Badge>
 				);
 			case "PENDING":
 				return (
 					<Badge className="bg-amber-50 text-amber-700 border-amber-200 hover:bg-amber-50">
-						{status}
+						PENDING
 					</Badge>
 				);
 			case "PROCESSING":
 				return (
 					<Badge className="bg-blue-50 text-blue-700 border-blue-200 animate-pulse hover:bg-blue-50">
-						{status}
+						PROCESSING
 					</Badge>
 				);
 			case "REJECTED":
 				return (
-					<Badge className="bg-red-50 text-red-700 border-red-200 hover:bg-red-50">{status}</Badge>
+					<Badge className="bg-red-50 text-red-700 border-red-200 hover:bg-red-50">REJECTED</Badge>
 				);
 			default:
 				return <Badge variant="secondary">{status}</Badge>;
@@ -278,16 +323,26 @@ export function KnowledgeTable({ type = "PRODUCT" }: { type?: string }) {
 	};
 
 	return (
-		<div className="w-full mt-6">
-			{/* Filters */}
-			<div className="flex flex-wrap items-center justify-between gap-3 mb-4">
-				<SearchBar
-					containerClassName="max-w-md w-full sm:w-80"
-					value={searchQuery}
-					onChange={(e) => setSearchQuery(e.target.value)}
-					placeholder="Search title, filename, or category..."
-				/>
+		<div className="w-full">
+			{/* Header / Filters Bar */}
+			<div className="flex flex-wrap items-center justify-between gap-3 mb-3">
+				<h3 className="text-base font-semibold text-gray-900">Knowledge List</h3>
+
 				<div className="flex flex-wrap items-center gap-2.5">
+					{/* Active Project Filter Badge */}
+					{selectedProjectId && (
+						<div className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-blue-50 border border-blue-200 text-xs font-medium text-blue-700">
+							<span>Project Filter Active</span>
+							<button
+								type="button"
+								onClick={onClearProjectFilter}
+								className="hover:text-blue-900 cursor-pointer"
+							>
+								<RiCloseLine className="size-3.5" />
+							</button>
+						</div>
+					)}
+
 					{/* Reset Filters button */}
 					{hasActiveFilters && (
 						<Button
@@ -317,7 +372,7 @@ export function KnowledgeTable({ type = "PRODUCT" }: { type?: string }) {
 								{categoryFilter === "ALL" ? "All Categories" : categoryFilter}
 							</span>
 						</DropdownMenuTrigger>
-						<DropdownMenuContent className="w-56 max-h-80 overflow-y-auto rounded-lg border border-gray-200 shadow-none p-1">
+						<DropdownMenuContent className="w-56 max-h-80 overflow-y-auto rounded-lg border border-gray-200 shadow-none p-1 bg-white">
 							<DropdownMenuRadioGroup value={categoryFilter} onValueChange={setCategoryFilter}>
 								<DropdownMenuRadioItem closeOnClick value="ALL">
 									All Categories
@@ -348,7 +403,7 @@ export function KnowledgeTable({ type = "PRODUCT" }: { type?: string }) {
 									: statusFilter.charAt(0) + statusFilter.slice(1).toLowerCase()}
 							</span>
 						</DropdownMenuTrigger>
-						<DropdownMenuContent className="w-44 rounded-lg border border-gray-200 shadow-none p-1">
+						<DropdownMenuContent className="w-44 rounded-lg border border-gray-200 shadow-none p-1 bg-white">
 							<DropdownMenuRadioGroup value={statusFilter} onValueChange={setStatusFilter}>
 								<DropdownMenuRadioItem closeOnClick value="ALL">
 									All Status
@@ -372,7 +427,7 @@ export function KnowledgeTable({ type = "PRODUCT" }: { type?: string }) {
 			</div>
 
 			{/* Table */}
-			<div className="border border-gray-100 rounded-lg bg-white overflow-hidden shadow-none">
+			<div className="border border-gray-200 rounded-lg bg-white overflow-hidden shadow-none">
 				<Table className="[&_tr]:border-gray-100">
 					<TableHeader className="bg-gray-50/50">
 						<TableRow className="bg-gray-50/50 hover:bg-gray-50/50">
@@ -456,12 +511,32 @@ export function KnowledgeTable({ type = "PRODUCT" }: { type?: string }) {
 										</div>
 									</TableCell>
 									<TableCell>
-										<Badge
-											variant="secondary"
-											className="bg-gray-100 text-gray-700 hover:bg-gray-100 rounded-lg"
-										>
-											{row.type === "GENERAL" ? "OTHER" : row.type}
-										</Badge>
+										<div className="flex flex-wrap items-center gap-1">
+											{row.categories.length > 0 ? (
+												<>
+													{row.categories.slice(0, 2).map((cat, idx) => (
+														<Badge
+															key={idx}
+															variant="secondary"
+															className="bg-gray-100 text-gray-700 hover:bg-gray-100 rounded-lg"
+														>
+															{cat}
+														</Badge>
+													))}
+													{row.categories.length > 2 && (
+														<Badge
+															variant="secondary"
+															className="bg-gray-100 text-gray-500 hover:bg-gray-200 text-[11px] px-1.5 py-0 rounded-lg cursor-default"
+															title={row.categories.slice(2).join(", ")}
+														>
+															+{row.categories.length - 2}
+														</Badge>
+													)}
+												</>
+											) : (
+												<span className="text-xs text-gray-400">-</span>
+											)}
+										</div>
 									</TableCell>
 									<TableCell className="whitespace-nowrap text-sm text-gray-500">
 										{row.created_at
@@ -482,16 +557,49 @@ export function KnowledgeTable({ type = "PRODUCT" }: { type?: string }) {
 									</TableCell>
 									<TableCell>{getStatusBadge(row.status)}</TableCell>
 									<TableCell className="text-right" onClick={(e) => e.stopPropagation()}>
-										<div className="flex justify-end gap-2">
-											<Button
-												onClick={() => handleRowClick(row)}
-												variant="outline"
-												size="md"
-												className="border-gray-200 font-medium cursor-pointer rounded-lg shadow-none"
-											>
-												<RiEyeLine className="mr-2 h-4 w-4" />
-												View
-											</Button>
+										<div className="flex justify-end items-center">
+											<DropdownMenu>
+												<DropdownMenuTrigger
+													render={
+														<Button
+															variant="ghost"
+															size="icon"
+															className="size-8 text-gray-500 hover:text-gray-900"
+														>
+															<RiMore2Line className="size-4" />
+														</Button>
+													}
+												/>
+												<DropdownMenuContent align="end" className="w-40 bg-white border-gray-200">
+													<DropdownMenuItem
+														onClick={() => handleRowClick(row)}
+														className="text-xs text-gray-700 cursor-pointer"
+													>
+														<RiEyeLine className="size-3.5 mr-2" />
+														<span>View Details</span>
+													</DropdownMenuItem>
+													<DropdownMenuItem
+														onClick={() => {
+															setAttachKnowledgeId(row.id);
+															setAttachKnowledgeIds(row.allDocIds || [row.id]);
+															setAttachKnowledgeTitle(row.title);
+															setAttachCurrentProjectId(row.projectId || row.rawItem?.project_id || null);
+															setIsAttachModalOpen(true);
+														}}
+														className="text-xs text-gray-700 cursor-pointer"
+													>
+														<RiBookOpenLine className="size-3.5 mr-2" />
+														<span>Attach to Project</span>
+													</DropdownMenuItem>
+													<DropdownMenuItem
+														onClick={(e) => handleDeleteClick(row, e)}
+														className="text-xs text-red-600 hover:text-red-700 hover:bg-red-50 cursor-pointer"
+													>
+														<RiDeleteBinLine className="size-3.5 mr-2" />
+														<span>Delete</span>
+													</DropdownMenuItem>
+												</DropdownMenuContent>
+											</DropdownMenu>
 										</div>
 									</TableCell>
 								</TableRow>
@@ -499,6 +607,27 @@ export function KnowledgeTable({ type = "PRODUCT" }: { type?: string }) {
 					</TableBody>
 				</Table>
 			</div>
+
+			<AttachProjectDialog
+				isOpen={isAttachModalOpen}
+				onClose={() => setIsAttachModalOpen(false)}
+				knowledgeId={attachKnowledgeId}
+				knowledgeIds={attachKnowledgeIds}
+				knowledgeTitle={attachKnowledgeTitle}
+				currentProjectId={attachCurrentProjectId}
+			/>
+
+			<ConfirmationModal
+				isOpen={deleteModalOpen}
+				onOpenChange={setDeleteModalOpen}
+				title="Delete Knowledge"
+				description={`Are you sure you want to delete "${itemToDelete?.title}"? This action cannot be undone.`}
+				confirmText="Delete Knowledge"
+				cancelText="Cancel"
+				variant="destructive"
+				isLoading={deleteMutation.isPending}
+				onConfirm={handleConfirmDelete}
+			/>
 		</div>
 	);
 }

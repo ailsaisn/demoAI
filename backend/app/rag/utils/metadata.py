@@ -93,7 +93,7 @@ class MetadataEnricher:
         elif "treatment" in file_path.lower():
             return "treatment"
 
-        return "product"
+        return "general"
 
     def enrich_chunks(self, chunks: List[Dict], file_path: str, language: str = "en") -> List[Dict]:
         """

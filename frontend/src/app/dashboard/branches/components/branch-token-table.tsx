@@ -1,5 +1,6 @@
 "use client";
 
+import { useState, useMemo } from "react";
 import { SearchBar } from "@/components/shared/search-bar";
 import {
 	Table,
@@ -14,12 +15,25 @@ import { useConfigs } from "../../configuration/hooks/use-config";
 import { ViewBranchSheet } from "./view-branch-sheet";
 
 export function BranchTokenTable() {
+	const [searchQuery, setSearchQuery] = useState("");
 	const { data: branches, isLoading } = useBranches();
 	const { data: configs } = useConfigs();
 
 	const isGlobalLimitActive =
 		configs?.find((c) => c.key === "GLOBAL_TOKEN_LIMIT_ACTIVE")?.value === "true";
 	const globalBranchLimit = configs?.find((c) => c.key === "GLOBAL_TOKEN_LIMIT")?.value || "3000000";
+
+	const filteredBranches = useMemo(() => {
+		if (!branches) return [];
+		if (!searchQuery.trim()) return branches;
+		const q = searchQuery.toLowerCase();
+		return branches.filter(
+			(branch) =>
+				branch.name?.toLowerCase().includes(q) ||
+				branch.code?.toLowerCase().includes(q) ||
+				branch.ecosystem?.toLowerCase().includes(q),
+		);
+	}, [branches, searchQuery]);
 
 	return (
 		<div className="flex flex-col gap-4 w-full">
@@ -30,6 +44,8 @@ export function BranchTokenTable() {
 					iconClassName="left-3 top-1/2 -translate-y-1/2 size-4 text-black-200"
 					placeholder="Search for branch..."
 					className="pl-9 border-black-50 text-sm h-10 rounded-lg"
+					value={searchQuery}
+					onChange={(e) => setSearchQuery(e.target.value)}
 				/>
 
 				{/* Actions */}
@@ -38,11 +54,13 @@ export function BranchTokenTable() {
 				</div>
 			</div>
 
-			<div className="border border-black-50 rounded-md bg-white overflow-hidden">
-				<Table>
-					<TableHeader>
-						<TableRow className="hover:bg-transparent border-b-black-50">
-							<TableHead className="w-[30%]">Branch</TableHead>
+			<div className="border border-gray-200 rounded-md bg-white overflow-hidden">
+				<Table className="[&_tr]:border-gray-100">
+					<TableHeader className="bg-gray-50/50">
+						<TableRow className="hover:bg-gray-50/50 border-b-gray-100">
+							<TableHead className="w-[15%]">Branch Code</TableHead>
+							<TableHead className="w-[15%]">Ecosystem</TableHead>
+							<TableHead className="w-[25%]">Branch</TableHead>
 							<TableHead>Tokens/Month</TableHead>
 							<TableHead>Used</TableHead>
 							<TableHead>Remaining</TableHead>
@@ -52,18 +70,18 @@ export function BranchTokenTable() {
 					<TableBody>
 						{isLoading ? (
 							<TableRow>
-								<TableCell colSpan={5} className="text-center py-8 text-gray-500">
+								<TableCell colSpan={7} className="text-center py-8 text-gray-500">
 									Loading branches...
 								</TableCell>
 							</TableRow>
-						) : branches?.length === 0 ? (
+						) : filteredBranches.length === 0 ? (
 							<TableRow>
-								<TableCell colSpan={5} className="text-center py-8 text-gray-500">
+								<TableCell colSpan={7} className="text-center py-8 text-gray-500">
 									No branches found.
 								</TableCell>
 							</TableRow>
 						) : (
-							branches?.map((branch) => {
+							filteredBranches.map((branch) => {
 								const limit = isGlobalLimitActive
 									? Number(globalBranchLimit)
 									: (branch.token_limit ?? branch.tokensMonth ?? 0);
@@ -72,15 +90,14 @@ export function BranchTokenTable() {
 
 								return (
 									<TableRow key={branch.id} className="border-b-black-50">
-										<TableCell className="max-w-50">
-											<div className="flex items-center gap-3">
-												<div className="flex flex-col justify-center overflow-hidden">
-													<span className="font-medium text-black-500 truncate">{branch.name}</span>
-													{branch.code && (
-														<span className="text-xs text-zinc-400">{branch.code}</span>
-													)}
-												</div>
-											</div>
+										<TableCell className="font-medium text-black-500">
+											{branch.code || "-"}
+										</TableCell>
+										<TableCell className="text-zinc-600">
+											{branch.ecosystem || "-"}
+										</TableCell>
+										<TableCell className="font-medium text-black-500">
+											{branch.name}
 										</TableCell>
 										<TableCell className="text-blue-600 font-medium">
 											{limit.toLocaleString()}

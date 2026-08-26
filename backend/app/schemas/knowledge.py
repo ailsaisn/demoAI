@@ -18,6 +18,9 @@ class KnowledgeCreate(KnowledgeBase):
 class KnowledgeUpdateStatus(BaseModel):
     status: KnowledgeStatus
 
+class KnowledgeProjectUpdate(BaseModel):
+    project_id: Optional[UUID] = None
+
 class KnowledgeResponse(KnowledgeBase):
     id: UUID
     type: KnowledgeType
@@ -26,8 +29,36 @@ class KnowledgeResponse(KnowledgeBase):
     ai_confidence: Optional[float] = None
     uploaded_by: UUID
     approved_by: Optional[UUID] = None
+    project_id: Optional[UUID] = None
     metadata_: Optional[Dict[str, Any]] = Field(default=None, serialization_alias="metadata")
     created_at: datetime
     updated_at: datetime
     
     model_config = ConfigDict(from_attributes=True, populate_by_name=True)
+
+class GeneralChatMessageItem(BaseModel):
+    id: UUID
+    role: str
+    content: str
+    action: Optional[str] = None
+    target_knowledge_id: Optional[str] = None
+    total_found: Optional[int] = None
+    attachments: Optional[Dict[str, Any]] = None
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+class GeneralChatSessionResponse(BaseModel):
+    id: UUID
+    user_id: UUID
+    session_type: str
+    status: str
+    messages: List[GeneralChatMessageItem] = []
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+class GeneralChatMessageSendRequest(BaseModel):
+    prompt: str
+    attachments: Optional[Dict[str, Any]] = None

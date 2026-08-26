@@ -46,7 +46,7 @@ async def _hydrate_role(role: Role, db: AsyncSession) -> RoleResponse:
 @router.get("/accesses", response_model=List[AccessResponse])
 async def list_available_accesses(
     db: AsyncSession = Depends(get_db),
-    current_admin: User = Depends(RequireAccess("users:read"))
+    current_admin: User = Depends(RequireAccess(["roles:read", "users:read"]))
 ):
     stmt = select(Access).order_by(Access.name)
     result = await db.execute(stmt)
@@ -55,7 +55,7 @@ async def list_available_accesses(
 @router.get("/", response_model=List[RoleResponse])
 async def list_roles(
     db: AsyncSession = Depends(get_db),
-    current_admin: User = Depends(RequireAccess("users:read"))
+    current_admin: User = Depends(RequireAccess(["roles:read", "users:read"]))
 ):
     stmt = select(Role).order_by(Role.name)
     result = await db.execute(stmt)
@@ -66,7 +66,7 @@ async def list_roles(
 async def get_role(
     role_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    current_admin: User = Depends(RequireAccess("users:read"))
+    current_admin: User = Depends(RequireAccess(["roles:read", "users:read"]))
 ):
     stmt = select(Role).where(Role.id == role_id)
     result = await db.execute(stmt)
@@ -79,7 +79,7 @@ async def get_role(
 async def create_role(
     role_in: RoleCreate,
     db: AsyncSession = Depends(get_db),
-    current_admin: User = Depends(RequireAccess("users:write"))
+    current_admin: User = Depends(RequireAccess(["roles:write", "users:write"]))
 ):
     clean_name = role_in.name.strip().upper()
     if not clean_name:
@@ -113,7 +113,7 @@ async def update_role(
     role_id: uuid.UUID,
     role_in: RoleUpdate,
     db: AsyncSession = Depends(get_db),
-    current_admin: User = Depends(RequireAccess("users:write"))
+    current_admin: User = Depends(RequireAccess(["roles:write", "users:write"]))
 ):
     stmt = select(Role).where(Role.id == role_id)
     role = (await db.execute(stmt)).scalar_one_or_none()
@@ -151,7 +151,7 @@ async def update_role(
 async def delete_role(
     role_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    current_admin: User = Depends(RequireAccess("users:write"))
+    current_admin: User = Depends(RequireAccess(["roles:write", "users:write"]))
 ):
     stmt = select(Role).where(Role.id == role_id)
     role = (await db.execute(stmt)).scalar_one_or_none()

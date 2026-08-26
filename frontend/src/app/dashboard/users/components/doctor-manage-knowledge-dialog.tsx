@@ -112,8 +112,7 @@ export function DoctorManageKnowledgeDialog({
 
         <div className="p-4 border-t border-gray-100 flex justify-end">
           <Button
-            variant="outline"
-            className="bg-blue-500 text-white border-0 hover:bg-blue-600 px-6 rounded-md"
+            className="bg-blue-500 text-white hover:bg-blue-600 px-6 rounded-md"
             onClick={handleSave}
             disabled={updateCategories.isPending}
           >

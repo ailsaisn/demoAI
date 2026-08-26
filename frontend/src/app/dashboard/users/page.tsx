@@ -20,10 +20,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { DoctorDetailsSheet } from "./components/doctor-details-sheet";
 import { UserAddSheet } from "./components/user-add-sheet";
 import { UserStaffProfileSheet } from "./components/user-staff-profile-sheet";
-import { RoleDialog } from "./components/role-dialog";
 import { useUsers } from "./hooks/use-users";
-import { useRoles } from "./hooks/use-roles";
-import { RoleDetailResponse, UserResponse } from "./api/types";
+import { UserResponse } from "./api/types";
 
 export default function UsersPage() {
 	const [activeTab, setActiveTab] = useState<string>("staff");
@@ -31,7 +29,6 @@ export default function UsersPage() {
 
 	const { data: staffData = [] } = useUsers("STAFF");
 	const { data: doctorData = [] } = useUsers("DOCTOR");
-	const { data: rolesData = [], isLoading: isLoadingRoles } = useRoles();
 
 	const [selectedDoctor, setSelectedDoctor] = useState<UserResponse | null>(null);
 	const [isSheetOpen, setIsSheetOpen] = useState(false);
@@ -39,11 +36,6 @@ export default function UsersPage() {
 	const [isAddUserOpen, setIsAddUserOpen] = useState(false);
 	const [selectedStaff, setSelectedStaff] = useState<UserResponse | null>(null);
 	const [isViewStaffOpen, setIsViewStaffOpen] = useState(false);
-
-	// Role Dialog state
-	const [selectedRole, setSelectedRole] = useState<RoleDetailResponse | null>(null);
-	const [roleDialogMode, setRoleDialogMode] = useState<"add" | "edit">("add");
-	const [isRoleDialogOpen, setIsRoleDialogOpen] = useState(false);
 
 	const handleViewDoctor = (doctor: UserResponse) => {
 		setSelectedDoctor(doctor);
@@ -55,21 +47,8 @@ export default function UsersPage() {
 		setIsViewStaffOpen(true);
 	};
 
-	const handleAddRole = () => {
-		setSelectedRole(null);
-		setRoleDialogMode("add");
-		setIsRoleDialogOpen(true);
-	};
-
-	const handleEditRole = (role: RoleDetailResponse) => {
-		setSelectedRole(role);
-		setRoleDialogMode("edit");
-		setIsRoleDialogOpen(true);
-	};
-
 	const selectedDoctorLive = doctorData.find((d) => d.id === selectedDoctor?.id) || selectedDoctor;
 	const selectedStaffLive = staffData.find((s) => s.id === selectedStaff?.id) || selectedStaff;
-	const selectedRoleLive = rolesData.find((r) => r.id === selectedRole?.id) || selectedRole;
 
 	// Filtered items based on search query
 	const filteredStaff = useMemo(() => {
@@ -96,22 +75,12 @@ export default function UsersPage() {
 		);
 	}, [doctorData, searchQuery]);
 
-	const filteredRoles = useMemo(() => {
-		if (!searchQuery.trim()) return rolesData;
-		const q = searchQuery.toLowerCase();
-		return rolesData.filter(
-			(r) =>
-				r.name.toLowerCase().includes(q) ||
-				r.accesses?.some((a) => a.toLowerCase().includes(q)),
-		);
-	}, [rolesData, searchQuery]);
-
 	return (
 		<div className="flex flex-col h-full gap-6 p-6">
 			<div className="flex flex-col gap-1">
 				<h1 className="text-xl font-semibold text-foreground">User Management</h1>
 				<p className="text-sm text-muted-foreground">
-					Easily handle staff accounts, doctor credentials, and role permissions.
+					Easily handle staff accounts and doctor credentials.
 				</p>
 			</div>
 
@@ -129,46 +98,29 @@ export default function UsersPage() {
 					>
 						Doctor
 					</TabsTrigger>
-					<TabsTrigger
-						value="roles"
-						className="font-medium text-sm text-gray-500 hover:text-blue-500 data-active:text-blue-500 data-active:after:bg-blue-500"
-					>
-						Roles
-					</TabsTrigger>
 				</TabsList>
 
 				<div className="flex items-center justify-between mb-4">
 					<SearchBar
 						containerClassName="max-w-md"
-						placeholder={
-							activeTab === "roles"
-								? "Search for roles or permissions..."
-								: "Search for user, staff, or doctor..."
-						}
+						placeholder="Search for user, staff, or doctor..."
 						value={searchQuery}
 						onChange={(e) => setSearchQuery(e.target.value)}
 					/>
 					<div className="flex items-center gap-2">
-						{activeTab === "roles" ? (
-							<Button className="bg-blue-600 hover:bg-blue-700" onClick={handleAddRole}>
-								<RiAddLine className="mr-2 h-4 w-4" />
-								Add New Role
-							</Button>
-						) : (
-							<Button
-								className="bg-blue-600 hover:bg-blue-700"
-								onClick={() => setIsAddUserOpen(true)}
-							>
-								<RiAddLine className="mr-2 h-4 w-4" />
-								Add New User
-							</Button>
-						)}
+						<Button
+							className="bg-blue-600 hover:bg-blue-700"
+							onClick={() => setIsAddUserOpen(true)}
+						>
+							<RiAddLine className="mr-2 h-4 w-4" />
+							Add New User
+						</Button>
 					</div>
 				</div>
 
 				{/* Staff Tab Content */}
 				<TabsContent value="staff" className="mt-0 outline-none">
-					<div className="border border-gray-100 rounded-md bg-white overflow-hidden">
+					<div className="border border-gray-200 rounded-md bg-white overflow-hidden">
 						<Table className="[&_tr]:border-gray-100">
 							<TableHeader className="bg-gray-50/50">
 								<TableRow>
@@ -238,7 +190,7 @@ export default function UsersPage() {
 
 				{/* Doctors Tab Content */}
 				<TabsContent value="doctors" className="mt-0 outline-none">
-					<div className="border border-gray-100 rounded-md bg-white overflow-hidden">
+					<div className="border border-gray-200 rounded-md bg-white overflow-hidden">
 						<Table className="[&_tr]:border-gray-100">
 							<TableHeader className="bg-gray-50/50">
 								<TableRow>
@@ -312,92 +264,6 @@ export default function UsersPage() {
 						</Table>
 					</div>
 				</TabsContent>
-
-				{/* Roles Tab Content */}
-				<TabsContent value="roles" className="mt-0 outline-none">
-					<div className="border border-gray-100 rounded-md bg-white overflow-hidden">
-						<Table className="[&_tr]:border-gray-100">
-							<TableHeader className="bg-gray-50/50">
-								<TableRow>
-									<TableHead className="w-[30%]">Role Name</TableHead>
-									<TableHead className="w-[40%]">Permissions & Access</TableHead>
-									<TableHead className="w-[15%]">Assigned Staff</TableHead>
-									<TableHead className="w-[15%] text-right">Actions</TableHead>
-								</TableRow>
-							</TableHeader>
-							<TableBody>
-								{isLoadingRoles ? (
-									<TableRow>
-										<TableCell colSpan={4} className="text-center py-8 text-gray-500">
-											Loading roles...
-										</TableCell>
-									</TableRow>
-								) : filteredRoles.length === 0 ? (
-									<TableRow>
-										<TableCell colSpan={4} className="text-center py-8 text-gray-500">
-											No roles found. Click &quot;Add New Role&quot; to create one.
-										</TableCell>
-									</TableRow>
-								) : (
-									filteredRoles.map((role: RoleDetailResponse) => (
-										<TableRow key={role.id}>
-											<TableCell>
-												<span className="font-medium text-sm text-gray-900">
-													{role.name}
-												</span>
-											</TableCell>
-											<TableCell>
-												<div className="flex flex-wrap gap-1.5 max-w-xl">
-													{role.accesses && role.accesses.length > 0 ? (
-														role.accesses.slice(0, 4).map((acc) => (
-															<Badge
-																key={acc}
-																variant="secondary"
-																className="bg-gray-100 text-gray-700 text-xs px-2 py-0.5 border border-gray-200"
-															>
-																{acc}
-															</Badge>
-														))
-													) : (
-														<span className="text-xs text-gray-400 italic">No permissions assigned</span>
-													)}
-													{role.accesses && role.accesses.length > 4 && (
-														<Badge
-															variant="secondary"
-															className="bg-blue-50 text-blue-700 border-blue-200 text-xs font-semibold"
-														>
-															+{role.accesses.length - 4} more
-														</Badge>
-													)}
-												</div>
-											</TableCell>
-											<TableCell>
-												<span className="text-sm font-medium text-gray-700">
-													{role.user_count}{" "}
-													<span className="text-xs text-gray-500 font-normal">
-														{role.user_count === 1 ? "staff" : "staffs"}
-													</span>
-												</span>
-											</TableCell>
-											<TableCell className="text-right">
-												<div className="flex justify-end gap-2">
-													<Button
-														variant="outline"
-														size="md"
-														className="border-gray-200 font-medium"
-														onClick={() => handleEditRole(role)}
-													>
-														Edit
-													</Button>
-												</div>
-											</TableCell>
-										</TableRow>
-									))
-								)}
-							</TableBody>
-						</Table>
-					</div>
-				</TabsContent>
 			</Tabs>
 
 			<DoctorDetailsSheet
@@ -412,13 +278,6 @@ export default function UsersPage() {
 				isOpen={isViewStaffOpen}
 				onOpenChange={setIsViewStaffOpen}
 				staff={selectedStaffLive}
-			/>
-
-			<RoleDialog
-				isOpen={isRoleDialogOpen}
-				onOpenChange={setIsRoleDialogOpen}
-				role={selectedRoleLive}
-				mode={roleDialogMode}
 			/>
 		</div>
 	);

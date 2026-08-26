@@ -34,6 +34,11 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
 			} catch {
 				// Ignore network errors during logout
 			} finally {
+				if (typeof window !== "undefined") {
+					try {
+						localStorage.removeItem("arya_noble_last_active");
+					} catch {}
+				}
 				queryClient.removeQueries({ queryKey: authKeys.all });
 				if (typeof window !== "undefined") {
 					const query = reason === "idle" ? "?reason=idle" : "";

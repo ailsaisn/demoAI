@@ -5,7 +5,7 @@ strict response length limits and tailored response constraints.
 """
 
 from enum import Enum
-from typing import Dict, Any, Tuple
+from typing import Dict, Any, Tuple, Optional
 import re
 from datetime import datetime, timezone, timedelta
 from loguru import logger
@@ -40,19 +40,36 @@ def get_current_time_period() -> str:
         return "malam"
 
 
-def get_time_greeting_response(query: str = "") -> str:
+def format_doctor_name(doctor_name: Optional[str] = None) -> str:
+    """Formats doctor name cleanly, ensuring polite title like 'dr. Sarah' or 'Dok'."""
+    if not doctor_name or not str(doctor_name).strip():
+        return "Dok"
+    clean = str(doctor_name).strip()
+    if clean.lower().startswith("dr.") or clean.lower().startswith("dr ") or clean.lower().startswith("dokter"):
+        return clean
+    return f"dr. {clean}"
+
+
+def get_time_greeting_response(query: str = "", doctor_name: Optional[str] = None) -> str:
     """
     Generates a concise, polite, and objective greeting response for Doctors,
     adjusted to the current time of day and identity questions.
     """
     period = get_current_time_period()
     time_greeting = f"Selamat {period}"
+    doc_title = format_doctor_name(doctor_name)
 
     q_lower = query.lower().strip()
     if any(k in q_lower for k in ["siapa", "kamu siapa", "anda siapa", "bot apa", "kamu siapa?"]):
-        return f"Halo Dok! {time_greeting}. Saya ERHA Medical Assistant, asisten klinis yang siap membantu Dokter mencari informasi SOP tindakan medis, indikasi, dan panduan produk ERHA."
+        return f"Halo {doc_title}! {time_greeting}. Saya ERHA Medical Assistant, asisten klinis yang siap membantu Dokter mencari informasi SOP tindakan medis, indikasi, dan panduan produk ERHA."
 
-    return f"Halo Dok! {time_greeting}. Saya ERHA Medical Assistant, siap membantu Dokter terkait protokol tindakan atau produk ERHA."
+    return f"Halo {doc_title}! {time_greeting}. Saya ERHA Medical Assistant, siap membantu Dokter terkait protokol tindakan atau produk ERHA."
+
+
+def get_closing_response(doctor_name: Optional[str] = None) -> str:
+    """Generates a warm, professional closing response without repeating past recommendations."""
+    doc_title = format_doctor_name(doctor_name)
+    return f"Sama-sama, {doc_title}! Senang bisa membantu. Jika butuh referensi produk atau protokol lainnya, saya siap membantu!"
 
 
 class QueryIntent(str, Enum):
@@ -91,7 +108,8 @@ _INTENT_PATTERNS = [
     (
         QueryIntent.CLOSING,
         [
-            r"^\s*(oke|ok|okay|kalo\s+begitu|kalau\s+gitu|kalau\s+begitu|kalo\s+gitu)?\s*(terima\s*kasih|terimakasih|terimaksih|makasih|makasi|thanks|thank\s*you|thx|trims|tengkyu)(\s+dok|\s+dokter)?\s*[\.\,\!\?]*\s*$",
+            r"^\s*(oke|ok|okay|kalo\s+begitu|kalau\s+gitu|kalau\s+begitu|kalo\s+gitu|baik|baiklah|sip|siap)?\s*(terima\s*kasih|terimakasih|terimaksih|makasih|makasi|thanks|thank\s*you|thx|trims|tengkyu)(\s+banyak|\s+infonya|\s+atas\s+rekomendasinya|\s+rekomendasinya|\s+ya|\s+ya\s+dok|\s+ya\s+dokter|\s+dok|\s+dokter|\s+atas\s+infonya|\s+saran\s*nya)?\s*[\.\,\!\?]*\s*$",
+            r"^\s*(terima\s*kasih|terimakasih|makasih|thanks|thank\s*you|trims)\s+(banyak|atas\s+bantuannya|atas\s+infonya|infonya|rekomendasinya|sarannya|ya|dok|dokter)(\s+dok|\s+dokter|\s+ya|\s+ya\s+dok|\s+ya\s+dokter)?\s*[\.\,\!\?]*\s*$",
             r"^\s*(oke|ok|okay|sip|siap|baik|baiklah|mantap|noted|clear|paham|mengerti|cukup|sudah\s+cukup|cukup\s+jelas|sudah\s+jelas|sama[- ]sama)(\s+deh|\s+ya|\s+nih|\s+sip|\s+dok|\s+dokter|\s+terima\s*kasih|\s+makasih)?\s*[\.\,\!\?]*\s*$",
             r"^\s*(oke|ok|okay)\s+(dok|dokter|sip|siap|baik|noted)\s*[\.\,\!\?]*\s*$"
         ]
@@ -191,6 +209,19 @@ class QueryIntentDetector:
         """
         query_clean = query.strip().lower()
 
+        # Check if query is a multi-aspect query (asks for ingredients/function/usage AND price/warnings)
+        aspect_indicators = [
+            any(k in query_clean for k in ["kandungan", "ingredient", "komposisi", "bahan aktif"]),
+            any(k in query_clean for k in ["indikasi", "fungsi", "manfaat", "kegunaan", "keunggulan"]),
+            any(k in query_clean for k in ["cara pakai", "dosis", "aturan pakai"]),
+            any(k in query_clean for k in ["harga", "biaya", "price"])
+        ]
+        aspect_count = sum(1 for a in aspect_indicators if a)
+        if aspect_count >= 2:
+            rules = QueryIntentDetector._get_rules_for_intent(QueryIntent.UNKNOWN)
+            logger.debug(f"Multi-aspect query detected ({aspect_count} aspects) -> Using UNKNOWN/General rules to answer all requested aspects.")
+            return QueryIntent.UNKNOWN, rules
+
         for intent, patterns in _INTENT_PATTERNS:
             for pattern in patterns:
                 if re.search(pattern, query_clean, re.IGNORECASE):
@@ -260,59 +291,59 @@ class QueryIntentDetector:
             return {
                 "max_sentences": 1,
                 "length_instruction": "Return ONLY the exact product name in 1 sentence. Do not add unsolicited product recommendations, clinical regimens, or usage instructions.",
-                "missing_fallback": "Untuk saat ini informasi tersebut belum tersedia."
+                "missing_fallback": "Informasi mengenai topik ini belum terdaftar dalam panduan resmi ERHA saat ini, Dok. Silakan lakukan konfirmasi manual ke Dept Functional / Admin."
             }
         elif intent == QueryIntent.INGREDIENTS:
             return {
                 "max_sentences": 2,
                 "length_instruction": "Return ONLY the relevant active ingredients in 1-2 sentences or a concise list. Do not add unsolicited product recommendations or clinical advice.",
-                "missing_fallback": "Untuk saat ini informasi tersebut belum tersedia."
+                "missing_fallback": "Informasi mengenai topik ini belum terdaftar dalam panduan resmi ERHA saat ini, Dok. Silakan lakukan konfirmasi manual ke Dept Functional / Admin."
             }
         elif intent == QueryIntent.PRODUCT_FUNCTION or intent == QueryIntent.BENEFITS:
             return {
                 "max_sentences": 3,
                 "length_instruction": "Return ONLY the primary product function/benefits in maximum 2-3 sentences. Do not add unsolicited clinical regimens, extra product recommendations, or disclaimers.",
-                "missing_fallback": "Untuk saat ini informasi tersebut belum tersedia."
+                "missing_fallback": "Informasi mengenai topik ini belum terdaftar dalam panduan resmi ERHA saat ini, Dok. Silakan lakukan konfirmasi manual ke Dept Functional / Admin."
             }
         elif intent == QueryIntent.HOW_TO_USE:
             return {
                 "max_sentences": 4,
                 "length_instruction": "Return ONLY the usage instructions in maximum 2-4 sentences. Do not add extra product recommendations or clinical disclaimers.",
-                "missing_fallback": "Untuk saat ini informasi tersebut belum tersedia."
+                "missing_fallback": "Informasi mengenai topik ini belum terdaftar dalam panduan resmi ERHA saat ini, Dok. Silakan lakukan konfirmasi manual ke Dept Functional / Admin."
             }
         elif intent == QueryIntent.PRICE:
             return {
-                "max_sentences": 1,
-                "length_instruction": "Return ONLY the product price if found in context in 1 sentence.",
-                "missing_fallback": "Untuk saat ini informasi tersebut belum tersedia."
+                "max_sentences": 3,
+                "length_instruction": "Return the product price if found in context. If the query also asks about active ingredients or indications, summarize all requested details found in context.",
+                "missing_fallback": "Informasi mengenai topik ini belum terdaftar dalam panduan resmi ERHA saat ini, Dok. Silakan lakukan konfirmasi manual ke Dept Functional / Admin."
             }
         elif intent == QueryIntent.WARNING:
             return {
                 "max_sentences": 3,
                 "length_instruction": "Return ONLY safety warnings, contraindications, or pregnancy notes mentioned in context in maximum 2-3 sentences. Do not provide medical advice outside retrieved context.",
-                "missing_fallback": "Untuk saat ini informasi tersebut belum tersedia."
+                "missing_fallback": "Informasi mengenai topik ini belum terdaftar dalam panduan resmi ERHA saat ini, Dok. Silakan lakukan konfirmasi manual ke Dept Functional / Admin."
             }
         elif intent == QueryIntent.COMPARISON:
             return {
                 "max_sentences": 4,
                 "length_instruction": "Provide a concise comparison comparing ONLY the requested products using retrieved context. Do not mention any third product.",
-                "missing_fallback": "Untuk saat ini informasi tersebut belum tersedia."
+                "missing_fallback": "Informasi mengenai topik ini belum terdaftar dalam panduan resmi ERHA saat ini, Dok. Silakan lakukan konfirmasi manual ke Dept Functional / Admin."
             }
         elif intent == QueryIntent.SUITABLE_FOR:
             return {
                 "max_sentences": 2,
                 "length_instruction": "Return ONLY the target skin type / indication in 1-2 sentences.",
-                "missing_fallback": "Untuk saat ini informasi tersebut belum tersedia."
+                "missing_fallback": "Informasi mengenai topik ini belum terdaftar dalam panduan resmi ERHA saat ini, Dok. Silakan lakukan konfirmasi manual ke Dept Functional / Admin."
             }
         elif intent == QueryIntent.AVAILABILITY:
             return {
                 "max_sentences": 2,
                 "length_instruction": "Return ONLY product availability or branch availability mentioned in context.",
-                "missing_fallback": "Untuk saat ini informasi tersebut belum tersedia."
+                "missing_fallback": "Informasi mengenai topik ini belum terdaftar dalam panduan resmi ERHA saat ini, Dok. Silakan lakukan konfirmasi manual ke Dept Functional / Admin."
             }
         else:
             return {
                 "max_sentences": 3,
                 "length_instruction": "Answer the question concisely in maximum 2-3 sentences using ONLY the retrieved context. Do not over-explain or provide unsolicited recommendations.",
-                "missing_fallback": "Untuk saat ini informasi tersebut belum tersedia."
+                "missing_fallback": "Informasi mengenai topik ini belum terdaftar dalam panduan resmi ERHA saat ini, Dok. Silakan lakukan konfirmasi manual ke Dept Functional / Admin."
             }

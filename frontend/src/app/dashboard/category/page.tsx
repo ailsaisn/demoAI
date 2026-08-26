@@ -65,7 +65,7 @@ export default function CategoriesPage() {
 				</div>
 
 				{/* Table */}
-				<div className="border border-gray-100 rounded-md bg-white overflow-hidden">
+				<div className="border border-gray-200 rounded-md bg-white overflow-hidden">
 					<Table className="[&_tr]:border-gray-100">
 						<TableHeader className="bg-gray-50/50">
 							<TableRow>
@@ -102,7 +102,7 @@ export default function CategoriesPage() {
 												<Button
 													variant="outline"
 													size="md"
-													className="bg-white border-black-50 text-black-500 hover:bg-gray-50 font-medium"
+													className="border-gray-200 font-medium"
 													onClick={() => handleEditCategory(category)}
 												>
 													<RiEdit2Line className="size-4 mr-1.5" />
@@ -111,7 +111,7 @@ export default function CategoriesPage() {
 												<Button
 													variant="outline"
 													size="md"
-													className="bg-white border-black-50 text-black-500 hover:bg-gray-50 font-medium disabled:opacity-50"
+													className="border-gray-200 font-medium disabled:opacity-50"
 													onClick={() => handleDelete(category.id)}
 													disabled={isDeleting}
 												>

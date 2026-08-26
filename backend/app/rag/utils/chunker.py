@@ -53,6 +53,13 @@ class CustomChunker:
         "target patient", "dosage", "composition", "packaging", "shelf life",
         "mechanism of action", "clinical studies", "side effects",
         "precautions", "interactions", "formulation",
+        # Indonesian clinical & aesthetic treatment section headers
+        "deskripsi", "cocok untuk", "tidak disarankan untuk", "manfaat",
+        "persiapan sebelum treatment", "persiapan sebelum tindakan",
+        "tahapan treatment", "tahapan prosedur", "informasi prosedur",
+        "parameter prosedur", "aftercare", "perawatan setelah tindakan",
+        "efek samping", "kandungan peeling", "kandungan", "kategori",
+        "kategori treatment", "protokol tindakan", "indikasi"
     }
 
     # =========================================================================
@@ -104,16 +111,6 @@ class CustomChunker:
             headings = self._extract_docling_headings(sc)
             page = self._extract_docling_page(sc)
             
-            is_table = any(type(item).__name__ == "TableItem" for item in sc.meta.doc_items) if hasattr(sc, "meta") and hasattr(sc.meta, "doc_items") and sc.meta.doc_items else False
-            is_picture = any(type(item).__name__ == "PictureItem" for item in sc.meta.doc_items) if hasattr(sc, "meta") and hasattr(sc.meta, "doc_items") and sc.meta.doc_items else False
-            
-            if is_table:
-                chunk_type = "TableChunk"
-            elif is_picture:
-                chunk_type = "PictureChunk"
-            else:
-                chunk_type = "TextChunk"
-            
             if not headings and text_strip.lower() in self.KNOWN_SECTIONS:
                 current_section = text_strip.upper()
                 continue
@@ -124,9 +121,7 @@ class CustomChunker:
                 section = current_section
                 
             base_metadata = {
-                "headings": headings,
                 "section": section,
-                "chunk_type": chunk_type,
                 "page": page
             }
             
@@ -173,8 +168,10 @@ class CustomChunker:
         current_entity = ""
 
         # Regex patterns for hierarchical boundaries
-        section_h1_h2_pattern = re.compile(r"^(?:#{1,2}\s+|\d+\.\s+[A-Z])", re.IGNORECASE)
-        entity_h3_h4_pattern = re.compile(r"^(?:#{3,4}\s+|\d+\.\d+\s+|\*\*[A-Z0-9\s\.\-]+\*\*)", re.IGNORECASE)
+        section_h1_h2_pattern = re.compile(r"^(?:#{1,2}\s+|(?:Bab|Section|Bagian|Kategori)\s+\d+)", re.IGNORECASE)
+        # Match H3/H4 headers, but NOT bold key-value pairs or numbered list items
+        entity_h3_h4_pattern = re.compile(r"^(?:#{3,4}\s+)", re.IGNORECASE)
+        bold_entity_pattern = re.compile(r"^\*\*([A-Z0-9][A-Za-z0-9\s\.\-]+)\*\*\s*$", re.IGNORECASE)
 
         for page_data in pages:
             page_num = page_data.get("page", 1)
@@ -187,12 +184,10 @@ class CustomChunker:
             current_entity_lines = []
             current_table_lines = []
 
-            def _build_meta(chunk_type: str) -> Dict[str, Any]:
+            def _build_meta() -> Dict[str, Any]:
                 meta = {
-                    "headings": [current_section, current_entity] if current_entity else [current_section],
                     "section": current_section,
                     "entity": current_entity,
-                    "chunk_type": chunk_type,
                     "page": page_num
                 }
                 if page_image_url:
@@ -217,7 +212,7 @@ class CustomChunker:
                 if len(block_text) <= 1200:
                     processed_chunks.append({
                         "text": block_text,
-                        "metadata": _build_meta("EntityChunk" if current_entity else "TextChunk")
+                        "metadata": _build_meta()
                     })
                 else:
                     # Split long entity into logical semantic sub-units (e.g. paragraphs / double newlines)
@@ -233,7 +228,7 @@ class CustomChunker:
                                     sub_text = f"### {current_entity}\n\n{sub_text}"
                                 processed_chunks.append({
                                     "text": sub_text,
-                                    "metadata": _build_meta("EntityChunk" if current_entity else "TextChunk")
+                                    "metadata": _build_meta()
                                 })
                                 running_sub = []
                         if running_sub:
@@ -242,12 +237,12 @@ class CustomChunker:
                                 sub_text = f"### {current_entity}\n\n{sub_text}"
                             processed_chunks.append({
                                 "text": sub_text,
-                                "metadata": _build_meta("EntityChunk" if current_entity else "TextChunk")
+                                "metadata": _build_meta()
                             })
                     else:
                         processed_chunks.append({
                             "text": block_text,
-                            "metadata": _build_meta("EntityChunk" if current_entity else "TextChunk")
+                            "metadata": _build_meta()
                         })
 
                 current_entity_lines = []
@@ -262,12 +257,12 @@ class CustomChunker:
                     for tbl in sub_tables:
                         processed_chunks.append({
                             "text": tbl,
-                            "metadata": _build_meta("TableChunk")
+                            "metadata": _build_meta()
                         })
                 else:
                     processed_chunks.append({
                         "text": "\n".join(current_table_lines),
-                        "metadata": _build_meta("TableChunk")
+                        "metadata": _build_meta()
                     })
                 current_table_lines = []
 
@@ -298,10 +293,15 @@ class CustomChunker:
                     current_entity_lines.append(line_strip)
                     continue
 
-                # 3. Detect Entity / Treatment / Product (H3 / H4 / 1.1 Item)
-                if entity_h3_h4_pattern.match(line_strip) and not is_table_row:
+                # 3. Detect Entity / Treatment / Product (H3 / H4 / 1.1 Item / **StandaloneBoldTitle**)
+                bold_match = bold_entity_pattern.match(line_strip)
+                if (entity_h3_h4_pattern.match(line_strip) or bold_match) and not is_table_row:
                     flush_entity_block()
-                    clean_ent = line_strip.lstrip("#: *").rstrip("*").strip()
+                    if bold_match:
+                        clean_ent = bold_match.group(1).strip()
+                    else:
+                        clean_ent = re.sub(r'^[#\s]+', '', line_strip).strip()
+                        clean_ent = re.sub(r'^\d+\.\d+\s*', '', clean_ent).strip()
                     if clean_ent:
                         current_entity = clean_ent
                     current_entity_lines.append(line_strip)

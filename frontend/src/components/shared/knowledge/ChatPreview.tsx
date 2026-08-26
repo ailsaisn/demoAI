@@ -1,9 +1,11 @@
 import { knowledgeKeys } from "@/app/dashboard/knowledge/api/keys";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Badge } from "@/components/ui/badge";
+import Link from "next/link";
 import {
 	MessageScroller,
-	MessageScrollerButton,
+	MessageScrollerSmartButton,
 	MessageScrollerContent,
 	MessageScrollerItem,
 	MessageScrollerProvider,
@@ -33,9 +35,11 @@ import {
 	RiRobot2Line,
 	RiUser3Line,
 	RiUploadCloud2Line,
+	RiDeleteBinLine,
+	RiArrowRightUpLine,
 } from "@remixicon/react";
 import { useQueryClient } from "@tanstack/react-query";
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -45,11 +49,18 @@ import {
 	VisibilitySettings as IVisibilitySettings,
 	KnowledgeResponse,
 } from "@/app/dashboard/knowledge/api/types";
+import {
+	useGeneralChatSession,
+	useSendGeneralChatMessage,
+} from "@/app/dashboard/knowledge/hooks/use-knowledge";
 import { CategorySettings } from "./CategorySettings";
 import { ClassificationSidebar } from "./ClassificationSidebar";
 import { TitleSettings } from "./TitleSettings";
 
 interface ChatPreviewProps {
+	mode?: "knowledge" | "general";
+	sessionId?: string | null;
+	initialPrompt?: string;
 	knowledgeId?: string;
 	knowledge?: KnowledgeResponse;
 	knowledgeStatus?: string;
@@ -75,9 +86,15 @@ interface Message {
 	content: string;
 	attachmentName?: string;
 	attachmentNames?: string[];
+	action?: string;
+	target_knowledge_id?: string | null;
+	total_found?: number;
 }
 
 export function ChatPreview({
+	mode = "knowledge",
+	sessionId,
+	initialPrompt,
 	knowledgeId,
 	knowledge,
 	knowledgeStatus,
@@ -97,21 +114,143 @@ export function ChatPreview({
 	headerNode,
 	preHeaderNode,
 }: ChatPreviewProps) {
-	const STORAGE_KEY = `chat_preview_${knowledgeId || "default"}`;
+	const { data: generalSession } = useGeneralChatSession(
+		mode === "general" ? sessionId : null
+	);
+	const sendGeneralMsg = useSendGeneralChatMessage(mode === "general" ? sessionId : null);
 
 	const [userChatMessages, setUserChatMessages] = useState<Message[]>(() => {
-		if (typeof window !== "undefined") {
-			const saved = localStorage.getItem(STORAGE_KEY);
-			if (saved) {
-				try {
-					return JSON.parse(saved);
-				} catch (e) {
-					console.error("Failed to parse chat messages", e);
-				}
-			}
+		// If Knowledge document has saved chat history in DB metadata, load it
+		const meta = knowledge?.metadata as Record<string, unknown> | undefined;
+		const savedHistory = (meta?.history || meta?.chat_history) as
+			| Array<{ role: "user" | "assistant"; content: string }>
+			| undefined;
+		if (Array.isArray(savedHistory) && savedHistory.length > 0) {
+			return savedHistory.map((m) => ({
+				role: m.role,
+				content: m.content,
+			}));
 		}
 		return [];
 	});
+
+	useEffect(() => {
+		if (mode === "knowledge") {
+			const meta = knowledge?.metadata as Record<string, unknown> | undefined;
+			const savedHistory = (meta?.history || meta?.chat_history) as
+				| Array<{ role: "user" | "assistant"; content: string }>
+				| undefined;
+			const timer = setTimeout(() => {
+				if (Array.isArray(savedHistory) && savedHistory.length > 0) {
+					setUserChatMessages(
+						savedHistory.map((m) => ({
+							role: m.role,
+							content: m.content,
+						}))
+					);
+				} else {
+					setUserChatMessages([]);
+				}
+			}, 0);
+			return () => clearTimeout(timer);
+		}
+	}, [mode, knowledgeId, knowledge?.id, knowledge?.metadata]);
+
+	const sessionMessages = generalSession?.messages;
+	const dbMessages: Message[] = useMemo(() => {
+		if (mode === "general" && sessionMessages) {
+			return sessionMessages.map((m) => ({
+				role: m.role as "user" | "assistant",
+				content: m.content,
+				action: m.action || undefined,
+				target_knowledge_id: m.target_knowledge_id || undefined,
+				total_found: m.total_found ?? undefined,
+			}));
+		}
+		return [];
+	}, [mode, sessionMessages]);
+
+	const [input, setInput] = useState("");
+	const [attachedFiles, setAttachedFiles] = useState<File[]>([]);
+	const [isLoading, setIsLoading] = useState(false);
+	const [optimisticUserMsg, setOptimisticUserMsg] = useState<Message | null>(null);
+	const [activeTab, setActiveTab] = useState<string | null>(null);
+
+	const isProcessing = isLoading;
+
+	const currentTab =
+		activeTab || (files && files.length > 0 ? (files[0].file_name as string) : null);
+
+	const fileInputRef = useRef<HTMLInputElement>(null);
+	const queryClient = useQueryClient();
+	const [isDragging, setIsDragging] = useState(false);
+	const dragCounter = useRef(0);
+	const initialPromptTriggeredRef = useRef<string | null>(null);
+
+	useEffect(() => {
+		if (
+			mode === "general" &&
+			initialPrompt &&
+			initialPromptTriggeredRef.current !== initialPrompt
+		) {
+			initialPromptTriggeredRef.current = initialPrompt;
+
+			// If sessionId exists, use persistent DB endpoint
+			if (sessionId) {
+				const sendInitialDB = async () => {
+					setIsLoading(true);
+					setOptimisticUserMsg({ role: "user", content: initialPrompt });
+					try {
+						await sendGeneralMsg.mutateAsync({ prompt: initialPrompt });
+					} catch {
+						toast.error("Failed to send message to AI.");
+					} finally {
+						sendGeneralMsg.reset();
+						setIsLoading(false);
+						setOptimisticUserMsg(null);
+						// Clean URL query parameter so refresh won't re-trigger
+						if (typeof window !== "undefined") {
+							window.history.replaceState(
+								null,
+								"",
+								`/dashboard/ingest/chat?session_id=${sessionId}`
+							);
+						}
+					}
+				};
+				void sendInitialDB();
+			} else {
+				const sendInitialStateless = async () => {
+					const userMsg: Message = { role: "user", content: initialPrompt };
+					setUserChatMessages([userMsg]);
+					setIsLoading(true);
+					try {
+						const response = await api.post("/knowledge/query-general", {
+							prompt: initialPrompt,
+							history: [],
+						});
+						const data = response.data;
+						setUserChatMessages([
+							userMsg,
+							{
+								role: "assistant",
+								content: data.answer,
+								action: data.action,
+								target_knowledge_id: data.target_knowledge_id,
+								total_found: data.total_found,
+							},
+						]);
+					} catch {
+						toast.error("Failed to send message to AI.");
+					} finally {
+						setIsLoading(false);
+					}
+				};
+				void sendInitialStateless();
+			}
+		}
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, [mode, initialPrompt, sessionId]);
 
 	const getFileIconAndColor = (filename?: string | null) => {
 		if (!filename)
@@ -137,19 +276,6 @@ export function ChatPreview({
 				return { Icon: RiFileTextLine, bgColor: "bg-blue-50", textColor: "text-blue-600" };
 		}
 	};
-
-	const [input, setInput] = useState("");
-	const [attachedFiles, setAttachedFiles] = useState<File[]>([]);
-	const [isLoading, setIsLoading] = useState(false);
-	const [activeTab, setActiveTab] = useState<string | null>(null);
-
-	const currentTab =
-		activeTab || (files && files.length > 0 ? (files[0].file_name as string) : null);
-
-	const fileInputRef = useRef<HTMLInputElement>(null);
-	const queryClient = useQueryClient();
-	const [isDragging, setIsDragging] = useState(false);
-	const dragCounter = useRef(0);
 
 	const handleDragEnter = (e: React.DragEvent<HTMLDivElement>) => {
 		e.preventDefault();
@@ -205,12 +331,6 @@ export function ChatPreview({
 		}
 	};
 
-	useEffect(() => {
-		if (typeof window !== "undefined") {
-			localStorage.setItem(STORAGE_KEY, JSON.stringify(userChatMessages));
-		}
-	}, [userChatMessages, STORAGE_KEY]);
-
 	const initialSummaryMessage: Message | null =
 		aiSummary && knowledgeStatus !== "PROCESSING"
 			? { role: "assistant", content: aiSummary }
@@ -218,9 +338,14 @@ export function ChatPreview({
 
 	const messages: Message[] = [];
 	if (initialSummaryMessage) messages.push(initialSummaryMessage);
-	messages.push(...userChatMessages);
-
-	// Find the index of the latest assistant message so we know where to attach the Categories
+	if (mode === "general" && sessionId) {
+		messages.push(...dbMessages);
+	} else {
+		messages.push(...userChatMessages);
+	}
+	if (optimisticUserMsg) {
+		messages.push(optimisticUserMsg);
+	}
 	let lastAssistantIndex = -1;
 	for (let i = messages.length - 1; i >= 0; i--) {
 		if (messages[i].role === "assistant") {
@@ -230,6 +355,7 @@ export function ChatPreview({
 	}
 
 	const renderCategoriesBlock = (standalone = false) => {
+		if (mode === "general") return null;
 		const shouldShow =
 			knowledgeStatus !== "PROCESSING" &&
 			(categories.length > 0 ||
@@ -320,9 +446,10 @@ export function ChatPreview({
 	};
 
 	const handleSend = async () => {
-		if ((!input.trim() && attachedFiles.length === 0) || isLoading) return;
+		if ((!input.trim() && attachedFiles.length === 0) || isProcessing) return;
 
-		const fileNames = attachedFiles.map((f) => f.name);
+		const filesToSend = [...attachedFiles];
+		const fileNames = filesToSend.map((f) => f.name);
 		const userMsg: Message = {
 			role: "user",
 			content:
@@ -331,25 +458,70 @@ export function ChatPreview({
 			attachmentName: fileNames.length > 0 ? fileNames[0] : undefined,
 		};
 
-		setUserChatMessages((prev) => [...prev, userMsg]);
+		if (!sessionId) {
+			setUserChatMessages((prev) => [...prev, userMsg]);
+		} else if (mode === "general") {
+			setOptimisticUserMsg(userMsg);
+		}
 		setInput("");
 		setAttachedFiles([]);
 		setIsLoading(true);
 
 		try {
-			if (
+			if (mode === "general") {
+				if (sessionId) {
+					await sendGeneralMsg.mutateAsync({
+						prompt: userMsg.content,
+						attachments: userMsg.attachmentNames ? { names: userMsg.attachmentNames } : undefined,
+					});
+				} else {
+					const response = await api.post("/knowledge/query-general", {
+						prompt: userMsg.content,
+						history: messages.map((m) => ({ role: m.role, content: m.content })),
+					});
+					const data = response.data;
+					setUserChatMessages((prev) => [
+						...prev,
+						{
+							role: "assistant",
+							content: data.answer,
+							action: data.action,
+							target_knowledge_id: data.target_knowledge_id,
+							total_found: data.total_found,
+						},
+					]);
+					if (data.action === "edit_applied" || data.action === "delete_applied") {
+						queryClient.invalidateQueries({ queryKey: knowledgeKeys.all });
+						if (data.target_knowledge_id) {
+							queryClient.invalidateQueries({ queryKey: knowledgeKeys.detail(data.target_knowledge_id) });
+						}
+					}
+				}
+			} else if (
 				(knowledgeStatus === "PENDING" || (knowledgeStatus === "APPROVED" && isEditMode)) &&
 				knowledgeId
 			) {
 				const endpoint = `/knowledge/${knowledgeId}/refine`;
 
-				const response = await api.post(endpoint, {
-					prompt: userMsg.content,
-					history: [...messages, userMsg],
-				});
+				let response;
+				if (filesToSend.length > 0) {
+					const formData = new FormData();
+					formData.append("prompt", userMsg.content);
+					formData.append("history", JSON.stringify([...messages, userMsg]));
+					formData.append("file", filesToSend[0]);
+
+					response = await api.post(endpoint, formData);
+				} else {
+					response = await api.post(endpoint, {
+						prompt: userMsg.content,
+						history: [...messages, userMsg],
+					});
+				}
 				const chatResponse = response.data.summary
 					? `Here is the updated summary:\n\n${response.data.summary}`
-					: "I've updated the document summary based on your instructions.";
+					: response.data.feedback
+						? response.data.feedback
+						: "I've updated the document summary based on your instructions.";
 				setUserChatMessages((prev) => [...prev, { role: "assistant", content: chatResponse }]);
 
 				if (knowledgeId) {
@@ -369,32 +541,37 @@ export function ChatPreview({
 					{ role: "assistant", content: response.data.answer },
 				]);
 			}
-		} catch {
-			toast.error("Failed to send message to AI.");
+		} catch (err: unknown) {
+			const detail = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
+			toast.error(detail || "Failed to send message to AI.");
 		} finally {
+			sendGeneralMsg.reset();
 			setIsLoading(false);
+			setOptimisticUserMsg(null);
 		}
 	};
 
 	const isInputDisabled =
-		knowledgeStatus === "PROCESSING" ||
-		isLoading ||
-		isDetailLoading ||
-		(knowledgeStatus === "APPROVED" && !isEditMode);
+		mode === "general"
+			? isProcessing
+			: knowledgeStatus === "PROCESSING" ||
+				isProcessing ||
+				isDetailLoading ||
+				(knowledgeStatus === "APPROVED" && !isEditMode);
 
 	return (
 		<div className="flex flex-col flex-1 bg-white overflow-hidden min-h-0 h-full">
 			<MessageScrollerProvider>
 				<MessageScroller className="flex-1 min-h-0">
 					<MessageScrollerViewport className="px-6 sm:px-8">
-						<MessageScrollerContent className="py-8 gap-6 w-full max-w-5xl mx-auto">
+						<MessageScrollerContent className="py-8 gap-6 w-full max-w-5xl mx-auto min-w-0">
 							{isDetailLoading && (
 								<MessageScrollerItem>
-									<div className="flex items-start gap-3 w-full">
+									<div className="flex items-start gap-3 w-full min-w-0 max-w-full">
 										<div className="bg-zinc-100 rounded text-zinc-950 flex items-center justify-center p-1.5 mt-0.5 shrink-0">
 											<RiRobot2Line className="size-4 animate-pulse text-blue-500" />
 										</div>
-										<div className="bg-blue-50/70 text-zinc-950 p-3 rounded-md text-sm w-full flex items-center gap-2 border border-blue-100/50">
+										<div className="bg-blue-50/70 text-zinc-950 p-3 rounded-md text-sm w-full min-w-0 max-w-full flex items-center gap-2 border border-blue-100/50">
 											<RiLoader4Line className="size-4 animate-spin text-blue-600" />
 											<span className="text-zinc-700 font-medium">
 												Fetching document details and session...
@@ -406,21 +583,33 @@ export function ChatPreview({
 
 							{!isDetailLoading && messages.length === 0 && knowledgeStatus !== "PROCESSING" && (
 								<MessageScrollerItem>
-									<div className="flex items-start gap-3 w-full">
-										<div className="bg-zinc-100 rounded text-zinc-950 flex items-center justify-center p-1.5 mt-0.5 shrink-0">
-											<RiRobot2Line className="size-4" />
+									{mode === "general" ? (
+										<div className="flex flex-col items-center justify-center text-center py-16 px-4 max-w-lg mx-auto space-y-3">
+											<div className="size-12 rounded-xl bg-blue-50 text-blue-500 flex items-center justify-center">
+												<RiRobot2Line className="size-6" />
+											</div>
+											<h2 className="text-base font-semibold text-zinc-950">Knowledge Base Assistant</h2>
+											<p className="text-xs text-zinc-500 leading-relaxed">
+												Ask questions about clinic products and treatments, instruct updates, or clean expired records. The assistant maintains context across your conversation.
+											</p>
 										</div>
-										<div className="bg-blue-50/80 text-zinc-950 p-4 rounded-md text-sm w-full border border-blue-100 flex flex-col gap-3">
-											{headerNode}
-											<p className="text-zinc-500 italic">No summary available.</p>
+									) : (
+										<div className="flex items-start gap-3 w-full min-w-0 max-w-full">
+											<div className="bg-zinc-100 rounded text-zinc-950 flex items-center justify-center p-1.5 mt-0.5 shrink-0">
+												<RiRobot2Line className="size-4" />
+											</div>
+											<div className="bg-blue-50/80 text-zinc-950 p-4 rounded-md text-sm w-full min-w-0 max-w-full border border-blue-100 flex flex-col gap-3">
+												{headerNode}
+												<p className="text-zinc-500 italic">No summary available.</p>
+											</div>
 										</div>
-									</div>
+									)}
 								</MessageScrollerItem>
 							)}
 
 							{!isDetailLoading && knowledgeStatus === "PROCESSING" && messages.length === 0 && (
 								<MessageScrollerItem>
-									<div className="flex flex-col w-full items-start">
+									<div className="flex flex-col w-full min-w-0 max-w-full items-start">
 										{/* Attached Document Badge OUTSIDE & ABOVE bubble */}
 										{fileName &&
 											(() => {
@@ -446,11 +635,11 @@ export function ChatPreview({
 												);
 											})()}
 
-										<div className="flex items-start gap-3 w-full">
+										<div className="flex items-start gap-3 w-full min-w-0 max-w-full">
 											<div className="bg-zinc-100 rounded text-zinc-950 flex items-center justify-center p-1.5 mt-0.5 shrink-0">
 												<RiRobot2Line className="size-4" />
 											</div>
-											<div className="bg-blue-50/80 text-zinc-950 p-4 rounded-md text-sm w-full border border-blue-100 flex flex-col gap-3">
+											<div className="bg-blue-50/80 text-zinc-950 p-4 rounded-md text-sm w-full min-w-0 max-w-full border border-blue-100 flex flex-col gap-3 overflow-hidden">
 												{headerNode}
 												<div className="flex items-center gap-2">
 													<span className="relative flex h-3 w-3">
@@ -494,7 +683,7 @@ export function ChatPreview({
 							{messages.length > 0 && (
 								<MessageScrollerItem key="msg-0" scrollAnchor={messages.length === 1 && !isLoading}>
 									<div
-										className={`flex flex-col w-full min-w-0 ${messages[0].role === "user" ? "items-end" : "items-start"}`}
+										className={`flex flex-col w-full min-w-0 max-w-full ${messages[0].role === "user" ? "items-end" : "items-start"}`}
 									>
 										{title !== undefined && onChangeTitle && messages[0].role === "assistant" && (
 											<div className="flex justify-center w-full mb-4">
@@ -566,7 +755,7 @@ export function ChatPreview({
 										})()}
 										{preHeaderNode}
 										<div
-											className={`flex items-start gap-3 w-full min-w-0 ${messages[0].role === "user" ? "flex-row-reverse" : ""}`}
+											className={`flex items-start gap-3 w-full min-w-0 max-w-full ${messages[0].role === "user" ? "flex-row-reverse" : ""}`}
 										>
 											<div className="bg-zinc-100 rounded text-zinc-950 flex items-center justify-center p-1.5 mt-0.5 shrink-0">
 												{messages[0].role === "user" ? (
@@ -578,6 +767,41 @@ export function ChatPreview({
 											<div
 												className={`${messages[0].role === "user" ? "bg-blue-500 text-white" : "bg-transparent border border-zinc-200 text-zinc-950"} p-3.5 rounded-md text-sm w-full min-w-0 overflow-hidden prose prose-sm max-w-none prose-p:leading-relaxed prose-pre:bg-zinc-800 prose-pre:text-zinc-100 prose-p:my-1.5 prose-ul:my-1.5 prose-ul:pl-4 prose-ol:my-1.5 prose-ol:pl-4 prose-li:my-0.5 prose-headings:my-2.5 prose-table:w-full prose-table:border prose-table:border-blue-200/60 prose-table:rounded-md prose-table:overflow-hidden prose-table:my-3 prose-table:bg-white prose-th:bg-blue-100/50 prose-th:px-3 prose-th:py-2.5 prose-th:text-left prose-th:font-semibold prose-th:text-blue-900 prose-th:border-b prose-th:border-blue-200/60 prose-td:px-3 prose-td:py-2.5 prose-td:border-b prose-td:border-blue-100/60 last:prose-td:border-0 whitespace-pre-wrap`}
 											>
+												{false && messages[0].role === "assistant" && (messages[0].action === "edit_applied" || messages[0].action === "delete_applied") && (
+													<div className="flex items-center justify-between gap-2 pb-2 mb-2 border-b border-zinc-100 not-prose">
+														<div className="flex items-center gap-2">
+															<Badge
+																variant="outline"
+																className={
+																	messages[0].action === "edit_applied"
+																		? "bg-emerald-50 text-emerald-700 border-emerald-300"
+																		: "bg-rose-50 text-rose-700 border-rose-300"
+																}
+															>
+																{messages[0].action === "edit_applied" ? (
+																	<>
+																		<RiCheckLine className="size-3 mr-1" />
+																		Knowledge Updated
+																	</>
+																) : (
+																	<>
+																		<RiDeleteBinLine className="size-3 mr-1" />
+																		Knowledge Removed
+																	</>
+																)}
+															</Badge>
+														</div>
+
+														{messages[0].target_knowledge_id && messages[0].target_knowledge_id !== "expired" && (
+															<Link
+																href={`/dashboard/knowledge/${messages[0].target_knowledge_id}`}
+																className="inline-flex items-center gap-1 text-xs text-blue-600 hover:text-blue-700 font-medium"
+															>
+																View Document <RiArrowRightUpLine className="size-3.5" />
+															</Link>
+														)}
+													</div>
+												)}
 												{messages[0].role === "assistant" ? (
 													<>
 														{headerNode}
@@ -608,7 +832,7 @@ export function ChatPreview({
 										scrollAnchor={actualIndex === messages.length - 1 && !isLoading}
 									>
 										<div
-											className={`flex flex-col w-full ${msg.role === "user" ? "items-end" : "items-start"}`}
+											className={`flex flex-col w-full min-w-0 max-w-full ${msg.role === "user" ? "items-end" : "items-start"}`}
 										>
 											{(() => {
 												const names =
@@ -644,7 +868,7 @@ export function ChatPreview({
 												);
 											})()}
 											<div
-												className={`flex items-start gap-3 w-full ${msg.role === "user" ? "flex-row-reverse" : ""}`}
+												className={`flex items-start gap-3 w-full min-w-0 max-w-full ${msg.role === "user" ? "flex-row-reverse" : ""}`}
 											>
 												<div className="bg-zinc-100 rounded text-zinc-950 flex items-center justify-center p-1.5 mt-0.5 shrink-0">
 													{msg.role === "user" ? (
@@ -654,8 +878,43 @@ export function ChatPreview({
 													)}
 												</div>
 												<div
-													className={`${msg.role === "user" ? "bg-blue-500 text-white" : "bg-transparent border border-zinc-200 text-zinc-950"} p-3.5 rounded-md text-sm w-full prose prose-sm max-w-none prose-p:leading-relaxed prose-pre:bg-zinc-800 prose-pre:text-zinc-100 prose-p:my-1.5 prose-ul:my-1.5 prose-ul:pl-4 prose-ol:my-1.5 prose-ol:pl-4 prose-li:my-0.5 prose-headings:my-2.5 prose-table:w-full prose-table:border prose-table:border-blue-200/60 prose-table:rounded-md prose-table:overflow-hidden prose-table:my-3 prose-table:bg-white prose-th:bg-blue-100/50 prose-th:px-3 prose-th:py-2.5 prose-th:text-left prose-th:font-semibold prose-th:text-blue-900 prose-th:border-b prose-th:border-blue-200/60 prose-td:px-3 prose-td:py-2.5 prose-td:border-b prose-td:border-blue-100/60 last:prose-td:border-0 whitespace-pre-wrap`}
+													className={`${msg.role === "user" ? "bg-blue-500 text-white" : "bg-transparent border border-zinc-200 text-zinc-950"} p-3.5 rounded-md text-sm w-full min-w-0 overflow-hidden prose prose-sm max-w-none prose-p:leading-relaxed prose-pre:bg-zinc-800 prose-pre:text-zinc-100 prose-p:my-1.5 prose-ul:my-1.5 prose-ul:pl-4 prose-ol:my-1.5 prose-ol:pl-4 prose-li:my-0.5 prose-headings:my-2.5 prose-table:w-full prose-table:border prose-table:border-blue-200/60 prose-table:rounded-md prose-table:overflow-hidden prose-table:my-3 prose-table:bg-white prose-th:bg-blue-100/50 prose-th:px-3 prose-th:py-2.5 prose-th:text-left prose-th:font-semibold prose-th:text-blue-900 prose-th:border-b prose-th:border-blue-200/60 prose-td:px-3 prose-td:py-2.5 prose-td:border-b prose-td:border-blue-100/60 last:prose-td:border-0 whitespace-pre-wrap`}
 												>
+													{false && msg.role === "assistant" && (msg.action === "edit_applied" || msg.action === "delete_applied") && (
+														<div className="flex items-center justify-between gap-2 pb-2 mb-2 border-b border-zinc-100 not-prose">
+															<div className="flex items-center gap-2">
+																<Badge
+																	variant="outline"
+																	className={
+																		msg.action === "edit_applied"
+																			? "bg-emerald-50 text-emerald-700 border-emerald-300"
+																			: "bg-rose-50 text-rose-700 border-rose-300"
+																	}
+																>
+																	{msg.action === "edit_applied" ? (
+																		<>
+																			<RiCheckLine className="size-3 mr-1" />
+																			Knowledge Updated
+																		</>
+																	) : (
+																		<>
+																			<RiDeleteBinLine className="size-3 mr-1" />
+																			Knowledge Removed
+																		</>
+																	)}
+																</Badge>
+															</div>
+
+															{msg.target_knowledge_id && msg.target_knowledge_id !== "expired" && (
+																<Link
+																	href={`/dashboard/knowledge/${msg.target_knowledge_id}`}
+																	className="inline-flex items-center gap-1 text-xs text-blue-600 hover:text-blue-700 font-medium"
+																>
+																	View Document <RiArrowRightUpLine className="size-3.5" />
+																</Link>
+															)}
+														</div>
+													)}
 													{msg.role === "assistant" ? (
 														<ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.content}</ReactMarkdown>
 													) : (
@@ -684,7 +943,7 @@ export function ChatPreview({
 							)}
 						</MessageScrollerContent>
 					</MessageScrollerViewport>
-					<MessageScrollerButton />
+					<MessageScrollerSmartButton />
 				</MessageScroller>
 			</MessageScrollerProvider>
 
@@ -768,11 +1027,13 @@ export function ChatPreview({
 						placeholder={
 							knowledgeStatus === "PROCESSING"
 								? "Waiting for ingestion to complete..."
-								: knowledgeStatus === "APPROVED" && !isEditMode
+								: knowledgeStatus === "APPROVED" && !isEditMode && mode !== "general"
 									? "Click 'Edit Knowledge' to refine summary..."
-									: "Ask questions or request adjustments..."
+									: mode === "general"
+										? "Ask about the knowledge..."
+										: "Ask questions or request adjustments..."
 						}
-						disabled={isInputDisabled}
+						disabled={mode === "general" ? false : isInputDisabled}
 						className="w-full bg-transparent border-none shadow-none focus-visible:ring-0 px-0 outline-none text-sm text-gray-700 placeholder:text-gray-500"
 					/>
 
@@ -784,21 +1045,23 @@ export function ChatPreview({
 						className="hidden"
 					/>
 
-					<div className="flex items-center justify-between pt-1">
-						<Button
-							type="button"
-							variant="ghost"
-							size="icon-sm"
-							onClick={() => fileInputRef.current?.click()}
-							disabled={isInputDisabled}
-							className="text-zinc-500 hover:text-zinc-900 hover:bg-zinc-100"
-							title="Attach files"
-						>
-							<RiAttachment2 className="size-4" />
-						</Button>
+					<div className={`flex items-center ${mode === "general" ? "justify-end" : "justify-between"} pt-1`}>
+						{mode !== "general" && (
+							<Button
+								type="button"
+								variant="ghost"
+								size="icon-sm"
+								onClick={() => fileInputRef.current?.click()}
+								disabled={isInputDisabled}
+								className="text-zinc-500 hover:text-zinc-900 hover:bg-zinc-100"
+								title="Attach files"
+							>
+								<RiAttachment2 className="size-4" />
+							</Button>
+						)}
 						<Button
 							onClick={handleSend}
-							disabled={isInputDisabled || (!input.trim() && attachedFiles.length === 0)}
+							disabled={isProcessing || (!input.trim() && attachedFiles.length === 0)}
 							size="icon"
 							className="bg-blue-500 text-white hover:bg-blue-600 shrink-0"
 						>

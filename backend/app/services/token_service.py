@@ -225,3 +225,33 @@ async def record_ingestion_token_usage(
 
     await db.commit()
     logger.info(f"Recorded ingestion token usage: in={input_tokens}, out={output_tokens}, total={total_tokens}, docs={documents_count}")
+
+
+async def record_knowledge_not_found_event(
+    db: AsyncSession,
+    user_id: uuid.UUID,
+    branch_id: Optional[uuid.UUID],
+    user_query: str
+):
+    """
+    Records a KNOWLEDGE_NOT_FOUND alert when a doctor asks a question that yields no matching KB context.
+    Publishes real-time notification to Admin SSE channel and logs audit alert.
+    """
+    logger.warning(
+        f"⚠️ [KNOWLEDGE_NOT_FOUND_ALERT] User '{user_id}' (Branch: '{branch_id}') "
+        f"asked: '{user_query}' — No matching KB documents found."
+    )
+    try:
+        from app.core.broadcaster import broadcaster
+        import json
+        event_payload = json.dumps({
+            "event_type": "KNOWLEDGE_NOT_FOUND",
+            "user_id": str(user_id),
+            "branch_id": str(branch_id) if branch_id else None,
+            "query": user_query,
+            "message": f"Pertanyaan dokter tidak ditemukan di Knowledge Base: '{user_query}'"
+        })
+        await broadcaster.publish(event_payload)
+    except Exception as err:
+        logger.debug(f"Broadcasting KNOWLEDGE_NOT_FOUND event failed: {err}")
+

@@ -129,8 +129,7 @@ export function DoctorAdjustLimitDialog({
 
 				<div className="p-4 border-t border-gray-100 flex justify-end">
 					<Button
-						variant="outline"
-						className="bg-blue-600 text-white border-0 hover:bg-blue-700 hover:text-white px-6 rounded-md disabled:opacity-50"
+						className="bg-blue-600 text-white hover:bg-blue-700 px-6 rounded-md disabled:opacity-50"
 						onClick={handleSave}
 						disabled={updateDoctorAccess.isPending || isBranchLimitUnset || isExceedingBranch}
 					>

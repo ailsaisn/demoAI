@@ -29,3 +29,12 @@ class ConfigResponse(ConfigBase):
     updated_at: datetime | None
 
     model_config = ConfigDict(from_attributes=True)
+
+class GlobalMonthlyUsageResponse(BaseModel):
+    year_month: str
+    tokens_used: int
+    token_limit: int | None = None
+    remaining: int | None = None
+    percentage: float | None = None
+    is_global_active: bool = False
+

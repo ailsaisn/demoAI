@@ -12,6 +12,13 @@ from app.models.user import User, UserType, Role, UserRole, RoleAccess, Access, 
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
+def is_cookie_secure() -> bool:
+    if settings.COOKIE_SECURE is not None:
+        return settings.COOKIE_SECURE
+    if settings.COOKIE_DOMAIN:
+        return True
+    return settings.ENVIRONMENT.lower() in ("production", "prod", "staging")
+
 @router.post("/login")
 async def login(
     response: Response,
@@ -53,14 +60,14 @@ async def login(
     access_token = create_access_token(subject=str(user.id), user_type=user.type, roles=roles, accesses=accesses)
     refresh_token = create_refresh_token(subject=str(user.id))
     
-    is_prod = settings.ENVIRONMENT.lower() in ("production", "prod")
+    secure = is_cookie_secure()
 
     response.set_cookie(
         key="access_token",
         value=access_token,
         httponly=True,
-        secure=is_prod,
-        samesite="lax",
+        secure=secure,
+        samesite=settings.COOKIE_SAMESITE,
         domain=settings.COOKIE_DOMAIN,
         path="/",
         max_age=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60
@@ -70,8 +77,8 @@ async def login(
         key="refresh_token",
         value=refresh_token,
         httponly=True,
-        secure=is_prod,
-        samesite="lax",
+        secure=secure,
+        samesite=settings.COOKIE_SAMESITE,
         domain=settings.COOKIE_DOMAIN,
         path="/",
         max_age=settings.REFRESH_TOKEN_EXPIRE_DAYS * 24 * 60 * 60
@@ -81,9 +88,9 @@ async def login(
 
 @router.post("/logout")
 async def logout(response: Response):
-    is_prod = settings.ENVIRONMENT.lower() in ("production", "prod")
-    response.delete_cookie(key="access_token", path="/", domain=settings.COOKIE_DOMAIN, httponly=True, samesite="lax", secure=is_prod)
-    response.delete_cookie(key="refresh_token", path="/", domain=settings.COOKIE_DOMAIN, httponly=True, samesite="lax", secure=is_prod)
+    secure = is_cookie_secure()
+    response.delete_cookie(key="access_token", path="/", domain=settings.COOKIE_DOMAIN, httponly=True, samesite=settings.COOKIE_SAMESITE, secure=secure)
+    response.delete_cookie(key="refresh_token", path="/", domain=settings.COOKIE_DOMAIN, httponly=True, samesite=settings.COOKIE_SAMESITE, secure=secure)
     return {"message": "Logged out successfully"}
 
 @router.post("/refresh")
@@ -143,14 +150,14 @@ async def refresh_token(request: Request, response: Response, db: AsyncSession =
             accesses = list(result_acc.scalars().all())
 
         new_access_token = create_access_token(subject=str(user.id), user_type=user.type, roles=roles, accesses=accesses)
-        is_prod = settings.ENVIRONMENT.lower() in ("production", "prod")
+        secure = is_cookie_secure()
         
         response.set_cookie(
             key="access_token",
             value=new_access_token,
             httponly=True,
-            secure=is_prod,
-            samesite="lax",
+            secure=secure,
+            samesite=settings.COOKIE_SAMESITE,
             domain=settings.COOKIE_DOMAIN,
             path="/",
             max_age=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60

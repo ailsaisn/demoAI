@@ -1,57 +1,30 @@
 "use client";
 
 import { useKnowledgeBaseList } from "@/app/dashboard/knowledge/hooks/use-knowledge";
-import {
-	RiDiscountPercentLine,
-	RiMedicineBottleLine,
-	RiRobot2Line,
-	RiSyringeLine,
-	RiArchiveLine,
-} from "@remixicon/react";
+import { useProjectStats } from "@/app/dashboard/knowledge/hooks/use-projects";
+import { RiRobot2Line, RiBookOpenLine } from "@remixicon/react";
 
 export function KnowledgeSummary() {
+	const { data: stats } = useProjectStats();
 	const { data: knowledgeList } = useKnowledgeBaseList();
 
-	const totalCount = knowledgeList?.length ?? 0;
-	const productCount = knowledgeList?.filter((k) => k.type === "PRODUCT").length ?? 0;
-	const treatmentCount = knowledgeList?.filter((k) => k.type === "TREATMENT").length ?? 0;
-	const promotionalCount = knowledgeList?.filter((k) => k.type === "PROMOTIONAL").length ?? 0;
+	const totalProjects = stats?.total_projects ?? 0;
+	const totalKnowledge = stats?.total_knowledge ?? (knowledgeList?.length ?? 0);
 
 	const summaries = [
 		{
-			title: "Total Knowledge",
-			count: totalCount.toString(),
-			icon: RiRobot2Line,
-			iconColor: "text-blue-600",
-			iconBg: "bg-blue-50",
-		},
-		{
-			title: "Product Knowledge",
-			count: productCount.toString(),
-			icon: RiMedicineBottleLine,
+			title: "Total Projects",
+			count: totalProjects.toString(),
+			icon: RiBookOpenLine,
 			iconColor: "text-emerald-500",
 			iconBg: "bg-emerald-50",
 		},
 		{
-			title: "Treatment Knowledge",
-			count: treatmentCount.toString(),
-			icon: RiSyringeLine,
-			iconColor: "text-rose-600",
-			iconBg: "bg-rose-50",
-		},
-		{
-			title: "Promotional",
-			count: promotionalCount.toString(),
-			icon: RiDiscountPercentLine,
-			iconColor: "text-amber-500",
-			iconBg: "bg-amber-50",
-		},
-		{
-			title: "Other",
-			count: (totalCount - productCount - treatmentCount - promotionalCount).toString(),
-			icon: RiArchiveLine,
-			iconColor: "text-purple-600",
-			iconBg: "bg-purple-50",
+			title: "Total Knowledge",
+			count: totalKnowledge.toString(),
+			icon: RiRobot2Line,
+			iconColor: "text-blue-600",
+			iconBg: "bg-blue-50",
 		},
 	];
 
@@ -61,11 +34,11 @@ export function KnowledgeSummary() {
 				<h2 className="text-xl font-semibold text-gray-900">Knowledge Base</h2>
 				<p className="text-sm text-gray-500 mt-1">Here is the overview data of the ingestion</p>
 			</div>
-			<div className="flex border border-gray-200 rounded-md bg-white overflow-hidden">
+			<div className="inline-flex border border-gray-200 rounded-md bg-white overflow-hidden shadow-none">
 				{summaries.map((item, index) => (
 					<div
 						key={index}
-						className={`flex-1 flex items-center gap-4 p-4 ${
+						className={`w-64 flex items-center gap-4 p-4 ${
 							index !== summaries.length - 1 ? "border-r border-gray-200" : ""
 						}`}
 					>

@@ -17,11 +17,11 @@ from app.models.category import Category, UserCategoryExclusion
 from app.core.database import get_db
 from app.api.dependencies import get_current_user, get_current_user_from_proxy, get_current_user_flexible
 from app.models.user import User, UserType, UserTokenUsage
-from app.models.chat import ChatSession, ChatMessage, ChatStatus
+from app.models.chat import ChatSession, ChatMessage, ChatStatus, ChatRating
 from app.models.config import AppConfig
 from app.schemas.chat import (
     ChatSessionCreate, ChatSessionUpdate, ChatSessionResponse,
-    ChatHistoryResponse, ChatMessageCreate, ChatMessageResponse
+    ChatHistoryResponse, ChatStatsResponse, ChatMessageCreate, ChatMessageResponse
 )
 from app.core.token_counter import count_chat_prompt_tokens, count_chat_completion_tokens
 from app.services.token_service import check_chat_token_quota, record_chat_token_usage
@@ -145,6 +145,12 @@ async def has_chats_read_access(user: User, db: AsyncSession) -> bool:
     result = await db.execute(stmt)
     return "chats:read" in result.scalars().all()
 
+async def _is_file_attachments_allowed(db: AsyncSession) -> bool:
+    stmt = select(AppConfig.value).where(AppConfig.key == "AI_PROMPT_FILE_ATTACHMENTS")
+    res = await db.execute(stmt)
+    val = res.scalar_one_or_none()
+    return val == "true"
+
 async def _build_doctor_filter_metadata(db: AsyncSession, user: User) -> dict:
     """Build filter_metadata dict for doctor-level knowledge restrictions.
     
@@ -190,6 +196,7 @@ async def _hydrate_chat_session(session: ChatSession, db: AsyncSession) -> dict:
         "feedback": session.feedback,
         "has_data_issue": session.has_data_issue,
         "is_feedback_read": session.is_feedback_read,
+        "allow_file_attachments": await _is_file_attachments_allowed(db),
         "created_at": session.created_at,
         "updated_at": session.updated_at,
         "query": "",
@@ -208,10 +215,16 @@ async def _hydrate_chat_session(session: ChatSession, db: AsyncSession) -> dict:
     result_msg = await db.execute(stmt_first_msg)
     session_dict["query"] = result_msg.scalar() or ""
     
-    # Get the doctor's name
-    stmt_user = select(User.name).where(User.id == session.user_id)
+    # Get the doctor's name and doctor type
+    stmt_user = select(User.name, User.dr_type).where(User.id == session.user_id)
     result_user = await db.execute(stmt_user)
-    session_dict["doctor"] = result_user.scalar() or "Unknown"
+    user_row = result_user.first()
+    if user_row:
+        session_dict["doctor"] = user_row[0] or "Unknown"
+        session_dict["doctor_type"] = user_row[1]
+    else:
+        session_dict["doctor"] = "Unknown"
+        session_dict["doctor_type"] = None
     
     # Get the branch name
     stmt_branch = select(Branch.name).where(Branch.id == session.branch_id)
@@ -229,12 +242,11 @@ async def list_chat_feedbacks(
     if not await has_chats_read_access(current_user, db):
         raise HTTPException(status_code=403, detail="Not authorized to view feedbacks")
         
-    stmt = select(ChatSession).where(
-        or_(
-            ChatSession.feedback.is_not(None),
-            ChatSession.has_data_issue == True
-        )
-    ).order_by(ChatSession.updated_at.desc())
+    stmt = (
+        select(ChatSession)
+        .where(ChatSession.has_data_issue == True, ChatSession.session_type == "DOCTOR")
+        .order_by(ChatSession.updated_at.desc())
+    )
     
     result = await db.execute(stmt)
     sessions = result.scalars().all()
@@ -266,6 +278,40 @@ async def mark_feedback_read(
     await db.commit()
     return {"status": "ok", "marked": result.rowcount}
 
+@router.get("/stats", response_model=ChatStatsResponse)
+async def get_chat_stats(
+    doctor_id: Optional[uuid.UUID] = None,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user_flexible)
+):
+    """Return overview counts of doctors reached, sessions, ratings, and missing knowledge."""
+    has_messages = select(ChatMessage.id).where(ChatMessage.session_id == ChatSession.id).exists()
+    base_where = [has_messages, ChatSession.session_type == "DOCTOR"]
+    if not await has_chats_read_access(current_user, db):
+        base_where.append(ChatSession.user_id == current_user.id)
+    elif doctor_id:
+        base_where.append(ChatSession.user_id == doctor_id)
+
+    stmt = select(
+        func.count(func.distinct(ChatSession.user_id)).label("doctors_reached"),
+        func.count(ChatSession.id).label("total_sessions"),
+        func.count(ChatSession.id).filter(ChatSession.rating == ChatRating.GOOD).label("positive_ratings"),
+        func.count(ChatSession.id).filter(ChatSession.rating == ChatRating.BAD).label("negative_ratings"),
+        func.count(ChatSession.id).filter(ChatSession.has_data_issue.is_(True)).label("missing_knowledge"),
+    )
+    if base_where:
+        stmt = stmt.where(*base_where)
+
+    result = (await db.execute(stmt)).one()
+
+    return ChatStatsResponse(
+        doctors_reached=result.doctors_reached or 0,
+        total_sessions=result.total_sessions or 0,
+        positive_ratings=result.positive_ratings or 0,
+        negative_ratings=result.negative_ratings or 0,
+        missing_knowledge=result.missing_knowledge or 0,
+    )
+
 @router.get("/", response_model=List[ChatHistoryResponse])
 async def list_chat_sessions(
     search: Optional[str] = None,
@@ -273,7 +319,12 @@ async def list_chat_sessions(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user_flexible)
 ):
-    stmt = select(ChatSession).order_by(ChatSession.updated_at.desc())
+    has_messages = select(ChatMessage.id).where(ChatMessage.session_id == ChatSession.id).exists()
+    stmt = (
+        select(ChatSession)
+        .where(has_messages, ChatSession.session_type == "DOCTOR")
+        .order_by(ChatSession.updated_at.desc())
+    )
     if not await has_chats_read_access(current_user, db):
         stmt = stmt.where(ChatSession.user_id == current_user.id)
     elif doctor_id:
@@ -376,8 +427,10 @@ async def create_chat_session(
             db.add(sess)
             background_tasks.add_task(summarize_chat_session, sess.id)
 
+    allow_attachments = await _is_file_attachments_allowed(db)
     if valid_session:
         await db.commit()
+        setattr(valid_session, "allow_file_attachments", allow_attachments)
         return valid_session
 
     session = ChatSession(
@@ -387,6 +440,7 @@ async def create_chat_session(
     db.add(session)
     await db.commit()
     await db.refresh(session)
+    setattr(session, "allow_file_attachments", allow_attachments)
     return session
 
 @router.put("/{session_id}", response_model=ChatSessionResponse)
@@ -426,6 +480,7 @@ async def update_chat_session(
         from app.core.broadcaster import broadcaster
         await broadcaster.publish("feedback_submitted")
         
+    setattr(session, "allow_file_attachments", await _is_file_attachments_allowed(db))
     return session
 
 @router.get("/{session_id}/messages", response_model=List[ChatMessageResponse])
@@ -467,11 +522,11 @@ async def create_chat_message(
     session_id: uuid.UUID,
     background_tasks: BackgroundTasks,
     request: Request,
+    current_user: User = Depends(get_current_user_flexible),
+    db: AsyncSession = Depends(get_db),
     role: str = Form(...),
     content: str = Form(...),
-    files: Optional[List[UploadFile]] = File(None),
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user_flexible)
+    files: Optional[List[UploadFile]] = File(None)
 ):
     # Verify access to session
     stmt_session = select(ChatSession).where(ChatSession.id == session_id)
@@ -507,12 +562,35 @@ async def create_chat_message(
     db.add(chat_session)
         
     attachments = None
+    extracted_attachment_texts = []
     if files:
+        if not await _is_file_attachments_allowed(db):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="File attachments are disabled by system configuration"
+            )
         attachments = {}
+        from app.rag.services.attachment_parser import AttachmentParser
+        parser = AttachmentParser()
         for file in files:
             if file.content_type not in ALLOWED_MIME_TYPES:
                 raise HTTPException(status_code=400, detail=f"File type {file.content_type} not allowed for file {file.filename}")
-            attachments[file.filename] = {"content_type": file.content_type, "status": "processed"}
+            try:
+                extracted_text, meta = await parser.extract_from_upload(file)
+                attachments[file.filename] = {
+                    "content_type": file.content_type,
+                    "status": "processed",
+                    "chars": meta.get("chars", len(extracted_text)),
+                    "pages": meta.get("pages", 1),
+                    "method": meta.get("method", "fast")
+                }
+                if extracted_text and not extracted_text.startswith("[Error") and not extracted_text.startswith("[Dokumen tidak"):
+                    extracted_attachment_texts.append(
+                        f"[Dokumen Pasien Terlampir: {file.filename}]\n{extracted_text.strip()}"
+                    )
+            except Exception as e:
+                logger.error(f"Failed to extract attachment {file.filename}: {e}")
+                attachments[file.filename] = {"content_type": file.content_type, "status": "error", "error": str(e)}
 
     message = ChatMessage(
         session_id=session_id,
@@ -537,6 +615,11 @@ async def create_chat_message(
 
     # Build doctor-level knowledge filter (branch, dr_type, excluded categories)
     doctor_filter = await _build_doctor_filter_metadata(db, current_user)
+
+    # Effective query enriched with attachment text
+    effective_query = content
+    if extracted_attachment_texts:
+        effective_query = f"{content}\n\n" + "\n\n".join(extracted_attachment_texts)
 
     # For user message, we stream the AI response back via SSE
     async def sse_generator():
@@ -576,7 +659,7 @@ async def create_chat_message(
                 
                 # We consume the generator token by token
                 async for chunk in pipeline.generate_answer_stream(
-                    query=content,
+                    query=effective_query,
                     top_k=5,
                     rerank=True,
                     history=history,
@@ -615,6 +698,7 @@ async def create_chat_message(
                 )
                 out_tokens = count_chat_completion_tokens(ai_response_text)
                 
+                from app.services.token_service import record_knowledge_not_found_event
                 await record_chat_token_usage(
                     db=session,
                     user_id=current_user.id,
@@ -622,6 +706,20 @@ async def create_chat_message(
                     input_tokens=in_tokens,
                     output_tokens=out_tokens
                 )
+
+                # Check if knowledge was not found for admin notification
+                is_no_context = not context_chunks or len(context_chunks) == 0
+                is_missing_kw = any(phrase in ai_response_text.lower() for phrase in [
+                    "tidak ditemukan", "tidak tersedia", "mohon maaf", "belum ada data"
+                ])
+                if is_no_context or is_missing_kw:
+                    await record_knowledge_not_found_event(
+                        db=session,
+                        user_id=current_user.id,
+                        branch_id=chat_session.branch_id,
+                        user_query=content
+                    )
+
                 
             except Exception as e:
                 logger.error(f"Error streaming AI response: {e}")
@@ -692,12 +790,30 @@ async def stream_chat_message(
     db.add(chat_session)
         
     attachments = None
+    extracted_attachment_texts = []
     if files:
         attachments = {}
+        from app.rag.services.attachment_parser import AttachmentParser
+        parser = AttachmentParser()
         for file in files:
             if file.content_type not in ALLOWED_MIME_TYPES:
                 raise HTTPException(status_code=400, detail=f"File type {file.content_type} not allowed for file {file.filename}")
-            attachments[file.filename] = {"content_type": file.content_type, "status": "processed"}
+            try:
+                extracted_text, meta = await parser.extract_from_upload(file)
+                attachments[file.filename] = {
+                    "content_type": file.content_type,
+                    "status": "processed",
+                    "chars": meta.get("chars", len(extracted_text)),
+                    "pages": meta.get("pages", 1),
+                    "method": meta.get("method", "fast")
+                }
+                if extracted_text and not extracted_text.startswith("[Error") and not extracted_text.startswith("[Dokumen tidak"):
+                    extracted_attachment_texts.append(
+                        f"[Dokumen Pasien Terlampir: {file.filename}]\n{extracted_text.strip()}"
+                    )
+            except Exception as e:
+                logger.error(f"Failed to extract attachment {file.filename}: {e}")
+                attachments[file.filename] = {"content_type": file.content_type, "status": "error", "error": str(e)}
 
     message = ChatMessage(
         session_id=session_id,
@@ -721,6 +837,11 @@ async def stream_chat_message(
 
     # Build doctor-level knowledge filter (branch, dr_type, excluded categories)
     doctor_filter = await _build_doctor_filter_metadata(db, current_user)
+
+    # Effective query enriched with attachment text
+    effective_query = content
+    if extracted_attachment_texts:
+        effective_query = f"{content}\n\n" + "\n\n".join(extracted_attachment_texts)
 
     async def sse_generator():
         try:
@@ -758,7 +879,7 @@ async def stream_chat_message(
                 context_chunks = []
                 
                 async for chunk in pipeline.generate_answer_stream(
-                    query=content,
+                    query=effective_query,
                     top_k=5,
                     rerank=True,
                     history=history,

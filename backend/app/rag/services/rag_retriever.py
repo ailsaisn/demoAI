@@ -1,6 +1,7 @@
 import os
 import re
 import pickle
+from datetime import datetime, date, timezone
 from typing import List, Dict, Any, Optional
 from loguru import logger
 # pyrefly: ignore [missing-import]
@@ -9,6 +10,78 @@ from sentence_transformers import CrossEncoder
 
 from app.rag.services.interfaces import BaseVectorStoreAdapter
 from app.rag.config import settings
+
+
+# --- Temporal Filtering Helpers ---
+
+def parse_date_safely(date_val: Any) -> Optional[date]:
+    """Parses various date string formats safely into a date object."""
+    if not date_val:
+        return None
+    if isinstance(date_val, date) and not isinstance(date_val, datetime):
+        return date_val
+    if isinstance(date_val, datetime):
+        return date_val.date()
+    
+    date_str = str(date_val).strip()
+    if not date_str or date_str.lower() in ("null", "none", "undefined", ""):
+        return None
+
+    # Strip time part if present (e.g. 2026-08-31T00:00:00Z)
+    if "t" in date_str.lower():
+        date_str = date_str.split("T")[0].split("t")[0]
+    if " " in date_str:
+        date_str = date_str.split(" ")[0]
+
+    date_formats = [
+        "%Y-%m-%d",
+        "%Y/%m/%d",
+        "%d-%m-%Y",
+        "%d/%m/%Y",
+        "%Y.%m.%d",
+        "%d.%m.%Y"
+    ]
+    for fmt in date_formats:
+        try:
+            return datetime.strptime(date_str, fmt).date()
+        except ValueError:
+            continue
+    return None
+
+
+def is_chunk_valid_temporal(
+    metadata: Dict[str, Any], 
+    current_date: Optional[date] = None, 
+    include_expired: bool = False
+) -> bool:
+    """
+    Checks if a chunk is currently active and not expired.
+    - If include_expired is True: always returns True.
+    - If valid_until is present and valid_until < current_date: returns False (expired).
+    - If valid_from is present and current_date < valid_from: returns False (future/not yet active).
+    """
+    if include_expired:
+        return True
+
+    if not metadata:
+        return True
+
+    today = current_date or datetime.now(timezone.utc).date()
+
+    valid_until_str = metadata.get("valid_until") or metadata.get("expiry_date") or metadata.get("end_date")
+    if valid_until_str:
+        until_date = parse_date_safely(valid_until_str)
+        if until_date and until_date < today:
+            return False
+
+    valid_from_str = metadata.get("valid_from") or metadata.get("start_date")
+    if valid_from_str:
+        from_date = parse_date_safely(valid_from_str)
+        if from_date and today < from_date:
+            return False
+
+    return True
+
 
 # --- Local BM25 Index ---
 class BM25Index:
@@ -71,20 +144,33 @@ class BM25Index:
         self.bm25 = None
 
 
-    def search(self, query: str, top_k: int = 5, filter_metadata: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
+    def search(
+        self, 
+        query: str, 
+        top_k: int = 5, 
+        filter_metadata: Optional[Dict[str, Any]] = None,
+        include_expired: bool = False
+    ) -> List[Dict[str, Any]]:
         """
         Searches the corpus using BM25.
-        Applies metadata filtering before scoring if filter_metadata is provided.
+        Applies metadata filtering and temporal validity before scoring if filter_metadata is provided.
         """
         if not self.chunks:
             return []
 
-        # Step 1: Filter chunk candidates by metadata
+        today = datetime.now(timezone.utc).date()
+
+        # Step 1: Filter chunk candidates by metadata and temporal validity
         filtered_indices = []
         for idx, chunk in enumerate(self.chunks):
+            meta = chunk.get("metadata", {})
+            
+            # Check temporal validity for promo/dated documents
+            if not is_chunk_valid_temporal(meta, current_date=today, include_expired=include_expired):
+                continue
+
             match = True
             if filter_metadata:
-                meta = chunk.get("metadata", {})
                 for k, v in filter_metadata.items():
                     if k == "excluded_categories" and isinstance(v, list):
                         chunk_cats = meta.get("categories", [])
@@ -114,7 +200,7 @@ class BM25Index:
 
         # Step 2: Calculate BM25 scores
         # If we have a filter, build a temporary BM25 okapi index of just the filtered candidates
-        if filter_metadata and len(filtered_indices) < len(self.chunks):
+        if (filter_metadata or not include_expired) and len(filtered_indices) < len(self.chunks):
             filtered_corpus = [self.corpus[i] for i in filtered_indices]
             temp_bm25 = BM25Okapi(filtered_corpus)
             scores = temp_bm25.get_scores(tokenized_query)
@@ -274,7 +360,7 @@ class PromptContextBuilder:
     def build_context(hits: List[Dict[str, Any]]) -> str:
         """
         Builds a structured, numbered context string with source file, page, 
-        and section headers to pass into the LLM prompt.
+        section headers, and promotional period (if any) to pass into the LLM prompt.
         """
         if not hits:
             return "No relevant context found."
@@ -303,9 +389,16 @@ class PromptContextBuilder:
             image_url = metadata.get("image_url") or metadata.get("image")
             text = hit.get("text", "")
 
+            valid_from = metadata.get("valid_from")
+            valid_until = metadata.get("valid_until")
+            promo_header = ""
+            if valid_until or valid_from:
+                if valid_from and valid_until:
+                    promo_header = f" | Periode Promo: {valid_from} s/d {valid_until}"
+            kid = metadata.get("knowledge_id") or source_file
             img_header = f" | Image: {image_url}" if image_url else ""
             part = (
-                f"[{idx}] Source: {source_file} | Product: {product_name}{img_header} | Section: {section} | Page: {page}\n"
+                f"[{idx}] ID: {kid} | Source: {source_file} | Title: {product_name}{promo_header}{img_header} | Section: {section} | Page: {page}\n"
                 f"Content:\n{text.strip()}"
             )
             context_parts.append(part)
@@ -372,24 +465,26 @@ class HybridRetriever:
         filter_metadata: Optional[Dict[str, Any]] = None,
         rerank: bool = True,
         rerank_top_n: int = 3,
-        confidence_threshold: Optional[float] = None
+        confidence_threshold: Optional[float] = None,
+        include_expired: bool = False
     ) -> Dict[str, Any]:
         """
         Executes Advanced Retrieval Pipeline:
-        1. Dense Retrieval (Qdrant)
+        1. Dense Retrieval (PGVector)
         2. Sparse Retrieval (BM25)
         3. Reciprocal Rank Fusion (RRF)
-        4. Cross-Encoder Reranking (optional)
-        5. Prompt Context Generation
+        4. Temporal Validity Filtering (exclude expired promos if include_expired=False)
+        5. Cross-Encoder Reranking (optional)
+        6. Prompt Context Generation
         """
-        logger.debug(f"Retrieving for query: '{query}' with top_k={top_k}, metadata_filter={filter_metadata}")
+        logger.debug(f"Retrieving for query: '{query}' with top_k={top_k}, metadata_filter={filter_metadata}, include_expired={include_expired}")
 
         candidate_k = top_k * 2
 
         import concurrent.futures
         with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
             future_dense = executor.submit(self.vector_store.search, query, candidate_k, filter_metadata) if self.vector_store else None
-            future_sparse = executor.submit(self.bm25_index.search, query, candidate_k, filter_metadata) if self.bm25_index else None
+            future_sparse = executor.submit(self.bm25_index.search, query, candidate_k, filter_metadata, include_expired) if self.bm25_index else None
             
             dense_hits = future_dense.result() if future_dense else []
             sparse_hits = future_sparse.result() if future_sparse else []
@@ -413,36 +508,60 @@ class HybridRetriever:
                 deduplicated_hits.append(hit)
         logger.debug(f"Deduplicated fused hits from {len(fused_hits)} to {len(deduplicated_hits)} unique candidates.")
 
-        final_hits = deduplicated_hits
-        if rerank and self.reranker:
-            all_reranked = self.reranker.rerank(query, deduplicated_hits, top_n=len(deduplicated_hits))
+        # Temporal filtering: exclude expired promotional chunks when include_expired=False
+        today = datetime.now(timezone.utc).date()
+        active_hits = []
+        for hit in deduplicated_hits:
+            meta = hit.get("metadata", {})
+            if is_chunk_valid_temporal(meta, current_date=today, include_expired=include_expired):
+                active_hits.append(hit)
+            else:
+                p_name = meta.get("product_name") or meta.get("source_file", "unknown")
+                vu = meta.get("valid_until") or meta.get("expiry_date")
+                logger.info(f"Filtered out expired promotional chunk: '{p_name}' (valid_until: {vu})")
+
+        final_hits = active_hits
+        if rerank and self.reranker and active_hits:
+            all_reranked = self.reranker.rerank(query, active_hits, top_n=len(active_hits))
             
             query_lower = query.lower()
             usage_keywords = ["how to use", "directions", "cara pakai", "cara penggunaan", "aturan pakai", "dosis", "instruksi"]
             ingredients_keywords = ["kandungan", "ingredients", "bahan aktif", "komposisi", "active ingredients"]
-            
+            treatment_keywords = ["treatment", "tindakan", "prosedur", "perawatan", "peeling", "ekstraksi", "facial", "terapi", "laser"]
+            product_keywords = ["produk", "skincare", "serum", "krim", "cream", "facial wash", "cleanser", "sunscreen", "moisturizer", "sku"]
+
             is_usage_intent = any(k in query_lower for k in usage_keywords)
             is_ingredients_intent = any(k in query_lower for k in ingredients_keywords)
-            
+            is_treatment_intent = any(k in query_lower for k in treatment_keywords)
+            is_product_intent = any(k in query_lower for k in product_keywords)
+
             boosted_hits = []
             for hit in all_reranked:
                 updated_hit = hit.copy()
-                section_upper = updated_hit.get("metadata", {}).get("section", "").upper()
+                meta = updated_hit.get("metadata", {})
+                section_upper = meta.get("section", "").upper()
+                doc_type_upper = str(meta.get("document_type", "")).upper()
                 boost = 0.0
+                
                 if is_usage_intent and any(s in section_upper for s in ["HOW TO USE", "DIRECTIONS"]):
                     boost += 0.05
                 elif is_ingredients_intent and any(s in section_upper for s in ["INGREDIENT", "KANDUNGAN", "KOMPOSISI"]):
                     boost += 0.05
-                
+                    
+                if is_treatment_intent and (doc_type_upper == "TREATMENT" or any(s in section_upper for s in ["TREATMENT", "PERAWATAN", "TINDAKAN", "PROSEDUR", "PROTOKOL"])):
+                    boost += 0.10
+                elif is_product_intent and (doc_type_upper == "PRODUCT" or any(s in section_upper for s in ["PRODUCT", "PRODUK", "KATALOG", "SKINCARE"])):
+                    boost += 0.05
+
                 if boost > 0:
                     updated_hit["rerank_score"] = updated_hit.get("rerank_score", 0.0) + boost
-                    logger.debug(f"Applied intent boost of +{boost} to section '{section_upper}' (new score: {updated_hit['rerank_score']:.4f})")
+                    logger.debug(f"Applied intent boost of +{boost} to section '{section_upper}' / doc_type '{doc_type_upper}' (new score: {updated_hit['rerank_score']:.4f})")
                 boosted_hits.append(updated_hit)
-                
+
             final_hits = sorted(boosted_hits, key=lambda h: h.get("rerank_score", 0.0), reverse=True)[:rerank_top_n]
             logger.debug(f"Reranking and intent boosting completed. Returned top {len(final_hits)} chunks.")
         else:
-            final_hits = deduplicated_hits[:top_k]
+            final_hits = active_hits[:top_k]
 
         threshold = confidence_threshold if confidence_threshold is not None else settings.rerank_confidence_threshold
         if rerank and self.reranker and final_hits:

@@ -1,11 +1,10 @@
 from loguru import logger
-from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Form, Request, BackgroundTasks
+from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Form, Request, BackgroundTasks, Query
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, and_, func
 from app.models.category import Category, UserCategoryExclusion
 from app.models.branch import UserBranch
-from sqlalchemy import select, and_, func
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 import uuid
 import json
 import os
@@ -14,7 +13,12 @@ from app.core.database import get_db
 from app.api.dependencies import get_current_user, RequireAccess
 from app.models.user import User, UserType
 from app.models.knowledge import Knowledge, KnowledgeStatus, KnowledgeType
-from app.schemas.knowledge import KnowledgeCreate, KnowledgeUpdateStatus, KnowledgeResponse
+from app.models.project import Project
+from app.models.chat import ChatSession, ChatMessage as DBChatMessage, ChatRole, ChatStatus
+from app.schemas.knowledge import (
+    KnowledgeCreate, KnowledgeUpdateStatus, KnowledgeResponse, KnowledgeProjectUpdate,
+    GeneralChatSessionResponse, GeneralChatMessageItem, GeneralChatMessageSendRequest
+)
 from app.services.token_service import check_ingestion_quota, record_ingestion_token_usage
 from datetime import datetime, timezone
 
@@ -31,9 +35,12 @@ from app.rag.router import (
     resolve_pending_file,
     resolve_approved_file,
     synthesize_batch_executive_summary,
-    chat_endpoint
+    chat_endpoint,
+    query_general_endpoint,
+    QueryGeneralRequest,
+    QueryGeneralResponse
 )
-from app.rag.schemas import EditApprovedDocumentRequest, RefineRequest, ChatRequest, ChatResponse, UserContext
+from app.rag.schemas import EditApprovedDocumentRequest, RefineRequest, ChatMessage, ChatRequest, ChatResponse, UserContext
 
 router = APIRouter(tags=["Knowledge"])
 
@@ -46,13 +53,180 @@ async def get_ingestion_quota_endpoint(
     _, quota_info = await check_ingestion_quota(db)
     return quota_info
 
+@router.post("/general-session", response_model=GeneralChatSessionResponse)
+@router.post("/general-session/", response_model=GeneralChatSessionResponse)
+async def create_general_chat_session(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(RequireAccess("knowledge:read"))
+):
+    """Create a new persistent General Knowledge Assistant chat session."""
+    session = ChatSession(
+        user_id=current_user.id,
+        session_type="GENERAL_ASSISTANT",
+        status=ChatStatus.ACTIVE
+    )
+    db.add(session)
+    await db.commit()
+    await db.refresh(session)
+    return GeneralChatSessionResponse(
+        id=session.id,
+        user_id=session.user_id,
+        session_type=session.session_type,
+        status=session.status.value,
+        messages=[],
+        created_at=session.created_at,
+        updated_at=session.updated_at
+    )
+
+@router.get("/general-session/{session_id}", response_model=GeneralChatSessionResponse)
+@router.get("/general-session/{session_id}/", response_model=GeneralChatSessionResponse)
+async def get_general_chat_session(
+    session_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(RequireAccess("knowledge:read"))
+):
+    """Retrieve saved messages for a persistent General Knowledge Assistant session."""
+    stmt = select(ChatSession).where(
+        ChatSession.id == session_id,
+        ChatSession.session_type == "GENERAL_ASSISTANT"
+    )
+    res = await db.execute(stmt)
+    session = res.scalar_one_or_none()
+    if not session:
+        raise HTTPException(status_code=404, detail="General chat session not found")
+
+    msg_stmt = select(DBChatMessage).where(
+        DBChatMessage.session_id == session_id
+    ).order_by(DBChatMessage.created_at.asc())
+    msg_res = await db.execute(msg_stmt)
+    db_msgs = msg_res.scalars().all()
+
+    formatted_msgs = []
+    for m in db_msgs:
+        att = m.attachments or {}
+        formatted_msgs.append(GeneralChatMessageItem(
+            id=m.id,
+            role=m.role.value.lower(),
+            content=m.content,
+            action=att.get("action"),
+            target_knowledge_id=att.get("target_knowledge_id"),
+            total_found=att.get("total_found"),
+            attachments=att,
+            created_at=m.created_at
+        ))
+
+    return GeneralChatSessionResponse(
+        id=session.id,
+        user_id=session.user_id,
+        session_type=session.session_type,
+        status=session.status.value,
+        messages=formatted_msgs,
+        created_at=session.created_at,
+        updated_at=session.updated_at
+    )
+
+@router.post("/general-session/{session_id}/messages", response_model=GeneralChatSessionResponse)
+@router.post("/general-session/{session_id}/messages/", response_model=GeneralChatSessionResponse)
+async def send_general_chat_message(
+    session_id: uuid.UUID,
+    payload: GeneralChatMessageSendRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(RequireAccess("knowledge:read")),
+    pipeline = Depends(get_generation_pipeline),
+    vector_store = Depends(get_vector_store),
+    bm25 = Depends(get_bm25_index)
+):
+    """Append message to persistent session, execute RAG search/management, and persist response in DB."""
+    stmt = select(ChatSession).where(
+        ChatSession.id == session_id,
+        ChatSession.session_type == "GENERAL_ASSISTANT"
+    )
+    res = await db.execute(stmt)
+    session = res.scalar_one_or_none()
+    if not session:
+        raise HTTPException(status_code=404, detail="General chat session not found")
+
+    # Fetch existing conversation history
+    msg_stmt = select(DBChatMessage).where(
+        DBChatMessage.session_id == session_id
+    ).order_by(DBChatMessage.created_at.asc())
+    msg_res = await db.execute(msg_stmt)
+    db_msgs = msg_res.scalars().all()
+
+    history_payload = [
+        {"role": m.role.value.lower(), "content": m.content}
+        for m in db_msgs
+    ]
+
+    # 1. Save User Message in PostgreSQL
+    user_db_msg = DBChatMessage(
+        session_id=session_id,
+        role=ChatRole.USER,
+        content=payload.prompt,
+        attachments=payload.attachments
+    )
+    db.add(user_db_msg)
+    await db.flush()
+
+    # 2. Run Query General RAG endpoint
+    rag_request = QueryGeneralRequest(
+        prompt=payload.prompt,
+        history=history_payload
+    )
+    ai_res = await query_general_endpoint(
+        request=rag_request,
+        pipeline=pipeline,
+        vector_store=vector_store,
+        bm25=bm25
+    )
+
+    # 3. Save Assistant Message in PostgreSQL
+    assistant_att = {
+        "action": ai_res.action,
+        "target_knowledge_id": ai_res.target_knowledge_id,
+        "total_found": ai_res.total_found
+    }
+    assistant_db_msg = DBChatMessage(
+        session_id=session_id,
+        role=ChatRole.ASSISTANT,
+        content=ai_res.answer,
+        attachments=assistant_att
+    )
+    db.add(assistant_db_msg)
+    await db.commit()
+
+    return await get_general_chat_session(session_id, db, current_user)
+
+@router.post("/query-general", response_model=QueryGeneralResponse)
+@router.post("/query-general/", response_model=QueryGeneralResponse)
+async def knowledge_query_general(
+    request: QueryGeneralRequest,
+    current_user: User = Depends(RequireAccess("knowledge:read")),
+    pipeline = Depends(get_generation_pipeline),
+    vector_store = Depends(get_vector_store),
+    bm25 = Depends(get_bm25_index)
+):
+    """
+    Main Backend wrapper for Query General Endpoint — Knowledge Base Explorer, Editor & Deletion via Natural Language Prompt.
+    """
+    return await query_general_endpoint(
+        request=request,
+        pipeline=pipeline,
+        vector_store=vector_store,
+        bm25=bm25
+    )
+
 @router.get("/", response_model=List[KnowledgeResponse])
 async def list_knowledge(
+    project_id: Optional[uuid.UUID] = Query(None, description="Optional project filter"),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(RequireAccess("knowledge:read"))
 ):
     # 1. Fetch DB records
-    stmt = select(Knowledge).where(Knowledge.deleted_at.is_(None)).order_by(Knowledge.created_at.desc())
+    stmt = select(Knowledge).where(Knowledge.deleted_at.is_(None))
+    if project_id:
+        stmt = stmt.where(Knowledge.project_id == project_id)
+    stmt = stmt.order_by(Knowledge.created_at.desc())
     result = await db.execute(stmt)
     db_items = list(result.scalars().all())
 
@@ -102,6 +276,7 @@ async def list_knowledge(
             ai_confidence=item.ai_confidence,
             uploaded_by=item.uploaded_by,
             approved_by=item.approved_by,
+            project_id=item.project_id,
             metadata_=item_metadata,
             created_at=item.created_at,
             updated_at=item.updated_at
@@ -184,25 +359,37 @@ async def get_knowledge(
     knowledge = result.scalar_one_or_none()
     
     if knowledge:
-        # OUT-OF-BAND SYNC: Fetch latest AI summary from RAG JSON files
+        # OUT-OF-BAND SYNC: Fetch latest AI summary & metadata from RAG JSON files
         try:
             target_file = resolve_pending_file(str(knowledge_id)) or resolve_approved_file(str(knowledge_id))
             if target_file and os.path.exists(target_file):
                 with open(target_file, "r", encoding="utf-8") as f:
                     data = json.load(f)
                 latest_summary = data.get("summary", "")
+                latest_title = data.get("title", "")
+                
+                updated = False
                 if latest_summary and knowledge.ai_summary != latest_summary:
                     knowledge.ai_summary = latest_summary
+                    updated = True
+                if latest_title and knowledge.title != latest_title:
+                    knowledge.title = latest_title
+                    updated = True
+                if updated:
                     await db.commit()
                     await db.refresh(knowledge)
-                # Inject full RAG data into metadata manually
-                knowledge_dict = KnowledgeResponse.model_validate(knowledge).model_dump(by_alias=False)
-                knowledge_dict["metadata_"] = data
-                return knowledge_dict
+                
+                if isinstance(data, dict):
+                    merged_meta = dict(knowledge.metadata_) if isinstance(knowledge.metadata_, dict) else {}
+                    merged_meta.update(data)
+                    # Ensure history is preserved
+                    if "history" not in data and "history" in merged_meta:
+                        data["history"] = merged_meta["history"]
+                    if "chat_history" in merged_meta and "chat_history" not in data:
+                        data["chat_history"] = merged_meta["chat_history"]
+                    knowledge.metadata_ = data
         except Exception as e:
-            import traceback
-            traceback.print_exc()
-            print(f"Error loading RAG JSON: {e}")
+            logger.warning(f"Error loading RAG JSON: {e}")
             
         return knowledge
 
@@ -277,6 +464,7 @@ async def get_knowledge_batch(
     """Fetch all knowledge documents uploaded in a specific batch."""
     from sqlalchemy import or_
     stmt = select(Knowledge).where(
+        Knowledge.deleted_at.is_(None),
         or_(
             Knowledge.metadata_.op("->>")("batch_id") == batch_id,
             Knowledge.metadata_.op("->>")("upload_batch_id") == batch_id
@@ -285,8 +473,19 @@ async def get_knowledge_batch(
     result = await db.execute(stmt)
     docs = list(result.scalars().all())
     
+    # Query soft-deleted IDs for this batch so they are never resurrected by directory scanning
+    del_stmt = select(Knowledge.id).where(
+        Knowledge.deleted_at.is_not(None),
+        or_(
+            Knowledge.metadata_.op("->>")("batch_id") == batch_id,
+            Knowledge.metadata_.op("->>")("upload_batch_id") == batch_id
+        )
+    )
+    del_res = await db.execute(del_stmt)
+    deleted_ids = {str(d_id) for d_id in del_res.scalars().all()}
+    
     enriched_docs = []
-    seen_ids = set()
+    seen_ids = set(deleted_ids)
 
     for knowledge in docs:
         seen_ids.add(str(knowledge.id))
@@ -392,6 +591,87 @@ async def get_knowledge_batch(
 
     return enriched_docs
 
+@router.post("/batch/{batch_id}/approve")
+async def approve_batch_knowledge(
+    request: Request,
+    batch_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(RequireAccess("knowledge:write"))
+):
+    """Approve all pending staged documents in a batch ingestion session and index them into vector & BM25 search databases."""
+    pipeline = get_ingestion_pipeline(request)
+    bm25 = get_bm25_index(request)
+
+    from sqlalchemy import or_
+    stmt = select(Knowledge).where(
+        Knowledge.deleted_at.is_(None),
+        or_(
+            Knowledge.metadata_.op("->>")("batch_id") == batch_id,
+            Knowledge.metadata_.op("->>")("upload_batch_id") == batch_id
+        )
+    )
+    result = await db.execute(stmt)
+    db_docs = list(result.scalars().all())
+
+    # Scan pending directory for any files matching batch_id
+    pending_dir = "data/pending"
+    target_ids = set()
+    for d in db_docs:
+        target_ids.add(str(d.id))
+
+    if os.path.exists(pending_dir):
+        for f in os.listdir(pending_dir):
+            if f.endswith(".json") and f != "bm25_index.pkl":
+                fp = os.path.join(pending_dir, f)
+                try:
+                    with open(fp, "r", encoding="utf-8") as jf:
+                        data = json.load(jf)
+                    if isinstance(data, dict):
+                        b_id = data.get("batch_id") or data.get("upload_batch_id")
+                        if not b_id and data.get("chunks"):
+                            b_id = data["chunks"][0].get("metadata", {}).get("batch_id") or data["chunks"][0].get("metadata", {}).get("upload_batch_id")
+                        if b_id == batch_id:
+                            k_id = data.get("knowledge_id") or f.replace("_parsed.json", "").replace(".json", "")
+                            if k_id:
+                                target_ids.add(str(k_id))
+                except Exception:
+                    pass
+
+    if not target_ids:
+        raise HTTPException(status_code=404, detail=f"No documents found for batch '{batch_id}'.")
+
+    # Read pending histories before approval moves/deletes files
+    doc_histories = {}
+    for tid in target_ids:
+        p_file = resolve_pending_file(tid)
+        if p_file and os.path.exists(p_file):
+            try:
+                with open(p_file, "r", encoding="utf-8") as f:
+                    s_data = json.load(f)
+                    if s_data.get("history"):
+                        doc_histories[tid] = s_data.get("history")
+            except Exception:
+                pass
+
+    ids_param = ",".join(target_ids)
+    res = await approve_document(ids_param, pipeline=pipeline, bm25=bm25)
+
+    # Sync DB statuses
+    from sqlalchemy.orm.attributes import flag_modified
+    for doc in db_docs:
+        doc.status = KnowledgeStatus.APPROVED
+        doc.approved_by = current_user.id
+        doc_str_id = str(doc.id)
+        if doc_str_id in doc_histories:
+            if doc.metadata_ is None:
+                doc.metadata_ = {}
+            doc.metadata_["history"] = doc_histories[doc_str_id]
+            doc.metadata_["chat_history"] = doc_histories[doc_str_id]
+            flag_modified(doc, "metadata_")
+
+    await db.commit()
+    return res
+
 @router.post("/chat", response_model=ChatResponse)
 async def knowledge_chat(
     request: ChatRequest,
@@ -425,7 +705,19 @@ async def knowledge_chat(
         excluded_categories=excluded_cats
     )
 
-    return await chat_endpoint(request=request, pipeline=pipeline)
+    from app.rag.router import run_chat_pipeline
+    return await run_chat_pipeline(
+        query=request.query,
+        attachment_text=request.attachment_text,
+        doctor_name=current_user.name or request.doctor_name,
+        user_context=request.user_context,
+        history=request.history,
+        categories=request.categories,
+        top_k=request.top_k,
+        knowledge_id=request.knowledge_id,
+        batch_id=request.batch_id,
+        pipeline=pipeline
+    )
 
 ALLOWED_MIME_TYPES = {
     "application/pdf",
@@ -443,7 +735,7 @@ async def upload_knowledge_file(
     request: Request,
     background_tasks: BackgroundTasks,
     file: List[UploadFile] = File(...),
-    category_type: str = Form("Product"),
+    project_id: Optional[uuid.UUID] = Form(None),
     prompt: Optional[str] = Form(None),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(RequireAccess("knowledge:write")),
@@ -472,14 +764,31 @@ async def upload_knowledge_file(
         documents_count=len(upload_list)
     )
 
-    return await ingest_document(
+    ingest_res = await ingest_document(
         background_tasks=background_tasks,
         file=file,
-        category_type=category_type,
         prompt=prompt,
         pipeline=pipeline,
         llm=llm
     )
+
+    if project_id and isinstance(ingest_res, dict):
+        docs = ingest_res.get("documents", [])
+        for doc in docs:
+            k_id = doc.get("knowledge_id")
+            if k_id:
+                try:
+                    k_uuid = uuid.UUID(str(k_id))
+                    stmt = select(Knowledge).where(Knowledge.id == k_uuid)
+                    res = await db.execute(stmt)
+                    k_obj = res.scalar_one_or_none()
+                    if k_obj:
+                        k_obj.project_id = project_id
+                        await db.commit()
+                except Exception:
+                    pass
+
+    return ingest_res
 
 @router.put("/{knowledge_id}/status", response_model=KnowledgeResponse)
 @router.patch("/{knowledge_id}/status", response_model=KnowledgeResponse)
@@ -500,7 +809,7 @@ async def update_knowledge_status(
         
         file_name = "document.pdf"
         summary = ""
-        k_type = KnowledgeType.PRODUCT
+        k_type = KnowledgeType.GENERAL
         
         if target_file and os.path.exists(target_file):
             try:
@@ -509,11 +818,6 @@ async def update_knowledge_status(
                 if isinstance(data, dict):
                     file_name = data.get("file_name", file_name)
                     summary = data.get("summary", "")
-                    raw_type = str(data.get("type", "PRODUCT")).upper()
-                    if "TREATMENT" in raw_type:
-                        k_type = KnowledgeType.TREATMENT
-                    elif "PROMO" in raw_type:
-                        k_type = KnowledgeType.PROMOTIONAL
             except Exception:
                 pass
                 
@@ -551,17 +855,34 @@ async def approve_knowledge(
     pipeline = get_ingestion_pipeline(request)
     bm25 = get_bm25_index(request)
     
+    # Read pending file history before it gets moved/deleted by approve_document
+    pending_file = resolve_pending_file(str(knowledge_id))
+    staged_history = []
+    if pending_file and os.path.exists(pending_file):
+        try:
+            with open(pending_file, "r", encoding="utf-8") as f:
+                staged_data = json.load(f)
+                staged_history = staged_data.get("history", [])
+        except Exception:
+            pass
+
     res = await approve_document(str(knowledge_id), pipeline=pipeline, bm25=bm25)
     
-    # Ensure DB status is updated
+    # Ensure DB status is updated and conversation history is retained in metadata_
     stmt = select(Knowledge).where(Knowledge.id == knowledge_id)
     result = await db.execute(stmt)
     k_entry = result.scalar_one_or_none()
     if k_entry:
         k_entry.status = KnowledgeStatus.APPROVED
         k_entry.approved_by = current_user.id
+        if k_entry.metadata_ is None:
+            k_entry.metadata_ = {}
+        if staged_history:
+            k_entry.metadata_["history"] = staged_history
+            k_entry.metadata_["chat_history"] = staged_history
+        from sqlalchemy.orm.attributes import flag_modified
+        flag_modified(k_entry, "metadata_")
         await db.commit()
-
 
     return res
 
@@ -624,23 +945,224 @@ async def edit_knowledge(
 async def refine_knowledge(
     request: Request,
     knowledge_id: uuid.UUID,
-    payload: RefineRequest,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(RequireAccess("knowledge:write")),
     llm: BaseLLMAdapter = Depends(get_llm)
 ):
+    """
+    Refines either a pending (On review) or approved document using natural language prompt 
+    and optional attached file upload (PDF/Docx/TXT/Image).
+    """
+    content_type = request.headers.get("content-type", "")
+    prompt = ""
+    history = []
+    file_attachment: Optional[UploadFile] = None
+
+    if "multipart/form-data" in content_type:
+        form = await request.form()
+        prompt = str(form.get("prompt", "") or "")
+        history_raw = form.get("history", "[]")
+        if isinstance(history_raw, str):
+            try:
+                history_json = json.loads(history_raw)
+                history = [
+                    ChatMessage(role=m.get("role", "user"), content=m.get("content", ""))
+                    if isinstance(m, dict) else m
+                    for m in history_json
+                ]
+            except Exception:
+                history = []
+        elif isinstance(history_raw, list):
+            history = [
+                ChatMessage(role=m.get("role", "user"), content=m.get("content", ""))
+                if isinstance(m, dict) else m
+                for m in history_raw
+            ]
+            
+        file_obj = form.get("file")
+        if isinstance(file_obj, UploadFile):
+            file_attachment = file_obj
+    else:
+        try:
+            body = await request.json()
+            prompt = str(body.get("prompt", "") or "")
+            history_raw = body.get("history", [])
+            history = [
+                ChatMessage(role=m.get("role", "user"), content=m.get("content", ""))
+                if isinstance(m, dict) else m
+                for m in history_raw
+            ]
+        except Exception:
+            prompt = ""
+            history = []
+
+    payload = RefineRequest(prompt=prompt, history=history)
+
+    # Process attached file if provided
+    if file_attachment:
+        try:
+            temp_dir = "data/temp"
+            os.makedirs(temp_dir, exist_ok=True)
+            attached_file_name = getattr(file_attachment, "filename", "attached_doc")
+            temp_file_path = os.path.join(temp_dir, f"refine_supp_{knowledge_id}_{attached_file_name}")
+            content_bytes = await file_attachment.read()
+            with open(temp_file_path, "wb") as f:
+                f.write(content_bytes)
+
+            from app.rag.utils.parser import DocumentParser
+            parser = DocumentParser()
+            parse_res = parser.parse_file(temp_file_path)
+            extracted_text = ""
+            if parse_res:
+                if parse_res.pages:
+                    extracted_pages = [p.get("text", "") for p in parse_res.pages if p.get("text")]
+                    extracted_text = "\n\n".join(extracted_pages)
+                elif parse_res.docling_doc:
+                    try:
+                        extracted_text = parse_res.docling_doc.export_to_markdown()
+                    except Exception:
+                        extracted_text = ""
+
+            if os.path.exists(temp_file_path):
+                os.remove(temp_file_path)
+
+            if extracted_text:
+                file_note = (
+                    f"\n\n[SUPPLEMENTARY ATTACHED FILE CONTENT: '{attached_file_name}']\n"
+                    f"{extracted_text}\n"
+                    f"[END OF ATTACHED FILE CONTENT]"
+                )
+                payload.prompt = f"{payload.prompt}\n{file_note}" if payload.prompt else file_note
+                logger.info(f"📄 Successfully attached file '{attached_file_name}' ({len(extracted_text)} chars) to refine request for knowledge_id='{knowledge_id}'")
+
+            await file_attachment.seek(0)
+        except Exception as file_err:
+            logger.warning(f"Failed to process attached file in refine_knowledge: {file_err}")
+
     p_file = resolve_pending_file(str(knowledge_id))
     a_file = resolve_approved_file(str(knowledge_id))
     
+    # DB fallback if JSON file is missing from disk
+    if not p_file and not a_file:
+        stmt = select(Knowledge).where(Knowledge.id == knowledge_id)
+        db_res = await db.execute(stmt)
+        k_entry = db_res.scalar_one_or_none()
+        if k_entry:
+            if k_entry.status == KnowledgeStatus.APPROVED:
+                a_file = os.path.join("data/output", f"{knowledge_id}.json")
+                os.makedirs("data/output", exist_ok=True)
+                doc_data = {
+                    "knowledge_id": str(knowledge_id),
+                    "file_name": k_entry.file_name or str(knowledge_id),
+                    "title": k_entry.title or k_entry.file_name or "Knowledge Document",
+                    "status": "Approved",
+                    "summary": k_entry.ai_summary or "",
+                    "categories": k_entry.metadata_.get("categories", []) if k_entry.metadata_ else [],
+                    "visibility_settings": k_entry.metadata_.get("visibility_settings", {"clinics": ["all"], "doctor_types": ["all"], "doctors": ["all"]}) if k_entry.metadata_ else {"clinics": ["all"], "doctor_types": ["all"], "doctors": ["all"]},
+                    "chunks": k_entry.metadata_.get("chunks", [{"text": k_entry.ai_summary or k_entry.title or "", "metadata": {"knowledge_id": str(knowledge_id)}}]) if k_entry.metadata_ else [{"text": k_entry.ai_summary or k_entry.title or "", "metadata": {"knowledge_id": str(knowledge_id)}}]
+                }
+                with open(a_file, "w", encoding="utf-8") as f:
+                    json.dump(doc_data, f, indent=4, ensure_ascii=False)
+            else:
+                p_file = os.path.join("data/pending", f"{knowledge_id}.json")
+                os.makedirs("data/pending", exist_ok=True)
+                doc_data = {
+                    "knowledge_id": str(knowledge_id),
+                    "file_name": k_entry.file_name or str(knowledge_id),
+                    "title": k_entry.title or k_entry.file_name or "Knowledge Document",
+                    "status": "On review",
+                    "summary": k_entry.ai_summary or "",
+                    "chunks": k_entry.metadata_.get("chunks", [{"text": k_entry.ai_summary or k_entry.title or "", "metadata": {"knowledge_id": str(knowledge_id)}}]) if k_entry.metadata_ else [{"text": k_entry.ai_summary or k_entry.title or "", "metadata": {"knowledge_id": str(knowledge_id)}}]
+                }
+                with open(p_file, "w", encoding="utf-8") as f:
+                    json.dump(doc_data, f, indent=4, ensure_ascii=False)
+
     if p_file:
-        return await refine_pending_document(str(knowledge_id), payload, llm)
+        res = await refine_pending_document(str(knowledge_id), payload, llm, file_attachment=file_attachment)
     elif a_file:
         pipeline = get_ingestion_pipeline(request)
         bm25 = get_bm25_index(request)
         vector_store = get_vector_store(request)
-        return await refine_approved_document(str(knowledge_id), payload, pipeline, bm25, vector_store, llm)
+        res = await refine_approved_document(str(knowledge_id), payload, pipeline, bm25, vector_store, llm, file_attachment=file_attachment)
     else:
         raise HTTPException(status_code=404, detail="Document not found for refinement.")
+
+    # Synchronize DB record with refined output
+    try:
+        stmt = select(Knowledge).where(Knowledge.id == knowledge_id)
+        db_res = await db.execute(stmt)
+        k_entry = db_res.scalar_one_or_none()
+        if k_entry and isinstance(res, dict):
+            if res.get("title"):
+                k_entry.title = res.get("title")
+            if res.get("summary"):
+                k_entry.ai_summary = res.get("summary")
+            if k_entry.metadata_ is None:
+                k_entry.metadata_ = {}
+            if res.get("categories") is not None:
+                k_entry.metadata_["categories"] = res.get("categories")
+            elif res.get("suggested_categories") is not None:
+                k_entry.metadata_["categories"] = [c.get("name") if isinstance(c, dict) else str(c) for c in res.get("suggested_categories", [])]
+            if res.get("visibility_settings") is not None:
+                k_entry.metadata_["visibility_settings"] = res.get("visibility_settings")
+            if res.get("chunks") is not None:
+                k_entry.metadata_["chunks"] = res.get("chunks")
+
+            # Persist chat turns in metadata
+            existing_history = k_entry.metadata_.get("history") or k_entry.metadata_.get("chat_history") or []
+            if not isinstance(existing_history, list):
+                existing_history = []
+            
+            new_history = list(existing_history)
+            if payload.prompt:
+                new_history.append({
+                    "role": "user",
+                    "content": payload.prompt,
+                    "created_at": datetime.now(timezone.utc).isoformat()
+                })
+            if res.get("summary"):
+                new_history.append({
+                    "role": "assistant",
+                    "content": res.get("summary"),
+                    "created_at": datetime.now(timezone.utc).isoformat()
+                })
+
+            k_entry.metadata_["history"] = new_history
+            k_entry.metadata_["chat_history"] = new_history
+
+            from sqlalchemy.orm.attributes import flag_modified
+            flag_modified(k_entry, "metadata_")
+            await db.commit()
+    except Exception as sync_err:
+        logger.warning(f"Failed to sync refined knowledge to DB row: {sync_err}")
+
+    return res
+
+@router.put("/{knowledge_id}/project", response_model=KnowledgeResponse)
+@router.patch("/{knowledge_id}/project", response_model=KnowledgeResponse)
+async def update_knowledge_project(
+    knowledge_id: uuid.UUID,
+    payload: KnowledgeProjectUpdate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(RequireAccess("knowledge:write"))
+):
+    """Attach or detach a knowledge document to/from a project workspace."""
+    stmt = select(Knowledge).where(Knowledge.id == knowledge_id, Knowledge.deleted_at.is_(None))
+    result = await db.execute(stmt)
+    knowledge = result.scalar_one_or_none()
+    if not knowledge:
+        raise HTTPException(status_code=404, detail="Knowledge document not found")
+    
+    if payload.project_id:
+        p_stmt = select(Project).where(Project.id == payload.project_id, Project.deleted_at.is_(None))
+        p_res = await db.execute(p_stmt)
+        if not p_res.scalar_one_or_none():
+            raise HTTPException(status_code=404, detail="Project not found")
+            
+    knowledge.project_id = payload.project_id
+    await db.commit()
+    await db.refresh(knowledge)
+    return knowledge
 
 @router.delete("/{knowledge_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_knowledge(

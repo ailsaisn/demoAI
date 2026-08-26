@@ -19,10 +19,11 @@ interface BatchKnowledgeTabContentProps {
 	setIsEditMode: (v: boolean) => void;
 	headerNode?: React.ReactNode;
 	preHeaderNode?: React.ReactNode;
+	onDeleteSuccess?: (deletedId: string) => void;
 }
 
 export const BatchKnowledgeTabContent = forwardRef<BatchTabHandle, BatchKnowledgeTabContentProps>(
-	({ knowledgeId, isEditMode, setIsEditMode, headerNode, preHeaderNode }, ref) => {
+	({ knowledgeId, isEditMode, setIsEditMode, headerNode, preHeaderNode, onDeleteSuccess }, ref) => {
 		const { data, isLoading, error } = useKnowledgeDetail(knowledgeId);
 		const editKnowledge = useEditKnowledge();
 		const deleteMutation = useDeleteKnowledge();
@@ -57,7 +58,11 @@ export const BatchKnowledgeTabContent = forwardRef<BatchTabHandle, BatchKnowledg
 		const handleDelete = async () => {
 			await deleteMutation.mutateAsync(knowledgeId);
 			toast.success("Knowledge deleted successfully");
-			router.push("/dashboard/knowledge");
+			if (onDeleteSuccess) {
+				onDeleteSuccess(knowledgeId);
+			} else {
+				router.push("/dashboard/knowledge");
+			}
 		};
 
 		useImperativeHandle(ref, () => ({

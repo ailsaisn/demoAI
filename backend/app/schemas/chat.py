@@ -26,6 +26,7 @@ class ChatSessionResponse(BaseModel):
     feedback: Optional[str] = None
     has_data_issue: bool = False
     is_feedback_read: bool = False
+    allow_file_attachments: Optional[bool] = False
     created_at: datetime
     updated_at: datetime
     
@@ -36,7 +37,17 @@ class ChatHistoryResponse(ChatSessionResponse):
     messages: int
     doctor: str
     branch: str
+    doctor_type: Optional[str] = None
     
+    model_config = ConfigDict(from_attributes=True)
+
+class ChatStatsResponse(BaseModel):
+    doctors_reached: int
+    total_sessions: int
+    positive_ratings: int
+    negative_ratings: int
+    missing_knowledge: int
+
     model_config = ConfigDict(from_attributes=True)
 
 class ChatMessageCreate(BaseModel):

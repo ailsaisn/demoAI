@@ -19,7 +19,8 @@ from cryptography.hazmat.primitives import serialization
 KEYS_DIR = os.path.join(os.path.dirname(__file__), "keys")
 PRIVATE_KEY_PATH = os.path.join(KEYS_DIR, "private_key.pem")
 
-BACKEND_WEBHOOK_URL = os.getenv("BACKEND_WEBHOOK_URL", "http://localhost:8000/api/webhooks/cis")
+BACKEND_URL = os.getenv("BACKEND_URL", "http://localhost:8000").rstrip("/")
+BACKEND_WEBHOOK_URL = os.getenv("BACKEND_WEBHOOK_URL", f"{BACKEND_URL}/api/webhooks/cis")
 
 def load_private_key():
     if not os.path.exists(PRIVATE_KEY_PATH):
@@ -58,6 +59,13 @@ MOCK_BRANCHES = [
         "ecosystem": "Erha",
         "status": "1"
     },
+    {
+            "id": 839,
+            "name": "Klinik Utama Erha Ultimate TRG",
+            "code": "012",
+            "ecosystem": "Erha",
+            "status": "1"
+        },
     {
         "id": 847,
         "name": "Klinik Utama Dermies BSD",
@@ -106,6 +114,23 @@ MOCK_DOCTORS = [
                 "status": "1"
             }
         ]
+    },
+    {
+        "id": 3,
+        "name": "dr Clarissa SpDV",
+        "user_type": "1",
+        "user_type_name": "Doctor SpKK",
+        "nik": "dr00789",
+        "email": "drclarissa@gmail.com",
+        "ecosystem": "Erha",
+        "status": "1",
+        "user_branchs": [
+            {
+                "branch_id": 839,
+                "branch_code": "012",
+                "status": "1"
+            }
+        ]
     }
 ]
 
@@ -123,6 +148,13 @@ MOCK_USER_BRANCHES = [
         "branch_code": "034",
         "status": "1",
         "ecosystem": "Dermies"
+    },
+    {
+        "user_id": 3,
+        "branch_id": 839,
+        "branch_code": "012",
+        "status": "1",
+        "ecosystem": "Erha"
     }
 ]
 
@@ -286,26 +318,73 @@ async def forward_to_backend(request: Request, method: str, path: str):
         user_id = payload.get("sub")
         if not user_id:
             raise HTTPException(status_code=401, detail="Invalid token payload")
-    except Exception as e:
+    except Exception:
         raise HTTPException(status_code=401, detail="Invalid token")
 
     body_bytes = await request.body()
-    signature = sign_proxy_payload(body_bytes, user_id)
+    signature = sign_proxy_payload(body_bytes, str(user_id))
 
-    target_url = f"http://backend:8000{path}"
+    target_url = f"{BACKEND_URL}{path}"
     
     headers = {
         "X-Signature": signature,
-        "X-User-Id": user_id,
+        "X-User-Id": str(user_id),
         "Content-Type": request.headers.get("content-type") or "application/json"
     }
 
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        resp = await client.request(method, target_url, content=body_bytes, headers=headers)
-        from fastapi.responses import Response
-        # Filter out hop-by-hop headers and transfer-encoding before returning
-        filtered_headers = {k: v for k, v in resp.headers.items() if k.lower() not in ["transfer-encoding", "content-length"]}
-        return Response(content=resp.content, status_code=resp.status_code, headers=filtered_headers)
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.request(method, target_url, content=body_bytes, headers=headers)
+            from fastapi.responses import Response
+            # Filter out hop-by-hop headers and transfer-encoding before returning
+            filtered_headers = {k: v for k, v in resp.headers.items() if k.lower() not in ["transfer-encoding", "content-length"]}
+            return Response(content=resp.content, status_code=resp.status_code, headers=filtered_headers)
+    except httpx.RequestError as e:
+        logger.error(f"Error forwarding request to backend ({target_url}): {e}")
+        raise HTTPException(status_code=502, detail=f"Backend connection error: {str(e)}")
+
+async def stream_to_backend(request: Request, path: str):
+    auth_header = request.headers.get("Authorization")
+    if not auth_header or not auth_header.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Missing or invalid Authorization header")
+    
+    token = auth_header.split(" ")[1]
+    try:
+        payload = jwt.decode(token, options={"verify_signature": False})
+        user_id = payload.get("sub")
+        if not user_id:
+            raise HTTPException(status_code=401, detail="Invalid token payload")
+    except Exception:
+        raise HTTPException(status_code=401, detail="Invalid token")
+        
+    body_bytes = await request.body()
+    signature = sign_proxy_payload(body_bytes, str(user_id))
+
+    target_url = f"{BACKEND_URL}{path}"
+    
+    headers = {
+        "X-Signature": signature,
+        "X-User-Id": str(user_id),
+        "Content-Type": request.headers.get("content-type") or "application/json"
+    }
+
+    client = httpx.AsyncClient(timeout=300.0)
+    
+    async def sse_generator():
+        try:
+            async with client.stream("POST", target_url, content=body_bytes, headers=headers) as response:
+                if response.status_code not in (200, 201):
+                    err_body = await response.aread()
+                    yield f"data: {json.dumps({'error': 'Backend error', 'status': response.status_code, 'detail': err_body.decode('utf-8')})}\n\n"
+                    return
+                async for chunk in response.aiter_raw():
+                    yield chunk
+        except httpx.RequestError as e:
+            yield f"data: {json.dumps({'error': 'Backend connection error', 'detail': str(e)})}\n\n"
+        finally:
+            await client.aclose()
+
+    return StreamingResponse(sse_generator(), media_type="text/event-stream")
 
 @app.get("/api/chats/")
 async def proxy_get_chats(request: Request):
@@ -315,50 +394,21 @@ async def proxy_get_chats(request: Request):
 async def proxy_post_chats(request: Request):
     return await forward_to_backend(request, "POST", "/api/chats/")
 
+@app.put("/api/chats/{session_id}")
+async def proxy_put_chat(session_id: str, request: Request):
+    return await forward_to_backend(request, "PUT", f"/api/chats/{session_id}")
+
 @app.get("/api/chats/{session_id}/messages")
 async def proxy_get_chat_messages(session_id: str, request: Request):
     return await forward_to_backend(request, "GET", f"/api/chats/{session_id}/messages")
 
+@app.post("/api/chats/{session_id}/messages")
+async def proxy_chat_messages(session_id: str, request: Request):
+    return await stream_to_backend(request, f"/api/chats/{session_id}/messages")
+
 @app.post("/api/chats/{session_id}/messages/stream")
 async def proxy_chat_stream(session_id: str, request: Request):
-    auth_header = request.headers.get("Authorization")
-    if not auth_header or not auth_header.startswith("Bearer "):
-        raise HTTPException(status_code=401, detail="Missing or invalid Authorization header")
-    
-    token = auth_header.split(" ")[1]
-    try:
-        payload = jwt.decode(token, options={"verify_signature": False})
-        user_id = payload.get("sub")
-    except Exception:
-        raise HTTPException(status_code=401, detail="Invalid token")
-        
-    body_bytes = await request.body()
-    print(f"DEBUG PROXY BODY: {body_bytes}")
-    signature = sign_proxy_payload(body_bytes, user_id)
-
-    target_url = f"http://backend:8000/api/chats/{session_id}/messages/stream"
-    
-    headers = {
-        "X-Signature": signature,
-        "X-User-Id": user_id,
-        "Content-Type": request.headers.get("content-type") or "application/json"
-    }
-
-    client = httpx.AsyncClient(timeout=300.0)
-    
-    async def sse_generator():
-        try:
-            async with client.stream("POST", target_url, content=body_bytes, headers=headers) as response:
-                if response.status_code != 200:
-                    err_body = await response.aread()
-                    yield f"data: {json.dumps({'error': 'Backend error', 'status': response.status_code, 'detail': err_body.decode('utf-8')})}\n\n"
-                    return
-                async for chunk in response.aiter_raw():
-                    yield chunk
-        finally:
-            await client.aclose()
-
-    return StreamingResponse(sse_generator(), media_type="text/event-stream")
+    return await stream_to_backend(request, f"/api/chats/{session_id}/messages/stream")
 
 # Serve static files from React build (dist folder)
 frontend_dist = os.path.join(os.path.dirname(__file__), "frontend", "dist")

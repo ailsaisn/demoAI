@@ -11,12 +11,8 @@ import {
 	RiFileTextLine,
 	RiCloseLine,
 	RiAttachmentLine,
-	RiMedicineBottleLine,
-	RiSyringeLine,
-	RiMegaphoneLine,
-	RiCornerDownLeftLine,
-	RiArchiveLine,
 	RiUploadCloud2Line,
+	RiCornerDownLeftLine,
 } from "@remixicon/react";
 import {
 	Attachment,
@@ -30,8 +26,12 @@ import {
 
 export interface PromptInputProps extends React.HTMLAttributes<HTMLDivElement> {
 	onSend?: (value: string, category: string | undefined, files: File[]) => boolean | void;
-	hideCategories?: boolean;
+	value?: string;
+	onValueChange?: (val: string) => void;
+	showAttachButton?: boolean;
 	showAttachText?: boolean;
+	attachText?: string;
+	defaultValue?: string;
 	placeholder?: string;
 	minRows?: number;
 	disabled?: boolean;
@@ -40,18 +40,20 @@ export interface PromptInputProps extends React.HTMLAttributes<HTMLDivElement> {
 export function PromptInput({
 	className,
 	onSend,
-	hideCategories,
+	value,
+	onValueChange,
+	showAttachButton = true,
 	showAttachText,
+	attachText = "Add files",
+	defaultValue = "",
 	placeholder,
 	minRows = 1,
 	disabled,
 	...props
 }: PromptInputProps) {
-	const [activeCategory, setActiveCategory] = React.useState<
-		"Product" | "Treatment" | "Promotional" | "Other" | undefined
-	>();
-	const [categoryError, setCategoryError] = React.useState(false);
-	const [inputValue, setInputValue] = React.useState("");
+	const isControlled = value !== undefined;
+	const [uncontrolledValue, setUncontrolledValue] = React.useState(defaultValue);
+	const inputValue = isControlled ? value : uncontrolledValue;
 	const [attachedFiles, setAttachedFiles] = React.useState<File[]>([]);
 	const [isDragging, setIsDragging] = React.useState(false);
 	const dragCounter = React.useRef(0);
@@ -147,26 +149,23 @@ export function PromptInput({
 	};
 
 	const handleSend = () => {
-		const success = onSend?.(inputValue, activeCategory, attachedFiles);
-		if (success === false) {
-			if (!activeCategory && !hideCategories) {
-				setCategoryError(true);
+		const success = onSend?.(inputValue, undefined, attachedFiles);
+		if (success !== false) {
+			if (!isControlled) {
+				setUncontrolledValue("");
 			}
-		} else {
-			setInputValue("");
+			onValueChange?.("");
 			setAttachedFiles([]);
-			setActiveCategory(undefined);
-			setCategoryError(false);
 		}
 	};
 
 	return (
 		<div
 			className={cn(
-				"relative w-full rounded-md p-2.5 transition-colors border",
+				"relative w-full rounded-xl p-3 transition-all border",
 				isDragging
 					? "border-blue-500 bg-blue-50/50"
-					: "border-transparent bg-zinc-100/50",
+					: "border-zinc-200/80 bg-zinc-50/50 hover:border-zinc-300 focus-within:border-zinc-300 focus-within:bg-white",
 				className,
 			)}
 			onDragEnter={handleDragEnter}
@@ -176,9 +175,9 @@ export function PromptInput({
 			onPaste={handlePaste}
 			{...props}
 		>
-			{/* Drag & Drop Visual Overlay (Flat) */}
+			{/* Drag & Drop Visual Overlay */}
 			{isDragging && (
-				<div className="absolute inset-0 z-30 flex flex-col items-center justify-center rounded-md border-2 border-dashed border-blue-500 bg-blue-50/95 pointer-events-none gap-2 p-4 text-center">
+				<div className="absolute inset-0 z-30 flex flex-col items-center justify-center rounded-lg border-2 border-dashed border-blue-500 bg-blue-50/95 pointer-events-none gap-2 p-4 text-center">
 					<div className="flex items-center justify-center size-10 rounded-full bg-blue-100 text-blue-600">
 						<RiUploadCloud2Line className="size-5" />
 					</div>
@@ -189,12 +188,6 @@ export function PromptInput({
 						<span className="text-[11px] text-zinc-500">
 							Release to add files to your prompt
 						</span>
-					</div>
-					<div className="flex items-center gap-1.5 text-[10px]">
-						<span className="px-1.5 py-0.5 rounded bg-white border border-blue-200 font-medium text-zinc-700">PDF</span>
-						<span className="px-1.5 py-0.5 rounded bg-white border border-blue-200 font-medium text-zinc-700">DOCX</span>
-						<span className="px-1.5 py-0.5 rounded bg-white border border-blue-200 font-medium text-zinc-700">XLSX</span>
-						<span className="px-1.5 py-0.5 rounded bg-white border border-blue-200 font-medium text-zinc-700">Images</span>
 					</div>
 				</div>
 			)}
@@ -244,11 +237,14 @@ export function PromptInput({
 					placeholder={
 						disabled
 							? "AI Assistant access is disabled..."
-							: placeholder || "Describe what you want to describe the knowledge is about..."
+							: placeholder || "Describe what you want to ingest or ask..."
 					}
 					value={inputValue}
 					onChange={(e) => {
-						setInputValue(e.target.value);
+						if (!isControlled) {
+							setUncontrolledValue(e.target.value);
+						}
+						onValueChange?.(e.target.value);
 						e.target.style.height = "auto";
 						e.target.style.height = e.target.scrollHeight + "px";
 					}}
@@ -257,116 +253,36 @@ export function PromptInput({
 
 			{/* Actions Area */}
 			<div className="flex items-center justify-between">
-				<div className="flex items-center gap-1.5 flex-wrap">
+				<div className="flex items-center gap-1.5">
 					{/* Attach Button */}
-					<label
-						htmlFor={disabled ? undefined : "file-upload"}
-						className={cn(
-							"flex items-center justify-center rounded-md border border-border bg-white text-zinc-700 transition-colors",
-							disabled
-								? "opacity-50 cursor-not-allowed"
-								: "cursor-pointer hover:border-blue-500 hover:bg-blue-50 hover:text-blue-700",
-							showAttachText ? "py-1.5 px-2.5 gap-1.5" : "aspect-square p-1.5",
-						)}
-						title={disabled ? "Access disabled" : "Attach file"}
-					>
-						<input
-							id="file-upload"
-							type="file"
-							disabled={disabled}
-							className="sr-only"
-							onChange={handleFileChange}
-							onClick={(e) => {
-								(e.target as HTMLInputElement).value = "";
-							}}
-							multiple
-						/>
-						<RiAttachmentLine className="size-4 pointer-events-none shrink-0" />
-						{showAttachText && (
-							<span className="text-xs font-medium pointer-events-none">Attach file</span>
-						)}
-					</label>
-
-					{/* Categories */}
-					{!hideCategories && (
-						<>
-							<button
-								type="button"
+					{showAttachButton && (
+						<label
+							htmlFor={disabled ? undefined : "file-upload"}
+							className={cn(
+								"flex items-center justify-center rounded-md border border-border bg-white text-zinc-700 transition-colors",
+								disabled
+									? "opacity-50 cursor-not-allowed"
+									: "cursor-pointer hover:border-blue-500 hover:bg-blue-50 hover:text-blue-700",
+								showAttachText ? "py-1.5 px-2.5 gap-1.5" : "aspect-square p-1.5",
+							)}
+							title={disabled ? "Access disabled" : "Upload file"}
+						>
+							<input
+								id="file-upload"
+								type="file"
 								disabled={disabled}
-								onClick={() => {
-									setActiveCategory("Product");
-									setCategoryError(false);
+								className="sr-only"
+								onChange={handleFileChange}
+								onClick={(e) => {
+									(e.target as HTMLInputElement).value = "";
 								}}
-								className={cn(
-									"flex items-center gap-1.5 px-2.5 py-1.5 rounded-md border text-xs transition-colors disabled:opacity-50 disabled:cursor-not-allowed",
-									activeCategory === "Product"
-										? "border-blue-500 bg-blue-50 text-blue-700"
-										: categoryError
-											? "border-amber-400 bg-amber-50 text-amber-700 hover:bg-amber-100"
-											: "border-border bg-white text-zinc-700 hover:border-blue-500 hover:bg-blue-50 hover:text-blue-700",
-								)}
-							>
-								<RiMedicineBottleLine className="size-3.5" />
-								<span>Product</span>
-							</button>
-							<button
-								type="button"
-								disabled={disabled}
-								onClick={() => {
-									setActiveCategory("Treatment");
-									setCategoryError(false);
-								}}
-								className={cn(
-									"flex items-center gap-1.5 px-2.5 py-1.5 rounded-md border text-xs transition-colors disabled:opacity-50 disabled:cursor-not-allowed",
-									activeCategory === "Treatment"
-										? "border-blue-500 bg-blue-50 text-blue-700"
-										: categoryError
-											? "border-amber-400 bg-amber-50 text-amber-700 hover:bg-amber-100"
-											: "border-border bg-white text-zinc-700 hover:border-blue-500 hover:bg-blue-50 hover:text-blue-700",
-								)}
-							>
-								<RiSyringeLine className="size-3.5" />
-								<span>Treatment</span>
-							</button>
-							<button
-								type="button"
-								disabled={disabled}
-								onClick={() => {
-									setActiveCategory("Promotional");
-									setCategoryError(false);
-								}}
-								className={cn(
-									"flex items-center gap-1.5 px-2.5 py-1.5 rounded-md border text-xs transition-colors disabled:opacity-50 disabled:cursor-not-allowed",
-									activeCategory === "Promotional"
-										? "border-blue-500 bg-blue-50 text-blue-700"
-										: categoryError
-											? "border-amber-400 bg-amber-50 text-amber-700 hover:bg-amber-100"
-											: "border-border bg-white text-zinc-700 hover:border-blue-500 hover:bg-blue-50 hover:text-blue-700",
-								)}
-							>
-								<RiMegaphoneLine className="size-3.5" />
-								<span>Promotional</span>
-							</button>
-							<button
-								type="button"
-								disabled={disabled}
-								onClick={() => {
-									setActiveCategory("Other");
-									setCategoryError(false);
-								}}
-								className={cn(
-									"flex items-center gap-1.5 px-2.5 py-1.5 rounded-md border text-xs transition-colors disabled:opacity-50 disabled:cursor-not-allowed",
-									activeCategory === "Other"
-										? "border-blue-500 bg-blue-50 text-blue-700"
-										: categoryError
-											? "border-amber-400 bg-amber-50 text-amber-700 hover:bg-amber-100"
-											: "border-border bg-white text-zinc-700 hover:border-blue-500 hover:bg-blue-50 hover:text-blue-700",
-								)}
-							>
-								<RiArchiveLine className="size-3.5" />
-								<span>Other</span>
-							</button>
-						</>
+								multiple
+							/>
+							<RiAttachmentLine className="size-4 pointer-events-none shrink-0" />
+							{showAttachText && (
+								<span className="text-xs font-medium pointer-events-none">{attachText}</span>
+							)}
+						</label>
 					)}
 				</div>
 
@@ -374,10 +290,10 @@ export function PromptInput({
 				<Button
 					size="icon"
 					disabled={disabled || (!inputValue.trim() && attachedFiles.length === 0)}
-					className="h-8 w-8 bg-blue-500 hover:bg-blue-600 rounded-md shrink-0 text-white disabled:opacity-50"
+					className="h-8 w-8 bg-blue-600 hover:bg-blue-700 rounded-md shrink-0 text-white disabled:opacity-50"
 					onClick={handleSend}
 				>
-					<RiCornerDownLeftLine className="size-5" />
+					<RiCornerDownLeftLine className="size-4" />
 				</Button>
 			</div>
 		</div>

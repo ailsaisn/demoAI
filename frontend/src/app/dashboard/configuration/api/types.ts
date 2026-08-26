@@ -3,6 +3,15 @@ export interface ConfigResponse {
 	value: string;
 }
 
+export interface GlobalMonthlyUsageResponse {
+	year_month: string;
+	tokens_used: number;
+	token_limit?: number | null;
+	remaining?: number | null;
+	percentage?: number | null;
+	is_global_active: boolean;
+}
+
 export interface ConfigUpdate {
 	value: string;
 }

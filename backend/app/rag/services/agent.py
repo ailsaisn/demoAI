@@ -158,7 +158,7 @@ class MedicalAgent:
                         "title": title,
                         "page": page,
                         "section": section,
-                        "document_type": meta.get("document_type", "Product")
+                        "document_type": meta.get("document_type", "General")
                     }
                 })
 

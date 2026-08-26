@@ -29,10 +29,13 @@ class Settings(BaseSettings):
     S3_REGION: str = "us-east-1"
     S3_USE_PATH_STYLE: bool = True
 
-    COOKIE_DOMAIN: Optional[str] = None # e.g. ".aryanoble.web.id"
+    COOKIE_DOMAIN: Optional[str] = None # e.g. ".aryanoble.web.id" or ".aryanoble.co.id"
+    COOKIE_SECURE: Optional[bool] = None
+    COOKIE_SAMESITE: str = "lax"
     CORS_ORIGINS: list[str] = [
         "http://localhost:3000",
         "http://localhost:8000",
+        "http://localhost:8001",
         "https://dokterpedia-dev.aryanoble.web.id",
         "https://dokterpedia-staging.aryanoble.web.id",
         "https://dokterpedia.aryanoble.co.id",
