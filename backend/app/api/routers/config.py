@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Request, Header
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
 from typing import List, Optional, Dict, Any
@@ -16,6 +16,13 @@ from app.schemas.config import (
     LLMValidateRequest,
     FetchModelsRequest,
     ModelInfo,
+    DatabaseResetRequest,
+    DatabaseResetResponse,
+)
+from app.services.db_seeder import (
+    reset_database,
+    seed_database,
+    reset_and_reseed_database,
 )
 from app.core.security import encrypt_api_key, decrypt_api_key
 from app.core.config import settings
@@ -833,4 +840,126 @@ async def run_system_diagnostics(
             
     return results
 
+
+async def _verify_database_maintenance_auth(
+    request: Request,
+    x_admin_secret: Optional[str] = Header(None, alias="X-Admin-Secret"),
+    db: AsyncSession = Depends(get_db),
+) -> None:
+    """
+    Verifies caller is authorized to perform database maintenance operations:
+    1. Caller provides matching X-Admin-Secret header (for initial setup/bootstrap or CI/CD).
+    2. OR authenticated staff user has configuration:write permission.
+    """
+    if x_admin_secret and x_admin_secret == settings.SECRET_KEY:
+        return
+
+    try:
+        current_user = await get_current_user(request, db)
+        guard = RequireAccess("configuration:write")
+        await guard(current_user=current_user, db=db)
+    except Exception:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Unauthorized: Admin access ('configuration:write') or valid 'X-Admin-Secret' header required.",
+        )
+
+
+@router.post("/db/reset-and-reseed", response_model=DatabaseResetResponse)
+@router.post("/db/reset", response_model=DatabaseResetResponse)
+async def endpoint_reset_and_reseed_db(
+    req: DatabaseResetRequest,
+    request: Request,
+    x_admin_secret: Optional[str] = Header(None, alias="X-Admin-Secret"),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Safely resets (truncates all tables with CASCADE) and reseeds default data:
+    - Access permissions
+    - System roles (ADMIN, FUNCTIONAL)
+    - Default admin account (customizable via payload)
+    - Initial medical categories
+    - Baseline AppConfig keys
+
+    Safety requirements:
+    1. req.confirmation must equal "RESET_AND_RESEED"
+    2. If in production, requires matching X-Admin-Secret header
+    3. Caller must have configuration:write access or valid X-Admin-Secret
+    """
+    await _verify_database_maintenance_auth(request, x_admin_secret, db)
+
+    if req.confirmation != "RESET_AND_RESEED":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Safety confirmation failed. 'confirmation' field must be exactly 'RESET_AND_RESEED'.",
+        )
+
+    # Extra production guard: in production, require explicit secret authorization
+    is_prod = str(settings.ENVIRONMENT).lower() in ("production", "prod")
+    if is_prod and (not x_admin_secret or x_admin_secret != settings.SECRET_KEY):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Database reset is blocked in production unless authenticated via valid X-Admin-Secret header.",
+        )
+
+    result = await reset_and_reseed_database(
+        session=db,
+        admin_email=req.admin_email,
+        admin_password=req.admin_password,
+    )
+
+    return DatabaseResetResponse(
+        status="success",
+        message="Database has been successfully reset and reseeded.",
+        details=result,
+    )
+
+
+@router.post("/db/reseed", response_model=DatabaseResetResponse)
+async def endpoint_reseed_db(
+    request: Request,
+    reset: bool = False,
+    admin_email: str = "admin@mail.com",
+    admin_password: str = "Erhadermies@123",
+    x_admin_secret: Optional[str] = Header(None, alias="X-Admin-Secret"),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Seeds baseline accesses, roles, admin user, categories, and config.
+    - If reset=True: Truncates all tables first before reseeding.
+    - If reset=False: Idempotently seeds missing records without deleting data.
+    """
+    await _verify_database_maintenance_auth(request, x_admin_secret, db)
+
+    if reset:
+        # Extra production guard: in production, require explicit secret authorization
+        is_prod = str(settings.ENVIRONMENT).lower() in ("production", "prod")
+        if is_prod and (not x_admin_secret or x_admin_secret != settings.SECRET_KEY):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Database reset is blocked in production unless authenticated via valid X-Admin-Secret header.",
+            )
+
+        result = await reset_and_reseed_database(
+            session=db,
+            admin_email=admin_email,
+            admin_password=admin_password,
+        )
+        return DatabaseResetResponse(
+            status="success",
+            message="Database has been successfully reset and reseeded.",
+            details=result,
+        )
+
+    result = await seed_database(
+        session=db,
+        admin_email=admin_email,
+        admin_password=admin_password,
+    )
+
+    return DatabaseResetResponse(
+        status="success",
+        message="Database has been idempotently seeded with default baseline data.",
+        details=result,
+    )
 

@@ -1,8 +1,6 @@
 import { knowledgeKeys } from "@/app/dashboard/knowledge/api/keys";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Badge } from "@/components/ui/badge";
-import Link from "next/link";
 import {
 	MessageScroller,
 	MessageScrollerSmartButton,
@@ -35,8 +33,6 @@ import {
 	RiRobot2Line,
 	RiUser3Line,
 	RiUploadCloud2Line,
-	RiDeleteBinLine,
-	RiArrowRightUpLine,
 } from "@remixicon/react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useState, useEffect, useRef, useMemo } from "react";
@@ -114,9 +110,7 @@ export function ChatPreview({
 	headerNode,
 	preHeaderNode,
 }: ChatPreviewProps) {
-	const { data: generalSession } = useGeneralChatSession(
-		mode === "general" ? sessionId : null
-	);
+	const { data: generalSession } = useGeneralChatSession(mode === "general" ? sessionId : null);
 	const sendGeneralMsg = useSendGeneralChatMessage(mode === "general" ? sessionId : null);
 
 	const [userChatMessages, setUserChatMessages] = useState<Message[]>(() => {
@@ -146,7 +140,7 @@ export function ChatPreview({
 						savedHistory.map((m) => ({
 							role: m.role,
 							content: m.content,
-						}))
+						})),
 					);
 				} else {
 					setUserChatMessages([]);
@@ -213,7 +207,7 @@ export function ChatPreview({
 							window.history.replaceState(
 								null,
 								"",
-								`/dashboard/ingest/chat?session_id=${sessionId}`
+								`/dashboard/ingest/chat?session_id=${sessionId}`,
 							);
 						}
 					}
@@ -337,7 +331,13 @@ export function ChatPreview({
 			: null;
 
 	const messages: Message[] = [];
-	if (initialSummaryMessage) messages.push(initialSummaryMessage);
+	if (
+		initialSummaryMessage &&
+		userChatMessages.length === 0 &&
+		(!sessionId || mode !== "general")
+	) {
+		messages.push(initialSummaryMessage);
+	}
 	if (mode === "general" && sessionId) {
 		messages.push(...dbMessages);
 	} else {
@@ -346,6 +346,7 @@ export function ChatPreview({
 	if (optimisticUserMsg) {
 		messages.push(optimisticUserMsg);
 	}
+	const firstAssistantIndex = messages.findIndex((m) => m.role === "assistant");
 	let lastAssistantIndex = -1;
 	for (let i = messages.length - 1; i >= 0; i--) {
 		if (messages[i].role === "assistant") {
@@ -492,8 +493,12 @@ export function ChatPreview({
 					]);
 					if (data.action === "edit_applied" || data.action === "delete_applied") {
 						queryClient.invalidateQueries({ queryKey: knowledgeKeys.all });
+						queryClient.invalidateQueries({ queryKey: ["projects"] });
+						queryClient.invalidateQueries({ queryKey: ["knowledge-batch"] });
 						if (data.target_knowledge_id) {
-							queryClient.invalidateQueries({ queryKey: knowledgeKeys.detail(data.target_knowledge_id) });
+							queryClient.invalidateQueries({
+								queryKey: knowledgeKeys.detail(data.target_knowledge_id),
+							});
 						}
 					}
 				}
@@ -528,6 +533,7 @@ export function ChatPreview({
 					queryClient.invalidateQueries({ queryKey: knowledgeKeys.detail(knowledgeId) });
 					queryClient.invalidateQueries({ queryKey: ["knowledge-batch"] });
 					queryClient.invalidateQueries({ queryKey: knowledgeKeys.all });
+					queryClient.invalidateQueries({ queryKey: ["projects"] });
 				}
 			} else {
 				const response = await api.post("/knowledge/chat", {
@@ -588,9 +594,13 @@ export function ChatPreview({
 											<div className="size-12 rounded-xl bg-blue-50 text-blue-500 flex items-center justify-center">
 												<RiRobot2Line className="size-6" />
 											</div>
-											<h2 className="text-base font-semibold text-zinc-950">Knowledge Base Assistant</h2>
+											<h2 className="text-base font-semibold text-zinc-950">
+												Knowledge Base Assistant
+											</h2>
 											<p className="text-xs text-zinc-500 leading-relaxed">
-												Ask questions about clinic products and treatments, instruct updates, or clean expired records. The assistant maintains context across your conversation.
+												Ask questions about clinic products and treatments, instruct updates, or
+												clean expired records. The assistant maintains context across your
+												conversation.
 											</p>
 										</div>
 									) : (
@@ -685,7 +695,7 @@ export function ChatPreview({
 									<div
 										className={`flex flex-col w-full min-w-0 max-w-full ${messages[0].role === "user" ? "items-end" : "items-start"}`}
 									>
-										{title !== undefined && onChangeTitle && messages[0].role === "assistant" && (
+										{title !== undefined && onChangeTitle && (
 											<div className="flex justify-center w-full mb-4">
 												<div className="w-fit max-w-lg">
 													<TitleSettings
@@ -697,7 +707,6 @@ export function ChatPreview({
 											</div>
 										)}
 										{fileName &&
-											messages[0].role === "assistant" &&
 											(() => {
 												const { Icon, bgColor, textColor } = getFileIconAndColor(fileName);
 												return (
@@ -767,44 +776,9 @@ export function ChatPreview({
 											<div
 												className={`${messages[0].role === "user" ? "bg-blue-500 text-white" : "bg-transparent border border-zinc-200 text-zinc-950"} p-3.5 rounded-md text-sm w-full min-w-0 overflow-hidden prose prose-sm max-w-none prose-p:leading-relaxed prose-pre:bg-zinc-800 prose-pre:text-zinc-100 prose-p:my-1.5 prose-ul:my-1.5 prose-ul:pl-4 prose-ol:my-1.5 prose-ol:pl-4 prose-li:my-0.5 prose-headings:my-2.5 prose-table:w-full prose-table:border prose-table:border-blue-200/60 prose-table:rounded-md prose-table:overflow-hidden prose-table:my-3 prose-table:bg-white prose-th:bg-blue-100/50 prose-th:px-3 prose-th:py-2.5 prose-th:text-left prose-th:font-semibold prose-th:text-blue-900 prose-th:border-b prose-th:border-blue-200/60 prose-td:px-3 prose-td:py-2.5 prose-td:border-b prose-td:border-blue-100/60 last:prose-td:border-0 whitespace-pre-wrap`}
 											>
-												{false && messages[0].role === "assistant" && (messages[0].action === "edit_applied" || messages[0].action === "delete_applied") && (
-													<div className="flex items-center justify-between gap-2 pb-2 mb-2 border-b border-zinc-100 not-prose">
-														<div className="flex items-center gap-2">
-															<Badge
-																variant="outline"
-																className={
-																	messages[0].action === "edit_applied"
-																		? "bg-emerald-50 text-emerald-700 border-emerald-300"
-																		: "bg-rose-50 text-rose-700 border-rose-300"
-																}
-															>
-																{messages[0].action === "edit_applied" ? (
-																	<>
-																		<RiCheckLine className="size-3 mr-1" />
-																		Knowledge Updated
-																	</>
-																) : (
-																	<>
-																		<RiDeleteBinLine className="size-3 mr-1" />
-																		Knowledge Removed
-																	</>
-																)}
-															</Badge>
-														</div>
-
-														{messages[0].target_knowledge_id && messages[0].target_knowledge_id !== "expired" && (
-															<Link
-																href={`/dashboard/knowledge/${messages[0].target_knowledge_id}`}
-																className="inline-flex items-center gap-1 text-xs text-blue-600 hover:text-blue-700 font-medium"
-															>
-																View Document <RiArrowRightUpLine className="size-3.5" />
-															</Link>
-														)}
-													</div>
-												)}
 												{messages[0].role === "assistant" ? (
 													<>
-														{headerNode}
+														{0 === firstAssistantIndex && headerNode}
 														<ReactMarkdown remarkPlugins={[remarkGfm]}>
 															{messages[0].content}
 														</ReactMarkdown>
@@ -836,8 +810,7 @@ export function ChatPreview({
 										>
 											{(() => {
 												const names =
-													msg.attachmentNames ||
-													(msg.attachmentName ? [msg.attachmentName] : []);
+													msg.attachmentNames || (msg.attachmentName ? [msg.attachmentName] : []);
 												if (names.length === 0) return null;
 												return (
 													<div className="flex flex-wrap gap-2 mb-2">
@@ -880,43 +853,13 @@ export function ChatPreview({
 												<div
 													className={`${msg.role === "user" ? "bg-blue-500 text-white" : "bg-transparent border border-zinc-200 text-zinc-950"} p-3.5 rounded-md text-sm w-full min-w-0 overflow-hidden prose prose-sm max-w-none prose-p:leading-relaxed prose-pre:bg-zinc-800 prose-pre:text-zinc-100 prose-p:my-1.5 prose-ul:my-1.5 prose-ul:pl-4 prose-ol:my-1.5 prose-ol:pl-4 prose-li:my-0.5 prose-headings:my-2.5 prose-table:w-full prose-table:border prose-table:border-blue-200/60 prose-table:rounded-md prose-table:overflow-hidden prose-table:my-3 prose-table:bg-white prose-th:bg-blue-100/50 prose-th:px-3 prose-th:py-2.5 prose-th:text-left prose-th:font-semibold prose-th:text-blue-900 prose-th:border-b prose-th:border-blue-200/60 prose-td:px-3 prose-td:py-2.5 prose-td:border-b prose-td:border-blue-100/60 last:prose-td:border-0 whitespace-pre-wrap`}
 												>
-													{false && msg.role === "assistant" && (msg.action === "edit_applied" || msg.action === "delete_applied") && (
-														<div className="flex items-center justify-between gap-2 pb-2 mb-2 border-b border-zinc-100 not-prose">
-															<div className="flex items-center gap-2">
-																<Badge
-																	variant="outline"
-																	className={
-																		msg.action === "edit_applied"
-																			? "bg-emerald-50 text-emerald-700 border-emerald-300"
-																			: "bg-rose-50 text-rose-700 border-rose-300"
-																	}
-																>
-																	{msg.action === "edit_applied" ? (
-																		<>
-																			<RiCheckLine className="size-3 mr-1" />
-																			Knowledge Updated
-																		</>
-																	) : (
-																		<>
-																			<RiDeleteBinLine className="size-3 mr-1" />
-																			Knowledge Removed
-																		</>
-																	)}
-																</Badge>
-															</div>
-
-															{msg.target_knowledge_id && msg.target_knowledge_id !== "expired" && (
-																<Link
-																	href={`/dashboard/knowledge/${msg.target_knowledge_id}`}
-																	className="inline-flex items-center gap-1 text-xs text-blue-600 hover:text-blue-700 font-medium"
-																>
-																	View Document <RiArrowRightUpLine className="size-3.5" />
-																</Link>
-															)}
-														</div>
-													)}
 													{msg.role === "assistant" ? (
-														<ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.content}</ReactMarkdown>
+														<>
+															{actualIndex === firstAssistantIndex && headerNode}
+															<ReactMarkdown remarkPlugins={[remarkGfm]}>
+																{msg.content}
+															</ReactMarkdown>
+														</>
 													) : (
 														msg.content
 													)}
@@ -951,9 +894,7 @@ export function ChatPreview({
 			<div className="px-6 sm:px-8 py-4 shrink-0 w-full">
 				<div
 					className={`max-w-5xl mx-auto relative rounded-lg p-4 flex flex-col gap-3 transition-colors border shadow-none ${
-						isDragging
-							? "border-blue-500 bg-blue-50/50"
-							: "border-zinc-200 bg-white"
+						isDragging ? "border-blue-500 bg-blue-50/50" : "border-zinc-200 bg-white"
 					}`}
 					onDragEnter={handleDragEnter}
 					onDragLeave={handleDragLeave}
@@ -976,10 +917,18 @@ export function ChatPreview({
 								</span>
 							</div>
 							<div className="flex items-center gap-1.5 text-[10px]">
-								<span className="px-1.5 py-0.5 rounded bg-white border border-blue-200 font-medium text-zinc-700">PDF</span>
-								<span className="px-1.5 py-0.5 rounded bg-white border border-blue-200 font-medium text-zinc-700">DOCX</span>
-								<span className="px-1.5 py-0.5 rounded bg-white border border-blue-200 font-medium text-zinc-700">XLSX</span>
-								<span className="px-1.5 py-0.5 rounded bg-white border border-blue-200 font-medium text-zinc-700">Images</span>
+								<span className="px-1.5 py-0.5 rounded bg-white border border-blue-200 font-medium text-zinc-700">
+									PDF
+								</span>
+								<span className="px-1.5 py-0.5 rounded bg-white border border-blue-200 font-medium text-zinc-700">
+									DOCX
+								</span>
+								<span className="px-1.5 py-0.5 rounded bg-white border border-blue-200 font-medium text-zinc-700">
+									XLSX
+								</span>
+								<span className="px-1.5 py-0.5 rounded bg-white border border-blue-200 font-medium text-zinc-700">
+									Images
+								</span>
 							</div>
 						</div>
 					)}
@@ -1045,7 +994,9 @@ export function ChatPreview({
 						className="hidden"
 					/>
 
-					<div className={`flex items-center ${mode === "general" ? "justify-end" : "justify-between"} pt-1`}>
+					<div
+						className={`flex items-center ${mode === "general" ? "justify-end" : "justify-between"} pt-1`}
+					>
 						{mode !== "general" && (
 							<Button
 								type="button"

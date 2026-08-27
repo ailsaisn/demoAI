@@ -70,7 +70,7 @@ export function ConfirmationModal({
 						variant="outline"
 						onClick={handleCancel}
 						disabled={isLoading}
-						className="border-blue-500 text-blue-500 hover:bg-blue-50 hover:text-blue-600 rounded-lg px-5 py-2.5 h-10 font-medium text-sm transition-colors cursor-pointer"
+						className="border-gray-200 text-gray-700 hover:bg-gray-50 rounded-lg px-5 py-2.5 h-10 font-medium text-sm transition-colors cursor-pointer"
 					>
 						{cancelText}
 					</Button>
@@ -80,8 +80,8 @@ export function ConfirmationModal({
 						disabled={isLoading}
 						className={`rounded-lg px-5 py-2.5 h-10 font-medium text-sm text-white shadow-none transition-colors cursor-pointer ${
 							variant === "destructive"
-								? "bg-blue-500 hover:bg-blue-600"
-								: "bg-blue-500 hover:bg-blue-600"
+								? "bg-red-600 hover:bg-red-700"
+								: "bg-blue-600 hover:bg-blue-700"
 						}`}
 					>
 						{isLoading && <RiLoader4Line className="size-4 animate-spin mr-1.5" />}

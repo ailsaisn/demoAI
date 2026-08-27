@@ -3,6 +3,7 @@
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { SearchBar } from "@/components/shared/search-bar";
+import { ConfirmationModal } from "@/components/shared/confirmation-modal";
 import {
 	Table,
 	TableBody,
@@ -12,17 +13,21 @@ import {
 	TableRow,
 } from "@/components/ui/table";
 import { RiAddLine, RiDeleteBinLine, RiEdit2Line } from "@remixicon/react";
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { CategoryResponse } from "./api/types";
 import { CategoryDialog } from "./components/category-dialog";
 import { useCategories, useDeleteCategory } from "./hooks/use-categories";
 
 export default function CategoriesPage() {
+	const [searchQuery, setSearchQuery] = useState("");
 	const [isDialogOpen, setIsDialogOpen] = useState(false);
 	const [dialogMode, setDialogMode] = useState<"add" | "edit">("add");
 	const [selectedCategory, setSelectedCategory] = useState<CategoryResponse | null>(null);
 
-	const { data: categories, isLoading } = useCategories();
+	const [categoryToDelete, setCategoryToDelete] = useState<CategoryResponse | null>(null);
+	const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
+
+	const { data: categories = [], isLoading } = useCategories();
 	const { mutate: deleteCategory, isPending: isDeleting } = useDeleteCategory();
 
 	const handleAddCategory = () => {
@@ -37,11 +42,27 @@ export default function CategoriesPage() {
 		setIsDialogOpen(true);
 	};
 
-	const handleDelete = (id: string) => {
-		if (confirm("Are you sure you want to delete this category?")) {
-			deleteCategory(id);
-		}
+	const handleDeleteClick = (category: CategoryResponse) => {
+		setCategoryToDelete(category);
+		setIsDeleteModalOpen(true);
 	};
+
+	const handleConfirmDelete = () => {
+		if (!categoryToDelete) return;
+		deleteCategory(categoryToDelete.id, {
+			onSuccess: () => {
+				setIsDeleteModalOpen(false);
+				setCategoryToDelete(null);
+			},
+		});
+	};
+
+	// Filter categories based on search query
+	const filteredCategories = useMemo(() => {
+		if (!searchQuery.trim()) return categories;
+		const q = searchQuery.toLowerCase();
+		return categories.filter((c) => c.name.toLowerCase().includes(q));
+	}, [categories, searchQuery]);
 
 	return (
 		<div className="p-6 flex flex-col gap-6 h-full">
@@ -57,6 +78,8 @@ export default function CategoriesPage() {
 					<SearchBar
 						containerClassName="max-w-md"
 						placeholder="Search for category..."
+						value={searchQuery}
+						onChange={(e) => setSearchQuery(e.target.value)}
 					/>
 					<Button className="bg-blue-500 hover:bg-blue-600" onClick={handleAddCategory}>
 						<RiAddLine className="mr-2 h-4 w-4" />
@@ -80,14 +103,14 @@ export default function CategoriesPage() {
 										Loading categories...
 									</TableCell>
 								</TableRow>
-							) : categories?.length === 0 ? (
+							) : filteredCategories.length === 0 ? (
 								<TableRow>
 									<TableCell colSpan={2} className="text-center py-8 text-gray-500">
 										No categories found.
 									</TableCell>
 								</TableRow>
 							) : (
-								categories?.map((category) => (
+								filteredCategories.map((category) => (
 									<TableRow key={category.id}>
 										<TableCell>
 											<Badge
@@ -101,7 +124,6 @@ export default function CategoriesPage() {
 											<div className="flex justify-end gap-2">
 												<Button
 													variant="outline"
-													size="md"
 													className="border-gray-200 font-medium"
 													onClick={() => handleEditCategory(category)}
 												>
@@ -110,9 +132,8 @@ export default function CategoriesPage() {
 												</Button>
 												<Button
 													variant="outline"
-													size="md"
 													className="border-gray-200 font-medium disabled:opacity-50"
-													onClick={() => handleDelete(category.id)}
+													onClick={() => handleDeleteClick(category)}
 													disabled={isDeleting}
 												>
 													<RiDeleteBinLine className="size-4 mr-1.5" />
@@ -134,6 +155,18 @@ export default function CategoriesPage() {
 				onOpenChange={setIsDialogOpen}
 				mode={dialogMode}
 				category={selectedCategory}
+			/>
+
+			{/* Delete Confirmation Modal */}
+			<ConfirmationModal
+				isOpen={isDeleteModalOpen}
+				onOpenChange={setIsDeleteModalOpen}
+				title="Delete Category"
+				description={`Are you sure you want to delete the category "${categoryToDelete?.name || ""}"? This action cannot be undone.`}
+				confirmText="Delete Category"
+				variant="destructive"
+				isLoading={isDeleting}
+				onConfirm={handleConfirmDelete}
 			/>
 		</div>
 	);

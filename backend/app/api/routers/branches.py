@@ -100,7 +100,8 @@ async def _hydrate_branch(branch: Branch, db: AsyncSession) -> dict:
             t_stmt = select(AppConfig.value).where(AppConfig.key == t_key)
             t_res = await db.execute(t_stmt)
             t_val = t_res.scalar_one_or_none()
-            max_tokens = int(t_val) if (t_val and t_val.isdigit()) else (doc.token_limit or 500000)
+            global_quota = int(t_val) if (t_val and t_val.isdigit()) else 500000
+            max_tokens = doc.token_limit if (doc.token_limit and doc.token_limit > 0) else global_quota
             tokens_left = max(0, max_tokens - doc_tokens_used)
             if max_tokens > 0 and doc_tokens_used >= max_tokens * 0.9:
                 status = "Warning"

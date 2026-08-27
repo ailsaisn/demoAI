@@ -4,8 +4,8 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Badge } from "@/components/ui/badge";
+import { ConfirmationModal } from "@/components/shared/confirmation-modal";
 import { RiDeleteBinLine, RiEyeLine, RiEyeOffLine, RiLoader4Line, RiEdit2Line, RiCheckLine, RiCloseLine } from "@remixicon/react";
-import Image from "next/image";
 import { useEffect, useState } from "react";
 import { UserResponse } from "../api/types";
 import { useDeleteUser, useUpdateStaffDetails, useUpdateUserRoles } from "../hooks/use-users";
@@ -21,6 +21,7 @@ export function UserStaffProfileSheet({
 	staff: UserResponse | null;
 }) {
 	const [isEditing, setIsEditing] = useState(false);
+	const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
 	const [name, setName] = useState("");
 	const [email, setEmail] = useState("");
 	const [password, setPassword] = useState("");
@@ -41,17 +42,24 @@ export function UserStaffProfileSheet({
 				setRole(staff.roles && staff.roles.length > 0 ? staff.roles[0].name : "Staff");
 				setIsEditing(false);
 				setShowPassword(false);
+				setIsDeleteModalOpen(false);
 			}, 0);
 		}
 	}, [staff, isOpen]);
 
-	const handleDelete = () => {
+	const handleDeleteClick = () => {
 		if (!staff) return;
-		if (confirm(`Are you sure you want to delete ${staff.name}?`)) {
-			deleteUser.mutate(staff.id, {
-				onSuccess: () => onOpenChange(false),
-			});
-		}
+		setIsDeleteModalOpen(true);
+	};
+
+	const handleConfirmDelete = () => {
+		if (!staff) return;
+		deleteUser.mutate(staff.id, {
+			onSuccess: () => {
+				setIsDeleteModalOpen(false);
+				onOpenChange(false);
+			},
+		});
 	};
 
 	const handleSave = () => {
@@ -91,11 +99,6 @@ export function UserStaffProfileSheet({
 					<>
 						<div className="flex-1 overflow-y-auto pb-6">
 							<div className="flex flex-col pb-4">
-								{/* Profile Cover Image */}
-								<div className="relative h-65 w-full bg-gray-100 overflow-hidden shrink-0">
-									<Image src="/placeholder.svg" alt={staff.name} fill className="object-cover" />
-								</div>
-
 								{/* Details Section */}
 								<div className="flex flex-col gap-6 px-6 py-4">
 									<Field>
@@ -264,15 +267,11 @@ export function UserStaffProfileSheet({
 								<Button
 									variant="outline"
 									className="border-red-500 text-red-600 hover:bg-red-50 hover:text-red-700 disabled:opacity-50"
-									onClick={handleDelete}
+									onClick={handleDeleteClick}
 									disabled={deleteUser.isPending}
 								>
-									{deleteUser.isPending ? (
-										<RiLoader4Line className="mr-2 h-4 w-4 animate-spin shrink-0" />
-									) : (
-										<RiDeleteBinLine className="mr-2 h-4 w-4 shrink-0" />
-									)}
-									{deleteUser.isPending ? "Deleting..." : "Delete User"}
+									<RiDeleteBinLine className="mr-2 h-4 w-4 shrink-0" />
+									Delete User
 								</Button>
 								<Button
 									className="bg-blue-600 text-white hover:bg-blue-700"
@@ -286,6 +285,18 @@ export function UserStaffProfileSheet({
 					</>
 				)}
 			</SheetContent>
+
+			{/* Delete User Confirmation Modal */}
+			<ConfirmationModal
+				isOpen={isDeleteModalOpen}
+				onOpenChange={setIsDeleteModalOpen}
+				title="Delete User"
+				description={`Are you sure you want to delete ${staff?.name || "this user"}? This action cannot be undone.`}
+				confirmText="Delete User"
+				variant="destructive"
+				isLoading={deleteUser.isPending}
+				onConfirm={handleConfirmDelete}
+			/>
 		</Sheet>
 	);
 }

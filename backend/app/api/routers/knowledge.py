@@ -725,9 +725,13 @@ ALLOWED_MIME_TYPES = {
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     "application/vnd.ms-excel",
     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "application/vnd.ms-powerpoint",
+    "application/vnd.openxmlformats-officedocument.presentationml.presentation",
     "text/plain",
+    "text/csv",
     "image/jpeg",
-    "image/png"
+    "image/png",
+    "image/webp"
 }
 
 @router.post("/upload", status_code=status.HTTP_202_ACCEPTED)
@@ -1150,16 +1154,61 @@ async def update_knowledge_project(
     stmt = select(Knowledge).where(Knowledge.id == knowledge_id, Knowledge.deleted_at.is_(None))
     result = await db.execute(stmt)
     knowledge = result.scalar_one_or_none()
-    if not knowledge:
-        raise HTTPException(status_code=404, detail="Knowledge document not found")
     
     if payload.project_id:
         p_stmt = select(Project).where(Project.id == payload.project_id, Project.deleted_at.is_(None))
         p_res = await db.execute(p_stmt)
         if not p_res.scalar_one_or_none():
             raise HTTPException(status_code=404, detail="Project not found")
-            
-    knowledge.project_id = payload.project_id
+
+    target_file = resolve_pending_file(str(knowledge_id)) or resolve_approved_file(str(knowledge_id))
+
+    if not knowledge:
+        file_name = "document.pdf"
+        summary = ""
+        k_type = KnowledgeType.GENERAL
+        data = {}
+        if target_file and os.path.exists(target_file):
+            try:
+                with open(target_file, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                if isinstance(data, dict):
+                    file_name = data.get("file_name", file_name)
+                    summary = data.get("summary", "")
+            except Exception:
+                pass
+
+        doc_status = KnowledgeStatus.APPROVED if (target_file and "output" in target_file) else KnowledgeStatus.PENDING
+        knowledge = Knowledge(
+            id=knowledge_id,
+            title=file_name,
+            file_name=file_name,
+            original_path=f"data/temp/{file_name}",
+            mime_type="application/pdf",
+            type=k_type,
+            status=doc_status,
+            ai_summary=summary,
+            ai_confidence=95.0,
+            uploaded_by=current_user.id,
+            project_id=payload.project_id,
+            metadata_=data
+        )
+        db.add(knowledge)
+    else:
+        knowledge.project_id = payload.project_id
+
+    # Keep staging JSON file project_id in sync if exists
+    if target_file and os.path.exists(target_file):
+        try:
+            with open(target_file, "r", encoding="utf-8") as f:
+                j_data = json.load(f)
+            if isinstance(j_data, dict):
+                j_data["project_id"] = str(payload.project_id) if payload.project_id else None
+                with open(target_file, "w", encoding="utf-8") as f:
+                    json.dump(j_data, f, indent=4, ensure_ascii=False)
+        except Exception:
+            pass
+
     await db.commit()
     await db.refresh(knowledge)
     return knowledge

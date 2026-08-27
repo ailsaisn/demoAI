@@ -49,7 +49,7 @@ async def check_chat_token_quota(
         branch = branch_res.scalar_one_or_none()
 
     if is_global_mode:
-        # --- Mode ON: Token determined per branch. No individual doctor limit per branch ---
+        # --- Mode ON: Token determined per branch pool + optional doctor custom override ---
         global_branch_limit_str = await get_app_config_value(db, "GLOBAL_TOKEN_LIMIT", None)
         branch_limit = int(global_branch_limit_str) if (global_branch_limit_str and global_branch_limit_str.isdigit()) else (branch.token_limit if branch else 0)
 
@@ -67,7 +67,21 @@ async def check_chat_token_quota(
                     "reason": "branch_limit_exceeded"
                 }
 
-        # In global mode, doctor can chat as long as the active branch has remaining tokens
+        # Check individual override if explicitly configured
+        if user.token_limit is not None and user.token_limit > 0:
+            doc_usage_stmt = select(func.sum(UserTokenUsage.tokens_used)).where(
+                UserTokenUsage.user_id == user.id,
+                UserTokenUsage.year_month == current_ym
+            )
+            doc_used = (await db.execute(doc_usage_stmt)).scalar() or 0
+            if doc_used >= user.token_limit:
+                return False, f"Individual monthly token limit ({user.token_limit:,}) has been exceeded.", {
+                    "mode": "global_override",
+                    "doc_limit": user.token_limit,
+                    "doc_used": doc_used,
+                    "reason": "individual_doctor_limit_exceeded"
+                }
+
         return True, "OK", {"mode": "global_shared"}
 
     else:

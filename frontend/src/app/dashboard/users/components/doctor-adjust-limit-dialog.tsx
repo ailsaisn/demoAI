@@ -4,9 +4,10 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { RiCheckLine, RiInformationLine, RiLoader4Line } from "@remixicon/react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { UserResponse } from "../api/types";
 import { useUpdateDoctorAccess } from "../hooks/use-users";
+import { useConfigs } from "../../configuration/hooks/use-config";
 
 export function DoctorAdjustLimitDialog({
 	isOpen,
@@ -17,21 +18,50 @@ export function DoctorAdjustLimitDialog({
 	onOpenChange: (open: boolean) => void;
 	doctor: UserResponse | null;
 }) {
-	const tokenLimit = doctor?.token_limit ?? 0;
+	const { data: configs } = useConfigs();
+	const isGlobalLimitActive =
+		configs?.find((c) => c.key === "GLOBAL_TOKEN_LIMIT_ACTIVE")?.value === "true";
+	const globalBranchLimit = configs?.find((c) => c.key === "GLOBAL_TOKEN_LIMIT")?.value || "3000000";
+	const spdveLimit = configs?.find((c) => c.key === "TOKEN_LIMIT_SPKK")?.value || "500000";
+	const gpPlusLimit = configs?.find((c) => c.key === "TOKEN_LIMIT_GP")?.value || "250000";
+
+	const drTypeUpper = (doctor?.dr_type || "").toUpperCase();
+	const isSpDVE = drTypeUpper.includes("SPKK") || drTypeUpper.includes("SPDVE") || drTypeUpper.includes("SPDV");
+	const isGP = drTypeUpper.includes("GP") || drTypeUpper.includes("UMUM");
+	const effectiveGlobalLimit = isSpDVE ? Number(spdveLimit) : isGP ? Number(gpPlusLimit) : 0;
+
+	const hasCustomLimit = doctor?.token_limit !== null && doctor?.token_limit !== undefined && doctor.token_limit > 0;
+	const currentEffectiveLimit = hasCustomLimit
+		? doctor.token_limit!
+		: (isGlobalLimitActive ? effectiveGlobalLimit : (doctor?.token_limit ?? 0));
+
 	const tokensUsed = doctor?.tokens_used ?? 0;
-	const tokensLeft = Math.max(0, tokenLimit - tokensUsed);
+	const tokensLeft = Math.max(0, currentEffectiveLimit - tokensUsed);
 
 	// Determine branch token limit bounds
 	const branches = doctor?.branches || [];
-	const maxBranchLimit =
+	const rawMaxBranchLimit =
 		branches.length > 0
 			? Math.max(...branches.map((b) => b.token_limit ?? 0))
 			: 0;
 
-	const isBranchLimitUnset = maxBranchLimit === 0;
+	const maxBranchLimit = isGlobalLimitActive
+		? Number(globalBranchLimit)
+		: rawMaxBranchLimit;
 
-	const [newLimit, setNewLimit] = useState<number>(tokenLimit);
+	const isNoBranchAssigned = branches.length === 0;
+	const isBranchLimitUnset = isNoBranchAssigned || (!isGlobalLimitActive && maxBranchLimit === 0);
+
+	const [newLimit, setNewLimit] = useState<number>(0);
 	const updateDoctorAccess = useUpdateDoctorAccess();
+
+	useEffect(() => {
+		if (isOpen && doctor) {
+			setTimeout(() => {
+				setNewLimit(doctor.token_limit ?? (isGlobalLimitActive ? effectiveGlobalLimit : 0));
+			}, 0);
+		}
+	}, [isOpen, doctor, isGlobalLimitActive, effectiveGlobalLimit]);
 
 	const isExceedingBranch = newLimit > maxBranchLimit && !isBranchLimitUnset;
 
@@ -53,10 +83,8 @@ export function DoctorAdjustLimitDialog({
 			open={isOpen}
 			onOpenChange={(open) => {
 				if (!open && !updateDoctorAccess.isPending) {
-					setNewLimit(tokenLimit);
 					onOpenChange(open);
 				} else if (open) {
-					setNewLimit(tokenLimit);
 					onOpenChange(open);
 				}
 			}}
@@ -75,7 +103,7 @@ export function DoctorAdjustLimitDialog({
 						{branches.length > 0 ? (
 							branches.map((b) => (
 								<span key={b.id} className="text-gray-600 text-xs">
-									• {b.name}: {b.token_limit ? `${b.token_limit.toLocaleString()} tokens` : "Not set (0)"}
+									• {b.name}: {isGlobalLimitActive ? `${Number(globalBranchLimit).toLocaleString()} tokens (Global Pool)` : (b.token_limit ? `${b.token_limit.toLocaleString()} tokens` : "Not set (0)")}
 								</span>
 							))
 						) : (
@@ -84,7 +112,14 @@ export function DoctorAdjustLimitDialog({
 					</div>
 
 					<div className="flex flex-col gap-1 text-sm text-gray-900">
-						<span>Current doctor limit: {tokenLimit.toLocaleString()}</span>
+						<span>
+							Current doctor limit: {currentEffectiveLimit.toLocaleString()}{" "}
+							{isGlobalLimitActive && (
+								<span className="text-xs text-blue-600">
+									({hasCustomLimit ? "Custom Override" : "Global Default"})
+								</span>
+							)}
+						</span>
 						<span>Remaining: {tokensLeft.toLocaleString()}</span>
 						<span>Used: {tokensUsed.toLocaleString()}</span>
 					</div>
@@ -93,13 +128,17 @@ export function DoctorAdjustLimitDialog({
 						<div className="bg-amber-50 border border-amber-500 rounded-md p-4 text-sm text-amber-800 flex gap-2">
 							<RiInformationLine className="h-5 w-5 shrink-0 text-amber-600" />
 							<span>
-								Branch token limit must be set on the <strong>Branches</strong> menu first before adjusting doctor token limits.
+								{isNoBranchAssigned
+									? "Doctor must be assigned to at least one branch before adjusting token limit."
+									: "Branch token limit must be set on the Branches menu first before adjusting doctor token limits."}
 							</span>
 						</div>
 					) : (
 						<>
 							<div className="flex flex-col gap-2">
-								<span className="text-sm font-medium text-gray-900">New Token Limit</span>
+								<span className="text-sm font-medium text-gray-900">
+									{isGlobalLimitActive ? "Custom Token Limit (Override)" : "New Token Limit"}
+								</span>
 								<div className="relative flex items-center">
 									<Input
 										type="number"

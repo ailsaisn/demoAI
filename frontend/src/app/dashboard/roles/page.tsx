@@ -149,7 +149,6 @@ export default function RolesPage() {
 											<div className="flex justify-end gap-2">
 												<Button
 													variant="outline"
-													size="md"
 													className="border-gray-200 font-medium"
 													onClick={() => handleEditRole(role)}
 												>

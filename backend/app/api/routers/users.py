@@ -114,10 +114,12 @@ async def _hydrate_user(user: User, db: AsyncSession) -> dict:
             t_stmt = select(AppConfig.value).where(AppConfig.key == type_key)
             t_res = await db.execute(t_stmt)
             t_val = t_res.scalar_one_or_none()
-            if t_val and t_val.isdigit() and int(t_val) > 0:
-                user_dict["token_limit"] = int(t_val)
-                if user_dict["status"] == "Active" and tokens_used >= int(t_val) * 0.9:
-                    user_dict["status"] = "Warning"
+            global_doc_limit = int(t_val) if (t_val and t_val.isdigit() and int(t_val) > 0) else 0
+
+            # If user has custom override (user.token_limit > 0), prioritize it; otherwise use global limit
+            effective_limit = user.token_limit if (user.token_limit is not None and user.token_limit > 0) else global_doc_limit
+            if user_dict["status"] == "Active" and effective_limit > 0 and tokens_used >= effective_limit * 0.9:
+                user_dict["status"] = "Warning"
         elif user_dict["status"] == "Active" and user.token_limit and user.token_limit > 0:
             if tokens_used >= user.token_limit * 0.9:
                 user_dict["status"] = "Warning"
@@ -140,10 +142,10 @@ async def list_users(
     stmt = select(User).where(User.deleted_at.is_(None))
     if type:
         stmt = stmt.where(User.type == type)
+    stmt = stmt.order_by(User.created_at.desc())
     result = await db.execute(stmt)
     users = result.scalars().all()
-    
-    return [await _hydrate_user(user, db) for user in users]
+    return [await _hydrate_user(u, db) for u in users]
 
 @router.post("/staff", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
 async def create_staff(
@@ -186,7 +188,7 @@ async def get_user(
     db: AsyncSession = Depends(get_db),
     current_admin: User = Depends(RequireAccess("users:read"))
 ):
-    stmt = select(User).where(User.id == user_id)
+    stmt = select(User).where(User.id == user_id, User.deleted_at.is_(None))
     user = (await db.execute(stmt)).scalar_one_or_none()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
@@ -222,13 +224,26 @@ async def update_user(
             
             if not user_branches:
                 raise HTTPException(status_code=400, detail="Doctor is not assigned to any branch yet.")
-                
-            max_branch_limit = max([b.token_limit for b in user_branches if b.token_limit] or [0])
+
+            # Check if global mode is active to determine max branch limit
+            from app.models.config import AppConfig
+            cfg_stmt = select(AppConfig.value).where(AppConfig.key == "GLOBAL_TOKEN_LIMIT_ACTIVE")
+            cfg_res = await db.execute(cfg_stmt)
+            is_global_mode = (cfg_res.scalar_one_or_none() or "false").lower() == "true"
+
+            if is_global_mode:
+                gl_stmt = select(AppConfig.value).where(AppConfig.key == "GLOBAL_TOKEN_LIMIT")
+                gl_res = await db.execute(gl_stmt)
+                gl_val = gl_res.scalar_one_or_none()
+                max_branch_limit = int(gl_val) if (gl_val and gl_val.isdigit() and int(gl_val) > 0) else max([b.token_limit for b in user_branches if b.token_limit] or [0])
+            else:
+                max_branch_limit = max([b.token_limit for b in user_branches if b.token_limit] or [0])
+
             if max_branch_limit == 0:
-                raise HTTPException(status_code=400, detail="Branch token limit must be set in the Branches menu before setting doctor token limit.")
+                raise HTTPException(status_code=400, detail="Branch token limit must be set before setting doctor token limit.")
                 
             if update_data["token_limit"] > max_branch_limit:
-                raise HTTPException(status_code=400, detail=f"Doctor token limit ({update_data['token_limit']}) cannot exceed branch token limit ({max_branch_limit}).")
+                raise HTTPException(status_code=400, detail=f"Doctor token limit ({update_data['token_limit']:,}) cannot exceed branch token limit ({max_branch_limit:,}).")
     else:
         update_data = StaffUpdate(**user_in).model_dump(exclude_unset=True)
 

@@ -51,6 +51,7 @@ export const useCreateProject = () => {
 		onSuccess: () => {
 			toast.success("Project created successfully!");
 			queryClient.invalidateQueries({ queryKey: projectKeys.all });
+			queryClient.invalidateQueries({ queryKey: knowledgeKeys.all });
 		},
 		onError: (error: unknown) => {
 			toast.error(getErrorMessage(error, "Failed to create project."));
@@ -69,6 +70,7 @@ export const useUpdateProject = () => {
 		onSuccess: (_, variables) => {
 			toast.success("Project updated successfully!");
 			queryClient.invalidateQueries({ queryKey: projectKeys.all });
+			queryClient.invalidateQueries({ queryKey: knowledgeKeys.all });
 			if (variables?.id) {
 				queryClient.invalidateQueries({ queryKey: projectKeys.detail(variables.id) });
 			}
@@ -90,6 +92,7 @@ export const useDeleteProject = () => {
 			toast.success("Project deleted successfully!");
 			queryClient.invalidateQueries({ queryKey: projectKeys.all });
 			queryClient.invalidateQueries({ queryKey: knowledgeKeys.all });
+			queryClient.invalidateQueries({ queryKey: ["knowledge-batch"] });
 		},
 		onError: (error: unknown) => {
 			toast.error(getErrorMessage(error, "Failed to delete project."));

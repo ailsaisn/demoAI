@@ -4,6 +4,8 @@ import { useEffect, useState, useMemo } from "react";
 import {
 	Dialog,
 	DialogContent,
+	DialogDescription,
+	DialogFooter,
 	DialogHeader,
 	DialogTitle,
 } from "@/components/ui/dialog";
@@ -213,6 +215,7 @@ interface RoleDialogProps {
 export function RoleDialog({ isOpen, onOpenChange, role, mode }: RoleDialogProps) {
 	const [name, setName] = useState("");
 	const [selectedUiKeys, setSelectedUiKeys] = useState<string[]>([]);
+	const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
 
 	const createRole = useCreateRole();
 	const updateRole = useUpdateRole();
@@ -228,6 +231,7 @@ export function RoleDialog({ isOpen, onOpenChange, role, mode }: RoleDialogProps
 					setName("");
 					setSelectedUiKeys([]);
 				}
+				setIsDeleteDialogOpen(false);
 			}, 0);
 		}
 	}, [isOpen, role, mode]);
@@ -312,169 +316,218 @@ export function RoleDialog({ isOpen, onOpenChange, role, mode }: RoleDialogProps
 		}
 	};
 
-	const handleDelete = () => {
+	const handleDeleteClick = () => {
 		if (!role) return;
 		if (role.name.toUpperCase() === "ADMIN") {
-			alert("The default ADMIN role cannot be deleted.");
 			return;
 		}
-		if (confirm(`Are you sure you want to delete the role "${role.name}"?`)) {
-			deleteRole.mutate(role.id, {
-				onSuccess: () => onOpenChange(false),
-			});
-		}
+		setIsDeleteDialogOpen(true);
+	};
+
+	const handleConfirmDelete = () => {
+		if (!role) return;
+		deleteRole.mutate(role.id, {
+			onSuccess: () => {
+				setIsDeleteDialogOpen(false);
+				onOpenChange(false);
+			},
+		});
 	};
 
 	const isPending = createRole.isPending || updateRole.isPending || deleteRole.isPending;
 	const isSystemAdmin = mode === "edit" && role?.name.toUpperCase() === "ADMIN";
 
 	return (
-		<Dialog open={isOpen} onOpenChange={onOpenChange}>
-			<DialogContent
-				showCloseButton={true}
-				className="sm:max-w-3xl max-h-[90vh] p-0 flex flex-col bg-white rounded-xl overflow-hidden shadow-2xl border-0"
-			>
-				{/* Modal Header */}
-				<DialogHeader className="p-4 sm:p-5 border-b border-gray-100 flex flex-row items-center justify-between shrink-0">
-					<DialogTitle className="text-base font-medium text-gray-900">
-						{mode === "add" ? "Add New Role" : `Edit Role: ${role?.name}`}
-					</DialogTitle>
-				</DialogHeader>
+		<>
+			<Dialog open={isOpen} onOpenChange={onOpenChange}>
+				<DialogContent
+					showCloseButton={true}
+					className="sm:max-w-3xl max-h-[90vh] p-0 flex flex-col bg-white rounded-xl overflow-hidden shadow-2xl border-0"
+				>
+					{/* Modal Header */}
+					<DialogHeader className="p-4 sm:p-5 border-b border-gray-100 flex flex-row items-center justify-between shrink-0">
+						<DialogTitle className="text-base font-medium text-gray-900">
+							{mode === "add" ? "Add New Role" : `Edit Role: ${role?.name}`}
+						</DialogTitle>
+					</DialogHeader>
 
-				{/* Modal Content Body */}
-				<div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-6">
-					{/* Role Name */}
-					<Field>
-						<FieldLabel>
-							<FieldTitle className="text-sm font-normal text-gray-900">Role Name</FieldTitle>
-						</FieldLabel>
-						<FieldContent>
-							<div className="relative">
-								<Input
-									placeholder="Head Department Functional"
-									value={name}
-									onChange={(e) => setName(e.target.value)}
-									disabled={isSystemAdmin}
-									className="border-gray-200 bg-white focus-visible:ring-blue-500 font-normal text-sm h-10 rounded-lg uppercase"
-								/>
+					{/* Modal Content Body */}
+					<div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-6">
+						{/* Role Name */}
+						<Field>
+							<FieldLabel>
+								<FieldTitle className="text-sm font-normal text-gray-900">Role Name</FieldTitle>
+							</FieldLabel>
+							<FieldContent>
+								<div className="relative">
+									<Input
+										placeholder="Head Department Functional"
+										value={name}
+										onChange={(e) => setName(e.target.value)}
+										disabled={isSystemAdmin}
+										className="border-gray-200 bg-white focus-visible:ring-blue-500 font-normal text-sm h-10 rounded-lg uppercase"
+									/>
+								</div>
+								{isSystemAdmin && (
+									<p className="text-xs text-amber-600 mt-1">
+										The default ADMIN role name is protected and cannot be modified.
+									</p>
+								)}
+							</FieldContent>
+						</Field>
+
+						{/* Role Permission Section */}
+						<div className="space-y-3">
+							<div className="flex items-center justify-between">
+								<span className="text-sm font-normal text-gray-900">Role Permission</span>
+								<label className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer select-none">
+									<Checkbox
+										checked={isAllSelected}
+										onCheckedChange={toggleGlobalSelectAll}
+									/>
+									<span className="text-sm text-gray-700">
+										Select All ({selectedModulesCount} out of {totalModules})
+									</span>
+								</label>
 							</div>
-							{isSystemAdmin && (
-								<p className="text-xs text-amber-600 mt-1">
-									The default ADMIN role name is protected and cannot be modified.
-								</p>
-							)}
-						</FieldContent>
-					</Field>
 
-					{/* Role Permission Section */}
-					<div className="space-y-3">
-						<div className="flex items-center justify-between">
-							<span className="text-sm font-normal text-gray-900">Role Permission</span>
-							<label className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer select-none">
-								<Checkbox
-									checked={isAllSelected}
-									onCheckedChange={toggleGlobalSelectAll}
-								/>
-								<span className="text-sm text-gray-700">
-									Select All ({selectedModulesCount} out of {totalModules})
-								</span>
-							</label>
-						</div>
+							{/* Module Rows List */}
+							<div className="divide-y divide-gray-100 border border-gray-100 rounded-lg overflow-hidden bg-white">
+								{MODULES_CONFIG.map((module) => {
+									const moduleKeys = module.actions.map((a) => a.key);
+									const isModuleActive = moduleKeys.some((k) =>
+										selectedUiKeys.includes(k),
+									);
 
-						{/* Module Rows List */}
-						<div className="divide-y divide-gray-100 border border-gray-100 rounded-lg overflow-hidden bg-white">
-							{MODULES_CONFIG.map((module) => {
-								const moduleKeys = module.actions.map((a) => a.key);
-								const isModuleActive = moduleKeys.some((k) =>
-									selectedUiKeys.includes(k),
-								);
+									return (
+										<div
+											key={module.id}
+											className="flex flex-col sm:flex-row sm:items-center justify-between p-3.5 gap-3 hover:bg-gray-50/50 transition-colors"
+										>
+											{/* Module Title Checkbox */}
+											<label className="flex items-center gap-2.5 cursor-pointer min-w-44 select-none">
+												<Checkbox
+													checked={isModuleActive}
+													onCheckedChange={() => toggleModule(module)}
+												/>
+												<span className="text-sm font-normal text-gray-800">
+													{module.name}
+												</span>
+											</label>
 
-								return (
-									<div
-										key={module.id}
-										className="flex flex-col sm:flex-row sm:items-center justify-between p-3.5 gap-3 hover:bg-gray-50/50 transition-colors"
-									>
-										{/* Module Title Checkbox */}
-										<label className="flex items-center gap-2.5 cursor-pointer min-w-44 select-none">
-											<Checkbox
-												checked={isModuleActive}
-												onCheckedChange={() => toggleModule(module)}
-											/>
-											<span className="text-sm font-normal text-gray-800">
-												{module.name}
-											</span>
-										</label>
-
-										{/* Action Checkboxes (Create, Read, Update, Delete) */}
-										<div className="flex items-center flex-wrap gap-4 sm:gap-6">
-											{module.actions.map((action) => {
-												const isChecked = selectedUiKeys.includes(action.key);
-												return (
-													<label
-														key={`${module.id}-${action.id}`}
-														className="flex items-center gap-2 cursor-pointer text-sm text-gray-600 hover:text-gray-900 select-none"
-													>
-														<Checkbox
-															checked={isChecked}
-															onCheckedChange={() => toggleAction(module, action.id, action.key)}
-														/>
-														<span className="text-sm text-gray-700">{action.label}</span>
-													</label>
-												);
-											})}
+											{/* Action Checkboxes (Create, Read, Update, Delete) */}
+											<div className="flex items-center flex-wrap gap-4 sm:gap-6">
+												{module.actions.map((action) => {
+													const isChecked = selectedUiKeys.includes(action.key);
+													return (
+														<label
+															key={`${module.id}-${action.id}`}
+															className="flex items-center gap-2 cursor-pointer text-sm text-gray-600 hover:text-gray-900 select-none"
+														>
+															<Checkbox
+																checked={isChecked}
+																onCheckedChange={() => toggleAction(module, action.id, action.key)}
+															/>
+															<span className="text-sm text-gray-700">{action.label}</span>
+														</label>
+													);
+												})}
+											</div>
 										</div>
-									</div>
-								);
-							})}
+									);
+								})}
+							</div>
 						</div>
 					</div>
-				</div>
 
-				{/* Modal Footer */}
-				<div className="p-4 border-t border-gray-100 bg-white flex items-center justify-between shrink-0">
-					{mode === "edit" && !isSystemAdmin ? (
-						<Button
-							variant="outline"
-							className="border-red-500 text-red-600 hover:bg-red-50 hover:text-red-700"
-							onClick={handleDelete}
-							disabled={isPending}
-						>
-							<RiDeleteBinLine className="mr-2 h-4 w-4 shrink-0" />
+					{/* Modal Footer */}
+					<div className="p-4 border-t border-gray-100 bg-white flex items-center justify-between shrink-0">
+						{mode === "edit" && !isSystemAdmin ? (
+							<Button
+								variant="outline"
+								className="border-red-500 text-red-600 hover:bg-red-50 hover:text-red-700"
+								onClick={handleDeleteClick}
+								disabled={isPending}
+							>
+								<RiDeleteBinLine className="mr-2 h-4 w-4 shrink-0" />
+								Delete Role
+							</Button>
+						) : (
+							<div />
+						)}
+
+						<div className="flex items-center gap-3">
+							<Button
+								variant="outline"
+								className="border-blue-500 text-blue-600 hover:bg-blue-50 px-5 rounded-lg"
+								onClick={() => onOpenChange(false)}
+							>
+								Cancel
+							</Button>
+							<Button
+								className="bg-blue-600 text-white hover:bg-blue-700 px-5 rounded-lg font-medium"
+								onClick={handleSave}
+								disabled={isPending || !name.trim()}
+							>
+								{isPending ? (
+									<RiLoader4Line className="mr-2 h-4 w-4 animate-spin shrink-0" />
+								) : mode === "add" ? (
+									<RiAddLine className="mr-2 h-4 w-4 shrink-0" />
+								) : (
+									<RiCheckLine className="mr-2 h-4 w-4 shrink-0" />
+								)}
+								{isPending
+									? "Saving..."
+									: mode === "add"
+									? "Add Role"
+									: "Save Changes"}
+							</Button>
+						</div>
+					</div>
+				</DialogContent>
+			</Dialog>
+
+			{/* Delete Confirmation Modal */}
+			<Dialog open={isDeleteDialogOpen} onOpenChange={setIsDeleteDialogOpen}>
+				<DialogContent className="sm:max-w-md p-0 flex flex-col gap-0 rounded-xl overflow-hidden bg-white border-0 shadow-2xl">
+					<DialogHeader className="p-5 pb-2">
+						<DialogTitle className="text-base font-semibold text-gray-900 text-left">
 							Delete Role
-						</Button>
-					) : (
-						<div />
-					)}
+						</DialogTitle>
+					</DialogHeader>
 
-					<div className="flex items-center gap-3">
+					<div className="px-5 py-2">
+						<DialogDescription className="text-sm text-gray-600 leading-relaxed text-left">
+							Are you sure you want to delete the role <span className="font-semibold text-gray-900">&quot;{role?.name}&quot;</span>? This action cannot be undone and will remove associated permissions for users assigned to this role.
+						</DialogDescription>
+					</div>
+
+					<DialogFooter className="p-5 pt-4 flex flex-row items-center justify-end gap-3 border-t border-gray-100 bg-gray-50/50">
 						<Button
+							type="button"
 							variant="outline"
-							className="border-blue-500 text-blue-600 hover:bg-blue-50 px-5 rounded-lg"
-							onClick={() => onOpenChange(false)}
+							onClick={() => setIsDeleteDialogOpen(false)}
+							disabled={deleteRole.isPending}
+							className="border-gray-200 text-gray-700 hover:bg-gray-100 rounded-lg px-5 h-10 font-medium text-sm"
 						>
 							Cancel
 						</Button>
 						<Button
-							className="bg-blue-600 text-white hover:bg-blue-700 px-5 rounded-lg font-medium"
-							onClick={handleSave}
-							disabled={isPending || !name.trim()}
+							type="button"
+							onClick={handleConfirmDelete}
+							disabled={deleteRole.isPending}
+							className="bg-red-600 hover:bg-red-700 text-white rounded-lg px-5 h-10 font-medium text-sm shadow-none"
 						>
-							{isPending ? (
-								<RiLoader4Line className="mr-2 h-4 w-4 animate-spin shrink-0" />
-							) : mode === "add" ? (
-								<RiAddLine className="mr-2 h-4 w-4 shrink-0" />
+							{deleteRole.isPending ? (
+								<RiLoader4Line className="mr-1.5 h-4 w-4 animate-spin" />
 							) : (
-								<RiCheckLine className="mr-2 h-4 w-4 shrink-0" />
+								<RiDeleteBinLine className="mr-1.5 h-4 w-4" />
 							)}
-							{isPending
-								? "Saving..."
-								: mode === "add"
-								? "Add Role"
-								: "Save Changes"}
+							{deleteRole.isPending ? "Deleting..." : "Delete Role"}
 						</Button>
-					</div>
-				</div>
-			</DialogContent>
-		</Dialog>
+					</DialogFooter>
+				</DialogContent>
+			</Dialog>
+		</>
 	);
 }

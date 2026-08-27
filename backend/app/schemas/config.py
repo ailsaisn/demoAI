@@ -1,4 +1,5 @@
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
+from typing import Any
 import uuid
 from datetime import datetime
 
@@ -37,4 +38,27 @@ class GlobalMonthlyUsageResponse(BaseModel):
     remaining: int | None = None
     percentage: float | None = None
     is_global_active: bool = False
+
+class DatabaseResetRequest(BaseModel):
+    confirmation: str = Field(
+        default="RESET_AND_RESEED",
+        description="Safety phrase. Must be exactly 'RESET_AND_RESEED' to trigger table wipe.",
+        examples=["RESET_AND_RESEED"],
+    )
+    admin_email: str = Field(
+        default="admin@mail.com",
+        description="Default admin user email",
+        examples=["admin@mail.com"],
+    )
+    admin_password: str = Field(
+        default="Erhadermies@123",
+        description="Default admin user password",
+        examples=["Erhadermies@123"],
+    )
+
+class DatabaseResetResponse(BaseModel):
+    status: str
+    message: str
+    details: dict[str, Any]
+
 

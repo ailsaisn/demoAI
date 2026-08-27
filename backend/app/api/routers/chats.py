@@ -512,9 +512,13 @@ ALLOWED_MIME_TYPES = {
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     "application/vnd.ms-excel",
     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "application/vnd.ms-powerpoint",
+    "application/vnd.openxmlformats-officedocument.presentationml.presentation",
     "text/plain",
+    "text/csv",
     "image/jpeg",
-    "image/png"
+    "image/png",
+    "image/webp"
 }
 
 @router.post("/{session_id}/messages", status_code=status.HTTP_201_CREATED)

@@ -56,7 +56,7 @@ api.interceptors.response.use(
 			// For auth endpoint failures or requests that were already retried once
 			if (isAuthEndpoint || originalRequest._retry) {
 				if (
-					url.includes("/auth/refresh") &&
+					(url.includes("/auth/refresh") || originalRequest._retry) &&
 					typeof window !== "undefined" &&
 					window.location.pathname !== "/login"
 				) {

@@ -4,7 +4,6 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { RiEdit2Line, RiSettings3Line } from "@remixicon/react";
-import Image from "next/image";
 import { useState } from "react";
 import { UserResponse } from "../api/types";
 import { DoctorAdjustLimitDialog } from "./doctor-adjust-limit-dialog";
@@ -33,8 +32,12 @@ export function DoctorDetailsSheet({
 	const drTypeUpper = (doctor?.dr_type || "").toUpperCase();
 	const isSpDVE = drTypeUpper.includes("SPKK") || drTypeUpper.includes("SPDVE") || drTypeUpper.includes("SPDV");
 	const isGP = drTypeUpper.includes("GP") || drTypeUpper.includes("UMUM");
-	const effectiveGlobalLimit = isSpDVE ? Number(spdveLimit) : isGP ? Number(gpPlusLimit) : (doctor?.token_limit ?? 0);
-	const effectiveLimit = isGlobalLimitActive ? effectiveGlobalLimit : (doctor?.token_limit ?? 0);
+	const effectiveGlobalLimit = isSpDVE ? Number(spdveLimit) : isGP ? Number(gpPlusLimit) : 0;
+	
+	const hasCustomLimit = doctor?.token_limit !== null && doctor?.token_limit !== undefined && doctor.token_limit > 0;
+	const effectiveLimit = hasCustomLimit
+		? doctor.token_limit!
+		: (isGlobalLimitActive ? effectiveGlobalLimit : (doctor?.token_limit ?? 0));
 	const tokensUsed = doctor?.tokens_used ?? 0;
 	const tokensRemaining = Math.max(0, effectiveLimit - tokensUsed);
 
@@ -49,12 +52,6 @@ export function DoctorDetailsSheet({
 					<>
 						<div className="flex-1 overflow-y-auto pb-6">
 							<div className="flex flex-col pb-4">
-								{/* Profile Cover Image */}
-								<div className="relative h-65 w-full bg-gray-100 overflow-hidden shrink-0">
-									<Image src="/placeholder.svg" alt={doctor.name} fill className="object-cover" />
-									<div className="absolute top-4 right-4 z-10"></div>
-								</div>
-
 								{/* Details Section */}
 								<div className="flex flex-col gap-4 px-6 py-4">
 									<div className="flex flex-col gap-2">
@@ -81,9 +78,14 @@ export function DoctorDetailsSheet({
 										<span className="text-sm text-gray-500">Dr Type</span>
 										<div className="flex items-center gap-2">
 											<span className="text-sm text-gray-900">{doctor.dr_type || "-"}</span>
-											{isGlobalLimitActive && (
+											{isGlobalLimitActive && !hasCustomLimit && (
 												<span className="text-xs bg-blue-50 text-blue-600 px-2 py-0.5 rounded-full font-medium border border-blue-100">
 													{isSpDVE ? "SpDVE Global Quota" : isGP ? "GP Plus Global Quota" : "Global Quota"}
+												</span>
+											)}
+											{isGlobalLimitActive && hasCustomLimit && (
+												<span className="text-xs bg-emerald-50 text-emerald-700 px-2 py-0.5 rounded-full font-medium border border-emerald-200">
+													Custom Override
 												</span>
 											)}
 										</div>
@@ -103,20 +105,20 @@ export function DoctorDetailsSheet({
 												</span>
 												{isGlobalLimitActive && (
 													<span className="text-xs text-blue-600 font-normal">
-														Managed by Global Doctor Type Quota
+														{hasCustomLimit
+															? "Custom Override (Individual Doctor Limit)"
+															: "Managed by Global Doctor Type Quota"}
 													</span>
 												)}
 											</div>
-											{!isGlobalLimitActive && (
-												<Button
-													variant="outline"
-													className=""
-													onClick={() => setIsAdjustLimitOpen(true)}
-												>
-													<RiEdit2Line className="mr-2 h-4 w-4" />
-													Adjust Limit
-												</Button>
-											)}
+											<Button
+												variant="outline"
+												className=""
+												onClick={() => setIsAdjustLimitOpen(true)}
+											>
+												<RiEdit2Line className="mr-2 h-4 w-4" />
+												Adjust Limit
+											</Button>
 										</div>
 									</div>
 

@@ -85,7 +85,8 @@ export function AttachProjectDialog({
 						}),
 					),
 				);
-				toast.success(`All ${idsToUpdate.length} documents attached to project successfully!`);
+				const actionText = targetProjectId ? "attached to project" : "detached from project";
+				toast.success(`All ${idsToUpdate.length} documents ${actionText} successfully!`);
 			} else {
 				await updateKnowledgeProjectMutation.mutateAsync({
 					knowledgeId: idsToUpdate[0],

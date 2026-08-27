@@ -8,6 +8,13 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { SearchBar } from "@/components/shared/search-bar";
 import {
+	Select,
+	SelectContent,
+	SelectItem,
+	SelectTrigger,
+	SelectValue,
+} from "@/components/ui/select";
+import {
 	Table,
 	TableBody,
 	TableCell,
@@ -21,14 +28,18 @@ import { DoctorDetailsSheet } from "./components/doctor-details-sheet";
 import { UserAddSheet } from "./components/user-add-sheet";
 import { UserStaffProfileSheet } from "./components/user-staff-profile-sheet";
 import { useUsers } from "./hooks/use-users";
+import { useBranches } from "../branches/hooks/use-branches";
 import { UserResponse } from "./api/types";
 
 export default function UsersPage() {
 	const [activeTab, setActiveTab] = useState<string>("staff");
 	const [searchQuery, setSearchQuery] = useState("");
+	const [selectedDrType, setSelectedDrType] = useState<string>("all");
+	const [selectedBranch, setSelectedBranch] = useState<string>("all");
 
 	const { data: staffData = [] } = useUsers("STAFF");
 	const { data: doctorData = [] } = useUsers("DOCTOR");
+	const { data: branches = [] } = useBranches();
 
 	const [selectedDoctor, setSelectedDoctor] = useState<UserResponse | null>(null);
 	const [isSheetOpen, setIsSheetOpen] = useState(false);
@@ -50,6 +61,15 @@ export default function UsersPage() {
 	const selectedDoctorLive = doctorData.find((d) => d.id === selectedDoctor?.id) || selectedDoctor;
 	const selectedStaffLive = staffData.find((s) => s.id === selectedStaff?.id) || selectedStaff;
 
+	// Extract unique doctor types
+	const doctorTypes = useMemo(() => {
+		const types = new Set<string>();
+		doctorData.forEach((d) => {
+			if (d.dr_type) types.add(d.dr_type);
+		});
+		return Array.from(types).sort();
+	}, [doctorData]);
+
 	// Filtered items based on search query
 	const filteredStaff = useMemo(() => {
 		if (!searchQuery.trim()) return staffData;
@@ -63,17 +83,47 @@ export default function UsersPage() {
 	}, [staffData, searchQuery]);
 
 	const filteredDoctors = useMemo(() => {
-		if (!searchQuery.trim()) return doctorData;
-		const q = searchQuery.toLowerCase();
-		return doctorData.filter(
-			(d) =>
-				d.name?.toLowerCase().includes(q) ||
-				d.email?.toLowerCase().includes(q) ||
-				d.employee_id?.toLowerCase().includes(q) ||
-				d.dr_type?.toLowerCase().includes(q) ||
-				d.branches?.some((b) => b.name.toLowerCase().includes(q)),
-		);
-	}, [doctorData, searchQuery]);
+		return doctorData.filter((d) => {
+			// Search query match
+			if (searchQuery.trim()) {
+				const q = searchQuery.toLowerCase();
+				const matchesQuery =
+					d.name?.toLowerCase().includes(q) ||
+					d.email?.toLowerCase().includes(q) ||
+					d.employee_id?.toLowerCase().includes(q) ||
+					d.dr_type?.toLowerCase().includes(q) ||
+					d.branches?.some((b) => b.name.toLowerCase().includes(q));
+				if (!matchesQuery) return false;
+			}
+
+			// Doctor Type filter
+			if (selectedDrType !== "all") {
+				if (d.dr_type !== selectedDrType) return false;
+			}
+
+			// Branch filter
+			if (selectedBranch !== "all") {
+				const hasBranch = d.branches?.some(
+					(b) => b.id === selectedBranch || b.name === selectedBranch,
+				);
+				if (!hasBranch) return false;
+			}
+
+			return true;
+		});
+	}, [doctorData, searchQuery, selectedDrType, selectedBranch]);
+
+	// Selected filter labels
+	const selectedBranchName = useMemo(() => {
+		if (selectedBranch === "all") return "Select branch";
+		const branch = branches.find((b) => b.id === selectedBranch);
+		return branch ? branch.name : "Select branch";
+	}, [selectedBranch, branches]);
+
+	const selectedDrTypeName = useMemo(() => {
+		if (selectedDrType === "all") return "Select doctor type";
+		return selectedDrType;
+	}, [selectedDrType]);
 
 	return (
 		<div className="flex flex-col h-full gap-6 p-6">
@@ -100,22 +150,61 @@ export default function UsersPage() {
 					</TabsTrigger>
 				</TabsList>
 
-				<div className="flex items-center justify-between mb-4">
-					<SearchBar
-						containerClassName="max-w-md"
-						placeholder="Search for user, staff, or doctor..."
-						value={searchQuery}
-						onChange={(e) => setSearchQuery(e.target.value)}
-					/>
-					<div className="flex items-center gap-2">
-						<Button
-							className="bg-blue-600 hover:bg-blue-700"
-							onClick={() => setIsAddUserOpen(true)}
-						>
-							<RiAddLine className="mr-2 h-4 w-4" />
-							Add New User
-						</Button>
+				<div className="flex items-center justify-between mb-4 gap-3 flex-wrap">
+					<div className="flex items-center gap-3 flex-1 flex-wrap">
+						<SearchBar
+							containerClassName="max-w-md w-full"
+							placeholder={activeTab === "doctors" ? "Search for doctor's name" : "Search for user, staff, or doctor..."}
+							value={searchQuery}
+							onChange={(e) => setSearchQuery(e.target.value)}
+						/>
+						{activeTab === "doctors" && (
+							<>
+								<Select value={selectedDrType} onValueChange={(val) => setSelectedDrType(val ?? "all")}>
+									<SelectTrigger className="w-60 bg-white border-gray-200 text-gray-700 h-10 rounded-md">
+										<SelectValue placeholder="Select doctor type">
+											{selectedDrTypeName}
+										</SelectValue>
+									</SelectTrigger>
+									<SelectContent alignItemWithTrigger={false} sideOffset={4} className="bg-white">
+										<SelectItem value="all">Select doctor type</SelectItem>
+										{doctorTypes.map((type) => (
+											<SelectItem key={type} value={type}>
+												{type}
+											</SelectItem>
+										))}
+									</SelectContent>
+								</Select>
+
+								<Select value={selectedBranch} onValueChange={(val) => setSelectedBranch(val ?? "all")}>
+									<SelectTrigger className="w-60 bg-white border-gray-200 text-gray-700 h-10 rounded-md">
+										<SelectValue placeholder="Select branch">
+											{selectedBranchName}
+										</SelectValue>
+									</SelectTrigger>
+									<SelectContent alignItemWithTrigger={false} sideOffset={4} className="bg-white">
+										<SelectItem value="all">Select branch</SelectItem>
+										{branches.map((b) => (
+											<SelectItem key={b.id} value={b.id}>
+												{b.name}
+											</SelectItem>
+										))}
+									</SelectContent>
+								</Select>
+							</>
+						)}
 					</div>
+					{activeTab === "staff" && (
+						<div className="flex items-center gap-2">
+							<Button
+								className="bg-blue-600 hover:bg-blue-700"
+								onClick={() => setIsAddUserOpen(true)}
+							>
+								<RiAddLine className="mr-2 h-4 w-4" />
+								Add New User
+							</Button>
+						</div>
+					)}
 				</div>
 
 				{/* Staff Tab Content */}

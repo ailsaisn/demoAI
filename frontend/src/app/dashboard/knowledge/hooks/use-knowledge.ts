@@ -69,6 +69,9 @@ export const useUploadKnowledge = () => {
 		onSuccess: () => {
 			toast.success("Files uploaded successfully!");
 			queryClient.invalidateQueries({ queryKey: knowledgeKeys.all });
+			queryClient.invalidateQueries({ queryKey: projectKeys.all });
+			queryClient.invalidateQueries({ queryKey: ["knowledge-batch"] });
+			queryClient.invalidateQueries({ queryKey: ["knowledge-ingestion-quota"] });
 		},
 		onError: (error: unknown) => {
 			toast.error(getErrorMessage(error, "Failed to upload knowledge files."));
@@ -87,10 +90,12 @@ export const useUpdateKnowledgeStatus = () => {
 		onSuccess: (_, variables) => {
 			toast.success("Status updated successfully!");
 			queryClient.invalidateQueries({ queryKey: knowledgeKeys.all });
+			queryClient.invalidateQueries({ queryKey: projectKeys.all });
 			if (variables?.id) {
 				queryClient.invalidateQueries({ queryKey: knowledgeKeys.detail(variables.id) });
 			}
 			queryClient.invalidateQueries({ queryKey: ["knowledge-batch"] });
+			queryClient.invalidateQueries({ queryKey: ["knowledge-ingestion-quota"] });
 		},
 		onError: (error: unknown) => {
 			toast.error(getErrorMessage(error, "Failed to update status."));
@@ -109,8 +114,10 @@ export const useApproveKnowledge = () => {
 		onSuccess: (_, id) => {
 			toast.success("Document approved and indexed into AI Knowledge Base!");
 			queryClient.invalidateQueries({ queryKey: knowledgeKeys.all });
+			queryClient.invalidateQueries({ queryKey: projectKeys.all });
 			queryClient.invalidateQueries({ queryKey: knowledgeKeys.detail(id) });
 			queryClient.invalidateQueries({ queryKey: ["knowledge-batch"] });
+			queryClient.invalidateQueries({ queryKey: ["knowledge-ingestion-quota"] });
 		},
 		onError: (error: unknown) => {
 			toast.error(getErrorMessage(error, "Failed to approve and index document."));
@@ -129,7 +136,9 @@ export const useApproveBatchKnowledge = () => {
 		onSuccess: () => {
 			toast.success("All documents approved and indexed into AI Knowledge Base!");
 			queryClient.invalidateQueries({ queryKey: knowledgeKeys.all });
+			queryClient.invalidateQueries({ queryKey: projectKeys.all });
 			queryClient.invalidateQueries({ queryKey: ["knowledge-batch"] });
+			queryClient.invalidateQueries({ queryKey: ["knowledge-ingestion-quota"] });
 		},
 		onError: (error: unknown) => {
 			toast.error(getErrorMessage(error, "Failed to approve batch documents."));
@@ -145,14 +154,20 @@ export const useDeleteKnowledge = () => {
 			const id = typeof param === "string" ? param : param.id;
 			const hideToast = typeof param === "string" ? false : !!param.hideToast;
 			const response = await api.delete(`/knowledge/${id}`);
-			return { data: response.data, hideToast };
+			return { data: response.data, hideToast, id };
 		},
-		onSuccess: (result) => {
+		onSuccess: (result, variables) => {
 			if (!result?.hideToast) {
 				toast.success("Knowledge deleted successfully!");
 			}
 			queryClient.invalidateQueries({ queryKey: knowledgeKeys.all });
+			queryClient.invalidateQueries({ queryKey: projectKeys.all });
 			queryClient.invalidateQueries({ queryKey: ["knowledge-batch"] });
+			queryClient.invalidateQueries({ queryKey: ["knowledge-ingestion-quota"] });
+			const id = typeof variables === "string" ? variables : variables.id;
+			if (id) {
+				queryClient.invalidateQueries({ queryKey: knowledgeKeys.detail(id) });
+			}
 		},
 		onError: (error: unknown) => {
 			toast.error(getErrorMessage(error, "Failed to delete knowledge document."));
@@ -166,13 +181,14 @@ export const useEditKnowledge = () => {
 	return useMutation({
 		mutationFn: async ({ id, data, hideToast }: { id: string; data: { summary: string; categories: string[]; visibility_settings?: VisibilitySettings; title?: string }; hideToast?: boolean }) => {
 			const response = await api.put(`/knowledge/${id}`, data);
-			return { data: response.data, hideToast };
+			return { data: response.data, hideToast, id };
 		},
 		onSuccess: (result, variables) => {
 			if (!result.hideToast) {
 				toast.success("Document updated successfully!");
 			}
 			queryClient.invalidateQueries({ queryKey: knowledgeKeys.all });
+			queryClient.invalidateQueries({ queryKey: projectKeys.all });
 			queryClient.invalidateQueries({ queryKey: knowledgeKeys.detail(variables.id) });
 			queryClient.invalidateQueries({ queryKey: ["knowledge-batch"] });
 		},
@@ -218,15 +234,18 @@ export const useUpdateKnowledgeProject = () => {
 			const response = await api.put(`/knowledge/${knowledgeId}/project`, {
 				project_id: projectId,
 			});
-			return { data: response.data, hideToast };
+			return { data: response.data, hideToast, knowledgeId };
 		},
-		onSuccess: (result) => {
+		onSuccess: (result, variables) => {
 			if (!result?.hideToast) {
 				toast.success("Knowledge project updated successfully!");
 			}
 			queryClient.invalidateQueries({ queryKey: knowledgeKeys.all });
 			queryClient.invalidateQueries({ queryKey: projectKeys.all });
 			queryClient.invalidateQueries({ queryKey: ["knowledge-batch"] });
+			if (variables?.knowledgeId) {
+				queryClient.invalidateQueries({ queryKey: knowledgeKeys.detail(variables.knowledgeId) });
+			}
 		},
 		onError: (error: unknown) => {
 			toast.error(getErrorMessage(error, "Failed to update project assignment."));
@@ -259,6 +278,8 @@ export const useQueryGeneral = () => {
 		onSuccess: (data) => {
 			if (data.action === "edit_applied" || data.action === "delete_applied") {
 				queryClient.invalidateQueries({ queryKey: knowledgeKeys.all });
+				queryClient.invalidateQueries({ queryKey: projectKeys.all });
+				queryClient.invalidateQueries({ queryKey: ["knowledge-batch"] });
 				if (data.target_knowledge_id) {
 					queryClient.invalidateQueries({ queryKey: knowledgeKeys.detail(data.target_knowledge_id) });
 				}
@@ -324,6 +345,8 @@ export const useSendGeneralChatMessage = (sessionId?: string | null) => {
 			const latestMsg = data.messages[data.messages.length - 1];
 			if (latestMsg?.action === "edit_applied" || latestMsg?.action === "delete_applied") {
 				queryClient.invalidateQueries({ queryKey: knowledgeKeys.all });
+				queryClient.invalidateQueries({ queryKey: projectKeys.all });
+				queryClient.invalidateQueries({ queryKey: ["knowledge-batch"] });
 				if (latestMsg.target_knowledge_id) {
 					queryClient.invalidateQueries({ queryKey: knowledgeKeys.detail(latestMsg.target_knowledge_id) });
 				}
