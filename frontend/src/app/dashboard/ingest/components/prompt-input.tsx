@@ -13,6 +13,7 @@ import {
 	RiAttachmentLine,
 	RiUploadCloud2Line,
 	RiCornerDownLeftLine,
+	RiLoader4Line,
 } from "@remixicon/react";
 import {
 	Attachment,
@@ -35,6 +36,9 @@ export interface PromptInputProps extends React.HTMLAttributes<HTMLDivElement> {
 	placeholder?: string;
 	minRows?: number;
 	disabled?: boolean;
+	isLoading?: boolean;
+	autoFocus?: boolean;
+	enableGlobalSlashFocus?: boolean;
 }
 
 export function PromptInput({
@@ -49,6 +53,9 @@ export function PromptInput({
 	placeholder,
 	minRows = 1,
 	disabled,
+	isLoading,
+	autoFocus,
+	enableGlobalSlashFocus = true,
 	...props
 }: PromptInputProps) {
 	const isControlled = value !== undefined;
@@ -148,7 +155,10 @@ export function PromptInput({
 		setAttachedFiles((prev) => prev.filter((_, index) => index !== indexToRemove));
 	};
 
+	const textareaRef = React.useRef<HTMLTextAreaElement>(null);
+
 	const handleSend = () => {
+		if (disabled || (!inputValue.trim() && attachedFiles.length === 0)) return;
 		const success = onSend?.(inputValue, undefined, attachedFiles);
 		if (success !== false) {
 			if (!isControlled) {
@@ -156,8 +166,37 @@ export function PromptInput({
 			}
 			onValueChange?.("");
 			setAttachedFiles([]);
+			if (textareaRef.current) {
+				textareaRef.current.style.height = "auto";
+			}
 		}
 	};
+
+	const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+		if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
+			e.preventDefault();
+			handleSend();
+		} else if (e.key === "Escape") {
+			e.currentTarget.blur();
+		}
+	};
+
+	React.useEffect(() => {
+		if (!enableGlobalSlashFocus) return;
+		const handleGlobalKeyDown = (e: KeyboardEvent) => {
+			const target = e.target as HTMLElement | null;
+			const isInputActive =
+				target?.tagName === "INPUT" ||
+				target?.tagName === "TEXTAREA" ||
+				target?.isContentEditable;
+			if (e.key === "/" && !isInputActive && !disabled) {
+				e.preventDefault();
+				textareaRef.current?.focus();
+			}
+		};
+		window.addEventListener("keydown", handleGlobalKeyDown);
+		return () => window.removeEventListener("keydown", handleGlobalKeyDown);
+	}, [disabled, enableGlobalSlashFocus]);
 
 	return (
 		<div
@@ -231,7 +270,9 @@ export function PromptInput({
 			{/* Input Area */}
 			<div className="mb-2">
 				<textarea
+					ref={textareaRef}
 					rows={minRows}
+					autoFocus={autoFocus}
 					disabled={disabled}
 					className="w-full bg-transparent resize-none outline-none border-none text-sm text-zinc-950 placeholder:text-zinc-500 overflow-y-auto max-h-32 custom-scrollbar disabled:opacity-50 disabled:cursor-not-allowed"
 					placeholder={
@@ -240,6 +281,7 @@ export function PromptInput({
 							: placeholder || "Describe what you want to ingest or ask..."
 					}
 					value={inputValue}
+					onKeyDown={handleKeyDown}
 					onChange={(e) => {
 						if (!isControlled) {
 							setUncontrolledValue(e.target.value);
@@ -289,11 +331,16 @@ export function PromptInput({
 				{/* Send Button */}
 				<Button
 					size="icon"
-					disabled={disabled || (!inputValue.trim() && attachedFiles.length === 0)}
-					className="h-8 w-8 bg-blue-600 hover:bg-blue-700 rounded-md shrink-0 text-white disabled:opacity-50"
+					disabled={disabled || isLoading || (!inputValue.trim() && attachedFiles.length === 0)}
+					title="Send (Enter) • New line (Shift+Enter)"
+					className="size-8 bg-blue-600 hover:bg-blue-700 rounded-lg shrink-0 text-white disabled:opacity-50 shadow-none cursor-pointer"
 					onClick={handleSend}
 				>
-					<RiCornerDownLeftLine className="size-4" />
+					{isLoading ? (
+						<RiLoader4Line className="size-4 animate-spin" />
+					) : (
+						<RiCornerDownLeftLine className="size-4" />
+					)}
 				</Button>
 			</div>
 		</div>

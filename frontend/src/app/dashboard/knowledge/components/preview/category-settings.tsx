@@ -131,7 +131,7 @@ export function CategorySettings({
 			{!isEditing && isEditMode && (
 				<Button
 					variant="outline"
-					className="w-fit mt-2 bg-white gap-2 font-medium"
+					className="w-fit mt-2 border-gray-200 bg-white text-zinc-700 hover:bg-zinc-50 rounded-lg px-4 h-9 font-medium text-sm transition-colors cursor-pointer shadow-none gap-2"
 					onClick={() => setIsEditing(true)}
 				>
 					<RiEdit2Line className="size-4" />
@@ -144,16 +144,19 @@ export function CategorySettings({
 					<p className="text-sm text-zinc-600 font-medium">Are these categories accurate?</p>
 					<div className="flex items-center gap-2">
 						<Button
+							type="button"
 							variant="outline"
 							onClick={() => {
 								setIsEditing(false);
 								onCancel?.();
 							}}
+							className="border-gray-200 bg-white text-zinc-700 hover:bg-zinc-50 rounded-lg px-4 h-10 font-medium text-sm transition-colors cursor-pointer shadow-none"
 						>
 							Cancel
 						</Button>
 						<Button
-							className="bg-blue-600 hover:bg-blue-700 text-white"
+							type="button"
+							className="bg-blue-600 hover:bg-blue-700 text-white rounded-lg px-4 h-10 font-medium text-sm transition-colors cursor-pointer shadow-none"
 							onClick={() => {
 								setIsEditing(false);
 								onSave?.();

@@ -31,7 +31,7 @@ import {
 } from "@remixicon/react";
 import { useProjects, useUpdateProject, useDeleteProject } from "../hooks/use-projects";
 import { ProjectDialog } from "./project-dialog";
-import { ConfirmationModal } from "@/components/shared/knowledge/ConfirmationModal";
+import { ConfirmationModal } from "@/components/shared/confirmation-modal";
 import type { ProjectResponse } from "../api/types";
 
 interface ProjectsTableProps {
@@ -128,9 +128,9 @@ export function ProjectsTable({ searchQuery = "" }: ProjectsTableProps) {
 
 				<Button
 					onClick={handleOpenAdd}
-					className="bg-blue-500 hover:bg-blue-600 text-white font-medium cursor-pointer rounded-lg shadow-none gap-1.5"
+					className="bg-blue-600 hover:bg-blue-700 text-white font-medium cursor-pointer rounded-lg px-4 h-10 shadow-none gap-2 text-sm transition-colors"
 				>
-					<RiAddCircleLine className="w-4 h-4" />
+					<RiAddCircleLine className="size-4 shrink-0" />
 					<span>Add Project</span>
 				</Button>
 			</div>
@@ -148,7 +148,7 @@ export function ProjectsTable({ searchQuery = "" }: ProjectsTableProps) {
 					<TableBody>
 						{isLoading && (
 							<TableRow>
-								<TableCell colSpan={3} className="text-center py-8 text-gray-500">
+								<TableCell colSpan={3} className="text-center py-8 text-zinc-600">
 									<div className="flex items-center justify-center">
 										<RiLoader4Line className="w-5 h-5 animate-spin mr-2" />
 										Loading projects...
@@ -159,7 +159,7 @@ export function ProjectsTable({ searchQuery = "" }: ProjectsTableProps) {
 
 						{isError && (
 							<TableRow>
-								<TableCell colSpan={3} className="text-center py-8 text-red-500">
+								<TableCell colSpan={3} className="text-center py-8 text-red-600">
 									Failed to load projects.
 								</TableCell>
 							</TableRow>
@@ -167,7 +167,7 @@ export function ProjectsTable({ searchQuery = "" }: ProjectsTableProps) {
 
 						{!isLoading && !isError && projects.length === 0 && (
 							<TableRow>
-								<TableCell colSpan={3} className="text-center py-12 text-gray-500">
+								<TableCell colSpan={3} className="text-center py-12 text-zinc-600">
 									<p className="text-sm">
 										{searchQuery
 											? "No projects matching your search."
@@ -209,7 +209,7 @@ export function ProjectsTable({ searchQuery = "" }: ProjectsTableProps) {
 															type="submit"
 															size="icon"
 															variant="ghost"
-															className="size-6 text-emerald-600 hover:bg-emerald-50"
+															className="size-6 text-blue-600 hover:bg-blue-50"
 														>
 															<RiCheckLine className="size-3.5" />
 														</Button>
@@ -218,7 +218,7 @@ export function ProjectsTable({ searchQuery = "" }: ProjectsTableProps) {
 															size="icon"
 															variant="ghost"
 															onClick={handleCancelInlineEdit}
-															className="size-6 text-gray-400 hover:bg-gray-100"
+															className="size-6 text-zinc-400 hover:bg-zinc-100"
 														>
 															<RiCloseLine className="size-3.5" />
 														</Button>
@@ -241,7 +241,7 @@ export function ProjectsTable({ searchQuery = "" }: ProjectsTableProps) {
 											</div>
 										</TableCell>
 
-										<TableCell className="whitespace-nowrap text-sm text-gray-500">
+										<TableCell className="whitespace-nowrap text-sm text-zinc-600">
 											{formatDate(project.created_at)}
 										</TableCell>
 
@@ -250,10 +250,9 @@ export function ProjectsTable({ searchQuery = "" }: ProjectsTableProps) {
 												<Button
 													onClick={() => handleRowClick(project)}
 													variant="outline"
-													size="md"
-													className="border-gray-200 font-medium cursor-pointer rounded-lg shadow-none"
+													className="border-gray-200 bg-white text-zinc-700 hover:bg-zinc-50 rounded-lg px-3 h-8 font-medium text-xs transition-colors cursor-pointer shadow-none gap-1.5"
 												>
-													<RiEyeLine className="mr-2 h-4 w-4" />
+													<RiEyeLine className="size-3.5 shrink-0" />
 													<span>View</span>
 												</Button>
 
@@ -263,7 +262,7 @@ export function ProjectsTable({ searchQuery = "" }: ProjectsTableProps) {
 															<Button
 																variant="ghost"
 																size="icon"
-																className="size-8 text-gray-500 hover:text-gray-900"
+																className="size-8 rounded-lg text-zinc-500 hover:text-zinc-900 hover:bg-zinc-100"
 															>
 																<RiMore2Line className="size-4" />
 															</Button>

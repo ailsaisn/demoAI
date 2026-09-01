@@ -8,7 +8,7 @@ import { useDeleteKnowledge } from "@/app/dashboard/knowledge/hooks/use-knowledg
 import { useCategories } from "@/app/dashboard/category/hooks/use-categories";
 import { ProjectDialog } from "@/app/dashboard/knowledge/components/project-dialog";
 import { AttachProjectDialog } from "@/app/dashboard/knowledge/components/attach-project-dialog";
-import { ConfirmationModal } from "@/components/shared/knowledge/ConfirmationModal";
+import { ConfirmationModal } from "@/components/shared/confirmation-modal";
 import { SearchBar } from "@/components/shared/search-bar";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -329,7 +329,7 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
 
 	if (isLoading) {
 		return (
-			<div className="flex flex-col items-center justify-center h-full p-12 text-gray-500">
+			<div className="flex flex-col items-center justify-center h-full p-12 text-zinc-600">
 				<RiLoader4Line className="w-6 h-6 animate-spin text-blue-600 mb-2" />
 				<span className="text-sm">Loading project...</span>
 			</div>
@@ -338,8 +338,8 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
 
 	if (isError || !project) {
 		return (
-			<div className="flex flex-col items-center justify-center h-full p-12 text-gray-500">
-				<p className="text-sm text-red-500 mb-4">Project not found or failed to load.</p>
+			<div className="flex flex-col items-center justify-center h-full p-12 text-zinc-600">
+				<p className="text-sm text-red-600 mb-4">Project not found or failed to load.</p>
 				<Button
 					variant="outline"
 					size="sm"
@@ -361,13 +361,13 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
 						variant="ghost"
 						size="icon"
 						onClick={() => router.push("/dashboard/knowledge")}
-						className="text-gray-500 hover:text-gray-900"
+						className="text-zinc-600 hover:text-gray-900"
 					>
 						<RiArrowLeftLine className="size-5" />
 					</Button>
 					<div className="min-w-0">
 						<h1 className="text-lg font-semibold text-gray-900 truncate">{project.name}</h1>
-						<p className="text-sm text-gray-500">Project Workspace</p>
+						<p className="text-sm text-zinc-600">Project Workspace</p>
 					</div>
 				</div>
 
@@ -376,7 +376,7 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
 						onClick={() => setDeleteProjectModalOpen(true)}
 						disabled={deleteProjectMutation.isPending}
 						variant="outline"
-						className="gap-2 text-red-600 hover:text-red-700 hover:bg-red-50 border-red-200 cursor-pointer"
+						className="gap-2 border-red-200 text-red-600 hover:text-red-700 hover:bg-red-50 hover:border-red-300 rounded-lg px-4 h-10 font-medium text-sm transition-colors cursor-pointer shadow-none"
 					>
 						<RiDeleteBin7Line className="size-4" />
 						Delete Project
@@ -384,7 +384,7 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
 
 					<Button
 						variant="outline"
-						className="gap-2 text-zinc-950 cursor-pointer"
+						className="gap-2 border-gray-200 bg-white text-zinc-700 hover:bg-zinc-50 rounded-lg px-4 h-10 font-medium text-sm transition-colors cursor-pointer shadow-none"
 						onClick={() => setIsEditDialogOpen(true)}
 					>
 						<RiEdit2Line className="size-4" />
@@ -392,7 +392,7 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
 					</Button>
 
 					<Button
-						className="gap-2 bg-blue-500 hover:bg-blue-600 text-white rounded-lg cursor-pointer"
+						className="gap-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg px-4 h-10 font-medium text-sm transition-colors cursor-pointer shadow-none"
 						onClick={() => router.push(`/dashboard/ingest?projectId=${project.id}`)}
 					>
 						<RiAddCircleLine className="size-4" />
@@ -405,14 +405,14 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
 			<div className="flex flex-col h-full gap-6 p-6 overflow-y-auto">
 				{/* Summary displaying Total Knowledge */}
 				<div className="w-full">
-					<p className="text-sm text-gray-500 mb-3">Here is the overview data of the ingestion</p>
+					<p className="text-sm text-zinc-600 mb-3">Here is the overview data of the ingestion</p>
 					<div className="inline-flex border border-gray-200 rounded-md bg-white overflow-hidden shadow-none">
 						<div className="w-64 flex items-center gap-4 p-4">
 							<div className="p-3 rounded-md bg-blue-50">
 								<RiRobot2Line className="w-6 h-6 text-blue-600" />
 							</div>
 							<div>
-								<p className="text-sm text-gray-500">Total Knowledge</p>
+								<p className="text-sm text-zinc-600">Total Knowledge</p>
 								<p className="text-2xl font-medium text-gray-900 mt-1">
 									{project.knowledges?.length ?? 0}
 								</p>
@@ -536,7 +536,7 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
 							<TableBody>
 								{filteredList?.length === 0 ? (
 									<TableRow>
-										<TableCell colSpan={6} className="text-center py-12 text-gray-500">
+										<TableCell colSpan={6} className="text-center py-12 text-zinc-600">
 											<div className="flex flex-col items-center justify-center gap-2">
 												<p className="text-sm">
 													{hasActiveFilters
@@ -604,7 +604,7 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
 															{row.categories.length > 2 && (
 																<Badge
 																	variant="secondary"
-																	className="bg-gray-100 text-gray-500 hover:bg-gray-200 text-[11px] px-1.5 py-0 rounded-lg cursor-default"
+																	className="bg-gray-100 text-zinc-700 hover:bg-gray-200 text-[11px] px-1.5 py-0 rounded-lg cursor-default font-medium"
 																	title={row.categories.slice(2).join(", ")}
 																>
 																	+{row.categories.length - 2}
@@ -612,12 +612,12 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
 															)}
 														</>
 													) : (
-														<span className="text-xs text-gray-400">-</span>
+														<span className="text-xs text-zinc-600">-</span>
 													)}
 												</div>
 											</TableCell>
 
-											<TableCell className="whitespace-nowrap text-sm text-gray-500">
+											<TableCell className="whitespace-nowrap text-sm text-zinc-600">
 												{row.created_at
 													? new Date(row.created_at).toLocaleDateString("en-GB", {
 															day: "2-digit",

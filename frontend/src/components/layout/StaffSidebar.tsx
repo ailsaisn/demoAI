@@ -19,7 +19,7 @@ import {
 	RiRobot2Line,
 	RiFileAddLine,
 } from "@remixicon/react";
-import { SidebarProfileMenu } from "@/components/shared/SidebarProfileMenu";
+import { SidebarProfileMenu } from "./sidebar-profile-menu";
 
 import { useCurrentUser } from "@/hooks/use-current-user";
 
@@ -99,11 +99,11 @@ export function StaffSidebar({ ...props }: React.ComponentProps<typeof Sidebar>)
 							className="hover:bg-transparent hover:text-inherit active:bg-transparent cursor-default p-0 group-data-[collapsible=icon]:justify-center"
 							tooltip="ERHA Medical Assistant"
 						>
-							<div className="flex aspect-square size-10 group-data-[collapsible=icon]:size-8 shrink-0 items-center justify-center rounded-md bg-blue-50 text-blue-500">
-								<RiRobot2Line className="size-5 group-data-[collapsible=icon]:size-4" />
+							<div className="flex aspect-square size-10 group-data-[collapsible=icon]:size-8 shrink-0 items-center justify-center rounded-md bg-blue-50 text-blue-700">
+								<RiRobot2Line className="size-6 group-data-[collapsible=icon]:size-5 text-blue-700" />
 							</div>
-							<div className="flex items-center ml-2.5 group-data-[collapsible=icon]:hidden overflow-hidden">
-								<span className="font-semibold text-blue-500 text-sm whitespace-nowrap">
+							<div className="flex flex-col gap-0.5 leading-none group-data-[collapsible=icon]:hidden overflow-hidden">
+								<span className="font-semibold text-blue-700 text-sm whitespace-nowrap">
 									ERHA Medical Assistant
 								</span>
 							</div>
@@ -118,7 +118,7 @@ export function StaffSidebar({ ...props }: React.ComponentProps<typeof Sidebar>)
 						<Button
 							render={<Link href="/dashboard/ingest" />}
 							nativeButton={false}
-							className="w-full justify-center bg-blue-500 hover:bg-blue-600 text-white shadow-none h-10 px-3 rounded-md group-data-[collapsible=icon]:size-8 group-data-[collapsible=icon]:p-0 shrink-0"
+							className="w-full justify-center bg-blue-600 hover:bg-blue-700 text-white shadow-none h-10 px-3 rounded-lg group-data-[collapsible=icon]:size-8 group-data-[collapsible=icon]:p-0 shrink-0 cursor-pointer"
 						>
 							<RiFileAddLine className="mr-2 size-5 group-data-[collapsible=icon]:mr-0 group-data-[collapsible=icon]:size-4 shrink-0" />
 							<span className="font-medium text-sm group-data-[collapsible=icon]:hidden">

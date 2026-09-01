@@ -138,13 +138,13 @@ export default function UsersPage() {
 				<TabsList variant="line" className="mb-6">
 					<TabsTrigger
 						value="staff"
-						className="font-medium text-sm text-gray-500 hover:text-blue-500 data-active:text-blue-500 data-active:after:bg-blue-500"
+						className="font-medium text-sm text-zinc-600 hover:text-blue-700 data-active:text-blue-700 data-active:after:bg-blue-700"
 					>
-						Staff
+						Staff Management
 					</TabsTrigger>
 					<TabsTrigger
 						value="doctors"
-						className="font-medium text-sm text-gray-500 hover:text-blue-500 data-active:text-blue-500 data-active:after:bg-blue-500"
+						className="font-medium text-sm text-zinc-600 hover:text-blue-700 data-active:text-blue-700 data-active:after:bg-blue-700"
 					>
 						Doctor
 					</TabsTrigger>
@@ -197,10 +197,10 @@ export default function UsersPage() {
 					{activeTab === "staff" && (
 						<div className="flex items-center gap-2">
 							<Button
-								className="bg-blue-600 hover:bg-blue-700"
+								className="bg-blue-600 hover:bg-blue-700 text-white rounded-lg h-10 px-4 font-medium text-sm transition-colors cursor-pointer shadow-none gap-2"
 								onClick={() => setIsAddUserOpen(true)}
 							>
-								<RiAddLine className="mr-2 h-4 w-4" />
+								<RiAddLine className="size-4 shrink-0" />
 								Add New User
 							</Button>
 						</div>
@@ -209,7 +209,7 @@ export default function UsersPage() {
 
 				{/* Staff Tab Content */}
 				<TabsContent value="staff" className="mt-0 outline-none">
-					<div className="border border-gray-200 rounded-md bg-white overflow-hidden">
+					<div className="border border-gray-200 rounded-lg bg-white overflow-hidden">
 						<Table className="[&_tr]:border-gray-100">
 							<TableHeader className="bg-gray-50/50">
 								<TableRow>
@@ -222,8 +222,8 @@ export default function UsersPage() {
 							<TableBody>
 								{filteredStaff.length === 0 ? (
 									<TableRow>
-										<TableCell colSpan={4} className="text-center py-8 text-gray-500">
-											No staff users found.
+										<TableCell colSpan={4} className="text-center py-8 text-zinc-600">
+											No staff members found.
 										</TableCell>
 									</TableRow>
 								) : (
@@ -260,11 +260,10 @@ export default function UsersPage() {
 												<div className="flex justify-end gap-2">
 													<Button
 														variant="outline"
-														size="md"
-														className="border-gray-200 font-medium"
+														className="border-gray-200 bg-white text-zinc-700 hover:bg-zinc-50 rounded-lg px-3 h-8 font-medium text-xs transition-colors cursor-pointer shadow-none gap-1.5"
 														onClick={() => handleViewStaff(staff)}
 													>
-														<RiEyeLine className="mr-2 h-4 w-4" />
+														<RiEyeLine className="size-3.5 shrink-0" />
 														View
 													</Button>
 												</div>
@@ -279,7 +278,7 @@ export default function UsersPage() {
 
 				{/* Doctors Tab Content */}
 				<TabsContent value="doctors" className="mt-0 outline-none">
-					<div className="border border-gray-200 rounded-md bg-white overflow-hidden">
+					<div className="border border-gray-200 rounded-lg bg-white overflow-hidden">
 						<Table className="[&_tr]:border-gray-100">
 							<TableHeader className="bg-gray-50/50">
 								<TableRow>
@@ -295,7 +294,7 @@ export default function UsersPage() {
 							<TableBody>
 								{filteredDoctors.length === 0 ? (
 									<TableRow>
-										<TableCell colSpan={7} className="text-center py-8 text-gray-500">
+										<TableCell colSpan={7} className="text-center py-8 text-zinc-600">
 											No doctors found.
 										</TableCell>
 									</TableRow>
@@ -337,11 +336,10 @@ export default function UsersPage() {
 												<div className="flex justify-end gap-2">
 													<Button
 														variant="outline"
-														size="md"
-														className="border-gray-200 font-medium"
+														className="border-gray-200 bg-white text-zinc-700 hover:bg-zinc-50 rounded-lg px-3 h-8 font-medium text-xs transition-colors cursor-pointer shadow-none gap-1.5"
 														onClick={() => handleViewDoctor(doc)}
 													>
-														<RiEyeLine className="mr-2 h-4 w-4" />
+														<RiEyeLine className="size-3.5 shrink-0" />
 														View
 													</Button>
 												</div>

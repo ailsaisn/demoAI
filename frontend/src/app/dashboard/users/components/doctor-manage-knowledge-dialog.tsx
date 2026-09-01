@@ -55,9 +55,9 @@ export function DoctorManageKnowledgeDialog({
 
   return (
     <Dialog open={isOpen} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-md p-0 flex flex-col gap-0 rounded-md overflow-hidden bg-white border-0">
+      <DialogContent className="sm:max-w-md p-0 flex flex-col gap-0 rounded-lg overflow-hidden bg-white border border-gray-200 shadow-none">
         <DialogHeader className="p-4 border-b border-gray-100 flex flex-row items-center justify-between">
-          <DialogTitle className="text-base font-medium text-gray-900">
+          <DialogTitle className="text-base font-semibold text-foreground">
             Manage Knowledge Base
           </DialogTitle>
         </DialogHeader>
@@ -66,7 +66,7 @@ export function DoctorManageKnowledgeDialog({
           {/* List of knowledge */}
           <div className="flex flex-col gap-3">
             {categories.length === 0 && (
-              <div className="text-sm text-gray-500 text-center py-4">
+              <div className="text-sm text-muted-foreground text-center py-4">
                 No knowledge categories available.
               </div>
             )}
@@ -75,10 +75,10 @@ export function DoctorManageKnowledgeDialog({
               return (
                 <div
                   key={category.id}
-                  className={`border rounded-md p-3 flex items-center justify-between cursor-pointer ${
+                  className={`border rounded-lg p-3 flex items-center justify-between cursor-pointer transition-colors ${
                     isSelected
-                      ? "border-blue-500 bg-blue-50"
-                      : "border-gray-200"
+                      ? "border-blue-500 bg-blue-50/60"
+                      : "border-gray-200 hover:bg-zinc-50"
                   }`}
                   onClick={() => handleToggle(category.id)}
                 >
@@ -87,14 +87,14 @@ export function DoctorManageKnowledgeDialog({
                       id={`knowledge-${category.id}`}
                       checked={isSelected}
                       onCheckedChange={() => handleToggle(category.id)}
-                      className="data-[state=checked]:bg-blue-500 data-[state=checked]:border-blue-500"
+                      className="data-[state=checked]:bg-blue-600 data-[state=checked]:border-blue-600"
                     />
                     <div className="flex flex-col">
-                      <span className="text-sm font-medium text-gray-900">
+                      <span className="text-sm font-medium text-foreground">
                         {category.name}
                       </span>
                       {category.description && (
-                        <span className="text-xs text-gray-500 line-clamp-1">
+                        <span className="text-xs text-muted-foreground line-clamp-1">
                           {category.description}
                         </span>
                       )}
@@ -105,18 +105,27 @@ export function DoctorManageKnowledgeDialog({
             })}
           </div>
 
-          <div className="bg-yellow-50 border border-yellow-200 rounded-md p-4 text-sm text-yellow-900">
+          <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-xs text-amber-900 leading-relaxed">
             Choose one or more knowledge bases to assign to the doctor, ensuring the chatbot only responds with relevant information.
           </div>
         </div>
 
-        <div className="p-4 border-t border-gray-100 flex justify-end">
+        <div className="p-4 border-t border-gray-100 flex items-center justify-end gap-2 bg-zinc-50/50">
           <Button
-            className="bg-blue-500 text-white hover:bg-blue-600 px-6 rounded-md"
+            type="button"
+            variant="outline"
+            onClick={() => onOpenChange(false)}
+            disabled={updateCategories.isPending}
+            className="border-gray-200 bg-white text-zinc-700 hover:bg-zinc-50 rounded-lg px-4 h-10 font-medium text-sm transition-colors cursor-pointer shadow-none"
+          >
+            Cancel
+          </Button>
+          <Button
+            className="bg-blue-600 text-white hover:bg-blue-700 px-4 h-10 rounded-lg font-medium text-sm transition-colors cursor-pointer shadow-none disabled:opacity-50"
             onClick={handleSave}
             disabled={updateCategories.isPending}
           >
-            <RiCheckLine className="mr-2 h-4 w-4" />
+            <RiCheckLine className="mr-1.5 h-4 w-4" />
             Save Knowledge
           </Button>
         </div>

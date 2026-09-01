@@ -86,7 +86,7 @@ export function GlobalModelConfig() {
 	};
 
 	if (isLoading) {
-		return <div className="p-4 text-center text-sm text-gray-500">Loading AI configuration...</div>;
+		return <div className="p-4 text-center text-sm text-zinc-600">Loading AI configuration...</div>;
 	}
 
 
@@ -105,8 +105,9 @@ export function GlobalModelConfig() {
 						{isEditing ? (
 							<>
 								<Button
-									variant="ghost"
-									className="text-black-500 hover:text-black-600 hover:bg-zinc-100 px-5 rounded-lg font-medium"
+									type="button"
+									variant="outline"
+									className="border-gray-200 bg-white text-zinc-700 hover:bg-zinc-50 rounded-lg px-4 h-10 font-medium text-sm transition-colors cursor-pointer shadow-none"
 									onClick={() => {
 										setIsEditing(false);
 										setAvailableModels([]);
@@ -131,25 +132,27 @@ export function GlobalModelConfig() {
 								</Button>
 								
 								<Button
-									className="bg-blue-600 hover:bg-blue-700 text-white shadow-none px-5 rounded-lg font-medium"
+									type="button"
+									className="bg-blue-600 hover:bg-blue-700 text-white rounded-lg px-4 h-10 font-medium text-sm transition-colors cursor-pointer shadow-none gap-1.5 disabled:opacity-50"
 									onClick={handleSave}
 									disabled={updateConfig.isPending || !modelName || !apiKey}
 								>
 									{updateConfig.isPending ? (
-										<RiLoader4Line className="size-4.5 mr-2 animate-spin" />
+										<RiLoader4Line className="size-4 animate-spin mr-1" />
 									) : (
-										<RiCheckLine className="size-4.5 mr-2" />
+										<RiCheckLine className="size-4 mr-1" />
 									)}
 									Save
 								</Button>
 							</>
 						) : (
 							<Button
+								type="button"
 								variant="outline"
-								className="border-blue-500 text-blue-500 hover:text-blue-600 hover:bg-blue-50 bg-transparent shadow-none px-5 rounded-lg"
+								className="border-gray-200 bg-white text-zinc-700 hover:bg-zinc-50 rounded-lg px-4 h-10 text-sm font-medium transition-colors cursor-pointer shadow-none gap-1.5"
 								onClick={() => setIsEditing(true)}
 							>
-								<RiEdit2Line className="size-4.5 mr-2" />
+								<RiEdit2Line className="size-4 text-zinc-500" />
 								Edit
 							</Button>
 						)}

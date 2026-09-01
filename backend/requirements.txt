@@ -16,6 +16,7 @@ python-jose[cryptography]   # JWT token generation and decoding for user authent
 apscheduler                 # Background task and cron job scheduler
 httpx                       # Asynchronous HTTP client for external web requests
 loguru                      # Enhanced structured logging framework
+speedtest-cli               # Command-line / programmatic bandwidth speed testing
 
 # --- RAG / AI Dependencies ---
 langchain>=0.1.0            # Core RAG orchestration framework and chain components

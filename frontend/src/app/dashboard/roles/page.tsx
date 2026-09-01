@@ -71,14 +71,17 @@ export default function RolesPage() {
 						value={searchQuery}
 						onChange={(e) => setSearchQuery(e.target.value)}
 					/>
-					<Button className="bg-blue-600 hover:bg-blue-700" onClick={handleAddRole}>
-						<RiAddLine className="mr-2 h-4 w-4" />
+					<Button
+						className="bg-blue-600 hover:bg-blue-700 text-white rounded-lg h-10 px-4 font-medium text-sm transition-colors cursor-pointer shadow-none gap-2"
+						onClick={handleAddRole}
+					>
+						<RiAddLine className="size-4 shrink-0" />
 						Add New Role
 					</Button>
 				</div>
 
 				{/* Table */}
-				<div className="border border-gray-200 rounded-md bg-white overflow-hidden">
+				<div className="border border-gray-200 rounded-lg bg-white overflow-hidden">
 					<Table className="[&_tr]:border-gray-100">
 						<TableHeader className="bg-gray-50/50">
 							<TableRow>
@@ -90,13 +93,13 @@ export default function RolesPage() {
 						<TableBody>
 							{isLoading ? (
 								<TableRow>
-									<TableCell colSpan={3} className="text-center py-8 text-gray-500">
+									<TableCell colSpan={3} className="text-center py-8 text-zinc-600">
 										Loading roles...
 									</TableCell>
 								</TableRow>
 							) : filteredRoles.length === 0 ? (
 								<TableRow>
-									<TableCell colSpan={3} className="text-center py-8 text-gray-500">
+									<TableCell colSpan={3} className="text-center py-8 text-zinc-600">
 										No roles found. Click &quot;Add New Role&quot; to create one.
 									</TableCell>
 								</TableRow>
@@ -131,7 +134,7 @@ export default function RolesPage() {
 														</Badge>
 													))
 												) : (
-													<span className="text-xs text-gray-400 italic">
+													<span className="text-xs text-muted-foreground italic">
 														No permissions assigned
 													</span>
 												)}
@@ -149,10 +152,10 @@ export default function RolesPage() {
 											<div className="flex justify-end gap-2">
 												<Button
 													variant="outline"
-													className="border-gray-200 font-medium"
+													className="border-gray-200 bg-white text-zinc-700 hover:bg-zinc-50 rounded-lg px-3 h-8 font-medium text-xs transition-colors cursor-pointer shadow-none gap-1.5"
 													onClick={() => handleEditRole(role)}
 												>
-													<RiEdit2Line className="mr-1.5 h-4 w-4" />
+													<RiEdit2Line className="size-3.5 shrink-0" />
 													Edit
 												</Button>
 											</div>

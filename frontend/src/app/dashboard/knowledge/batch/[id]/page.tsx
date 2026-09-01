@@ -24,8 +24,8 @@ import {
 import { useRouter } from "next/navigation";
 import { use, useRef, useState } from "react";
 import { toast } from "sonner";
-import { ConfirmationModal } from "@/components/shared/knowledge/ConfirmationModal";
-import { IngestSuccessModal } from "@/components/shared/knowledge/IngestSuccessModal";
+import { ConfirmationModal } from "@/components/shared/confirmation-modal";
+import { IngestSuccessModal } from "@/app/dashboard/knowledge/components/preview/ingest-success-modal";
 import { useApproveBatchKnowledge, useDeleteKnowledge, useKnowledgeBatch } from "../../hooks/use-knowledge";
 import { BatchKnowledgeTabContent, BatchTabHandle } from "./BatchKnowledgeTabContent";
 import { BatchDocumentTabs } from "./BatchDocumentTabs";
@@ -164,17 +164,17 @@ export default function BatchKnowledgePage({ params }: { params: Promise<{ id: s
 						variant="ghost"
 						size="icon"
 						onClick={() => router.back()}
-						className="h-8 w-8 text-zinc-500 hover:text-zinc-900"
+						className="size-9 rounded-lg text-zinc-500 hover:text-zinc-900 hover:bg-zinc-100"
 					>
-						<RiArrowLeftLine className="size-4" />
+						<RiArrowLeftLine className="size-5" />
 					</Button>
 					<h1 className="text-base font-semibold text-zinc-900">Batch Review Session</h1>
 				</div>
-				<div className="flex items-center gap-3">
+				<div className="flex items-center gap-2">
 					{hasWriteAccess && hasPendingDocs && (
 						<Button
 							variant="default"
-							className="gap-2 bg-blue-600 hover:bg-blue-700 text-white cursor-pointer"
+							className="gap-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg px-4 h-10 font-medium text-sm transition-colors cursor-pointer shadow-none"
 							disabled={isLoading || approveBatchMutation.isPending}
 							onClick={() => setIsApproveAllOpen(true)}
 						>
@@ -185,7 +185,7 @@ export default function BatchKnowledgePage({ params }: { params: Promise<{ id: s
 					{hasDeleteAccess && activeDoc?.status === "APPROVED" && (
 						<Button
 							variant="outline"
-							className="gap-2 text-red-600 hover:text-red-700 hover:bg-red-50 border-red-200"
+							className="gap-2 border-red-200 text-red-600 hover:text-red-700 hover:bg-red-50 hover:border-red-300 rounded-lg px-4 h-10 font-medium text-sm transition-colors cursor-pointer shadow-none"
 							onClick={handleDelete}
 							disabled={deleteMutation.isPending || isLoading}
 						>
@@ -196,7 +196,7 @@ export default function BatchKnowledgePage({ params }: { params: Promise<{ id: s
 					{hasWriteAccess && activeDoc?.status === "APPROVED" && (
 						<Button
 							variant={isEditMode ? "default" : "outline"}
-							className={`gap-2 ${isEditMode ? "bg-blue-600 hover:bg-blue-700 text-white" : "text-zinc-950"}`}
+							className={`gap-2 ${isEditMode ? "bg-blue-600 hover:bg-blue-700 text-white" : "border-gray-200 bg-white text-zinc-700 hover:bg-zinc-50"} rounded-lg px-4 h-10 font-medium text-sm transition-colors cursor-pointer shadow-none`}
 							disabled={isLoading}
 							onClick={handleEditToggle}
 						>

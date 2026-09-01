@@ -1,7 +1,7 @@
 from loguru import logger
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Form, Request, BackgroundTasks, Query
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, and_, func
+from sqlalchemy import select, and_, func, text, or_
 from app.models.category import Category, UserCategoryExclusion
 from app.models.branch import UserBranch
 from typing import List, Optional, Dict, Any
@@ -290,37 +290,48 @@ async def list_knowledge(
 
     # 3. Fallback scan: Include any staged JSON files from data/pending or data/output missing in DB
     now = datetime.now(timezone.utc)
-    seen_ids = set(db_by_id.keys())
+    
+    # Query soft-deleted IDs and file names to prevent zombie resurrection
+    del_stmt = select(Knowledge.id, Knowledge.file_name).where(Knowledge.deleted_at.is_not(None))
+    del_res = await db.execute(del_stmt)
+    deleted_records = del_res.all()
+    deleted_ids = {str(row[0]).lower() for row in deleted_records}
+    deleted_files = {str(row[1]).lower() for row in deleted_records if row[1]}
+    
+    seen_ids = set(db_by_id.keys()).union(deleted_ids)
     staged_responses = []
 
     for folder in ["data/pending", "data/output"]:
         if os.path.exists(folder):
             for f in os.listdir(folder):
-                if f.endswith(".json"):
+                if f.endswith(".json") and f != "bm25_index.pkl":
                     file_path = os.path.join(folder, f)
                     try:
                         with open(file_path, "r", encoding="utf-8") as fp:
                             data = json.load(fp)
                         if isinstance(data, dict):
-                            raw_id = data.get("knowledge_id") or f.replace("_parsed.json", "").replace(".json", "")
-                            if str(raw_id) not in seen_ids:
-                                seen_ids.add(str(raw_id))
+                            raw_id = str(data.get("knowledge_id") or f.replace("_parsed.json", "").replace(".json", "")).lower()
+                            file_name = str(data.get("file_name", f))
+                            
+                            # Clean up and skip if this matches any soft-deleted record
+                            if raw_id in deleted_ids or file_name.lower() in deleted_files:
+                                try:
+                                    os.remove(file_path)
+                                    logger.info(f"Purged stale/deleted staging file during list scan: {file_path}")
+                                except Exception:
+                                    pass
+                                continue
+
+                            if raw_id not in seen_ids:
+                                seen_ids.add(raw_id)
                                 try:
                                     k_uuid = uuid.UUID(str(raw_id))
                                 except ValueError:
                                     k_uuid = uuid.uuid5(uuid.NAMESPACE_DNS, str(raw_id))
 
-                                file_name = data.get("file_name", f)
                                 title = data.get("title", file_name)
                                 summary = data.get("summary", "")
-                                raw_type = str(data.get("type", "PRODUCT")).upper()
-                                k_type = KnowledgeType.PRODUCT
-                                if "TREATMENT" in raw_type:
-                                    k_type = KnowledgeType.TREATMENT
-                                elif "PROMO" in raw_type:
-                                    k_type = KnowledgeType.PROMOTIONAL
-                                elif "OTHER" in raw_type or "LAIN" in raw_type:
-                                    k_type = KnowledgeType.GENERAL
+                                k_type = KnowledgeType.GENERAL
 
                                 doc_status = KnowledgeStatus.APPROVED if "output" in folder else KnowledgeStatus.PENDING
 
@@ -353,12 +364,14 @@ async def get_knowledge(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(RequireAccess("knowledge:read"))
 ):
-    # 1. Try fetching from DB (ignoring soft-delete filter to prevent 404)
+    # 1. Try fetching from DB
     stmt = select(Knowledge).where(Knowledge.id == knowledge_id)
     result = await db.execute(stmt)
     knowledge = result.scalar_one_or_none()
     
     if knowledge:
+        if knowledge.deleted_at is not None:
+            raise HTTPException(status_code=404, detail="Knowledge document not found")
         # OUT-OF-BAND SYNC: Fetch latest AI summary & metadata from RAG JSON files
         try:
             target_file = resolve_pending_file(str(knowledge_id)) or resolve_approved_file(str(knowledge_id))
@@ -382,18 +395,36 @@ async def get_knowledge(
                 if isinstance(data, dict):
                     merged_meta = dict(knowledge.metadata_) if isinstance(knowledge.metadata_, dict) else {}
                     merged_meta.update(data)
-                    # Ensure history is preserved
-                    if "history" not in data and "history" in merged_meta:
-                        data["history"] = merged_meta["history"]
-                    if "chat_history" in merged_meta and "chat_history" not in data:
-                        data["chat_history"] = merged_meta["chat_history"]
-                    knowledge.metadata_ = data
+                    # If approved, ensure active history is clean while staging_history and edit_history are retained
+                    if knowledge.status == KnowledgeStatus.APPROVED:
+                        merged_meta["history"] = []
+                        merged_meta["chat_history"] = []
+                        if "staging_history" in data:
+                            merged_meta["staging_history"] = data["staging_history"]
+                        elif isinstance(knowledge.metadata_, dict) and "staging_history" in knowledge.metadata_:
+                            merged_meta["staging_history"] = knowledge.metadata_["staging_history"]
+                        if "edit_history" in data:
+                            merged_meta["edit_history"] = data["edit_history"]
+                        elif isinstance(knowledge.metadata_, dict) and "edit_history" in knowledge.metadata_:
+                            merged_meta["edit_history"] = knowledge.metadata_["edit_history"]
+                    else:
+                        if "history" not in data and "history" in merged_meta:
+                            merged_meta["history"] = merged_meta["history"]
+                        if "chat_history" not in data and "chat_history" in merged_meta:
+                            merged_meta["chat_history"] = merged_meta["chat_history"]
+                    knowledge.metadata_ = merged_meta
         except Exception as e:
             logger.warning(f"Error loading RAG JSON: {e}")
             
         return knowledge
 
     # 2. Fallback check in RAG staging files (data/pending or data/output)
+    # Ensure ID is not soft-deleted
+    del_check_stmt = select(Knowledge.id).where(Knowledge.id == knowledge_id, Knowledge.deleted_at.is_not(None))
+    del_check = await db.execute(del_check_stmt)
+    if del_check.scalar_one_or_none():
+        raise HTTPException(status_code=404, detail="Knowledge document not found")
+
     target_file = resolve_pending_file(str(knowledge_id)) or resolve_approved_file(str(knowledge_id))
     now = datetime.now(timezone.utc)
     
@@ -406,12 +437,7 @@ async def get_knowledge(
                 file_name = data.get("file_name", "document.pdf")
                 title = data.get("title", file_name)
                 summary = data.get("summary", "")
-                raw_type = str(data.get("type", "PRODUCT")).upper()
-                k_type = KnowledgeType.PRODUCT
-                if "TREATMENT" in raw_type:
-                    k_type = KnowledgeType.TREATMENT
-                elif "PROMO" in raw_type:
-                    k_type = KnowledgeType.PROMOTIONAL
+                k_type = KnowledgeType.GENERAL
 
                 return KnowledgeResponse(
                     id=knowledge_id,
@@ -443,7 +469,7 @@ async def get_knowledge(
         original_path="data/temp/processing_document.pdf",
         mime_type="application/pdf",
         file_size=None,
-        type=KnowledgeType.PRODUCT,
+        type=KnowledgeType.GENERAL,
         status=KnowledgeStatus.PROCESSING,
         ai_summary="Document processing in progress...",
         ai_confidence=0.0,
@@ -525,6 +551,12 @@ async def get_knowledge_batch(
 
                             if doc_batch == batch_id:
                                 raw_id = data.get("knowledge_id") or f.replace("_parsed.json", "").replace(".json", "")
+                                if str(raw_id).lower() in {d.lower() for d in deleted_ids}:
+                                    try:
+                                        os.remove(file_path)
+                                    except Exception:
+                                        pass
+                                    continue
                                 if str(raw_id) not in seen_ids:
                                     seen_ids.add(str(raw_id))
                                     try:
@@ -535,14 +567,7 @@ async def get_knowledge_batch(
                                     file_name = data.get("file_name", f)
                                     title = data.get("title", file_name)
                                     summary = data.get("summary", "")
-                                    raw_type = str(data.get("type", "PRODUCT")).upper()
-                                    k_type = KnowledgeType.PRODUCT
-                                    if "TREATMENT" in raw_type:
-                                        k_type = KnowledgeType.TREATMENT
-                                    elif "PROMO" in raw_type:
-                                        k_type = KnowledgeType.PROMOTIONAL
-                                    elif "OTHER" in raw_type or "LAIN" in raw_type:
-                                        k_type = KnowledgeType.GENERAL
+                                    k_type = KnowledgeType.GENERAL
 
                                     doc_status = KnowledgeStatus.APPROVED if "output" in folder else KnowledgeStatus.PENDING
 
@@ -882,8 +907,9 @@ async def approve_knowledge(
         if k_entry.metadata_ is None:
             k_entry.metadata_ = {}
         if staged_history:
-            k_entry.metadata_["history"] = staged_history
-            k_entry.metadata_["chat_history"] = staged_history
+            k_entry.metadata_["staging_history"] = staged_history
+        k_entry.metadata_["history"] = []
+        k_entry.metadata_["chat_history"] = []
         from sqlalchemy.orm.attributes import flag_modified
         flag_modified(k_entry, "metadata_")
         await db.commit()
@@ -898,11 +924,52 @@ async def edit_knowledge(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(RequireAccess("knowledge:write"))
 ):
+    # Guard: Check if DB record exists and is not soft-deleted
+    stmt = select(Knowledge).where(Knowledge.id == knowledge_id)
+    db_res = await db.execute(stmt)
+    k_entry = db_res.scalar_one_or_none()
+    
+    if k_entry and k_entry.deleted_at is not None:
+        raise HTTPException(status_code=404, detail="Knowledge document not found")
+
     pipeline = get_ingestion_pipeline(request)
     bm25 = get_bm25_index(request)
     vector_store = get_vector_store(request)
     
     p_file = resolve_pending_file(str(knowledge_id))
+    a_file = resolve_approved_file(str(knowledge_id))
+
+    # DB fallback if JSON file is missing from disk but exists in PostgreSQL
+    if not p_file and not a_file and k_entry:
+        if k_entry.status == KnowledgeStatus.APPROVED:
+            a_file = os.path.join("data/output", f"{knowledge_id}.json")
+            os.makedirs("data/output", exist_ok=True)
+            doc_data = {
+                "knowledge_id": str(knowledge_id),
+                "file_name": k_entry.file_name or str(knowledge_id),
+                "title": k_entry.title or k_entry.file_name or "Knowledge Document",
+                "status": "Approved",
+                "summary": k_entry.ai_summary or "",
+                "categories": k_entry.metadata_.get("categories", []) if k_entry.metadata_ else [],
+                "visibility_settings": k_entry.metadata_.get("visibility_settings", {"clinics": ["all"], "doctor_types": ["all"], "doctors": ["all"]}) if k_entry.metadata_ else {"clinics": ["all"], "doctor_types": ["all"], "doctors": ["all"]},
+                "chunks": k_entry.metadata_.get("chunks", [{"text": k_entry.ai_summary or k_entry.title or "", "metadata": {"knowledge_id": str(knowledge_id)}}]) if k_entry.metadata_ else [{"text": k_entry.ai_summary or k_entry.title or "", "metadata": {"knowledge_id": str(knowledge_id)}}]
+            }
+            with open(a_file, "w", encoding="utf-8") as f:
+                json.dump(doc_data, f, indent=4, ensure_ascii=False)
+        else:
+            p_file = os.path.join("data/pending", f"{knowledge_id}.json")
+            os.makedirs("data/pending", exist_ok=True)
+            doc_data = {
+                "knowledge_id": str(knowledge_id),
+                "file_name": k_entry.file_name or str(knowledge_id),
+                "title": k_entry.title or k_entry.file_name or "Knowledge Document",
+                "status": "On review",
+                "summary": k_entry.ai_summary or "",
+                "chunks": k_entry.metadata_.get("chunks", [{"text": k_entry.ai_summary or k_entry.title or "", "metadata": {"knowledge_id": str(knowledge_id)}}]) if k_entry.metadata_ else [{"text": k_entry.ai_summary or k_entry.title or "", "metadata": {"knowledge_id": str(knowledge_id)}}]
+            }
+            with open(p_file, "w", encoding="utf-8") as f:
+                json.dump(doc_data, f, indent=4, ensure_ascii=False)
+
     if p_file:
         res = await edit_pending_document(
             knowledge_id=str(knowledge_id),
@@ -918,15 +985,14 @@ async def edit_knowledge(
         )
 
     # Sync updates back to the DB row
-    stmt = select(Knowledge).where(Knowledge.id == knowledge_id)
-    db_res = await db.execute(stmt)
-    k_entry = db_res.scalar_one_or_none()
-    
     if k_entry:
         if payload.title:
             k_entry.title = payload.title
         if payload.summary:
             k_entry.ai_summary = payload.summary
+            k_entry.content = payload.summary
+
+        k_entry.type = KnowledgeType.GENERAL
             
         if k_entry.metadata_ is None:
             k_entry.metadata_ = {}
@@ -1048,7 +1114,7 @@ async def refine_knowledge(
     
     # DB fallback if JSON file is missing from disk
     if not p_file and not a_file:
-        stmt = select(Knowledge).where(Knowledge.id == knowledge_id)
+        stmt = select(Knowledge).where(Knowledge.id == knowledge_id, Knowledge.deleted_at.is_(None))
         db_res = await db.execute(stmt)
         k_entry = db_res.scalar_one_or_none()
         if k_entry:
@@ -1113,26 +1179,45 @@ async def refine_knowledge(
                 k_entry.metadata_["chunks"] = res.get("chunks")
 
             # Persist chat turns in metadata
-            existing_history = k_entry.metadata_.get("history") or k_entry.metadata_.get("chat_history") or []
-            if not isinstance(existing_history, list):
-                existing_history = []
-            
-            new_history = list(existing_history)
-            if payload.prompt:
-                new_history.append({
-                    "role": "user",
-                    "content": payload.prompt,
-                    "created_at": datetime.now(timezone.utc).isoformat()
-                })
-            if res.get("summary"):
-                new_history.append({
-                    "role": "assistant",
-                    "content": res.get("summary"),
-                    "created_at": datetime.now(timezone.utc).isoformat()
-                })
+            if k_entry.status == KnowledgeStatus.APPROVED:
+                existing_edit_hist = k_entry.metadata_.get("edit_history") or []
+                if not isinstance(existing_edit_hist, list):
+                    existing_edit_hist = []
+                new_edit_hist = list(existing_edit_hist)
+                if payload.prompt:
+                    new_edit_hist.append({
+                        "role": "user",
+                        "content": payload.prompt,
+                        "created_at": datetime.now(timezone.utc).isoformat()
+                    })
+                if res.get("summary"):
+                    new_edit_hist.append({
+                        "role": "assistant",
+                        "content": res.get("summary"),
+                        "created_at": datetime.now(timezone.utc).isoformat()
+                    })
+                k_entry.metadata_["edit_history"] = new_edit_hist
+            else:
+                existing_history = k_entry.metadata_.get("history") or k_entry.metadata_.get("chat_history") or []
+                if not isinstance(existing_history, list):
+                    existing_history = []
+                
+                new_history = list(existing_history)
+                if payload.prompt:
+                    new_history.append({
+                        "role": "user",
+                        "content": payload.prompt,
+                        "created_at": datetime.now(timezone.utc).isoformat()
+                    })
+                if res.get("summary"):
+                    new_history.append({
+                        "role": "assistant",
+                        "content": res.get("summary"),
+                        "created_at": datetime.now(timezone.utc).isoformat()
+                    })
 
-            k_entry.metadata_["history"] = new_history
-            k_entry.metadata_["chat_history"] = new_history
+                k_entry.metadata_["history"] = new_history
+                k_entry.metadata_["chat_history"] = new_history
 
             from sqlalchemy.orm.attributes import flag_modified
             flag_modified(k_entry, "metadata_")
@@ -1220,22 +1305,116 @@ async def delete_knowledge(
     db: AsyncSession = Depends(get_db),
     current_admin: User = Depends(RequireAccess("knowledge:delete"))
 ):
-    # 1. Soft-delete DB record if present
+    kid_str = str(knowledge_id)
+    
+    # 1. Fetch DB record to gather all identifiers
     stmt = select(Knowledge).where(Knowledge.id == knowledge_id)
     result = await db.execute(stmt)
     knowledge = result.scalar_one_or_none()
     
+    file_name = knowledge.file_name if knowledge else None
+    
+    # Mark soft-deleted in PostgreSQL
     if knowledge:
         knowledge.deleted_at = datetime.now(timezone.utc)
         await db.commit()
         
-    # 2. Hard delete vector store embeddings and JSON files via RAG subsystem
-    pipeline = get_ingestion_pipeline(request)
-    bm25 = get_bm25_index(request)
+    # 2. Collect all identifier variants for multi-key purge
+    identifiers_to_purge = {kid_str, f"{kid_str}_parsed", f"{kid_str}.json", f"{kid_str}_parsed.json"}
+    if file_name:
+        base_name, _ = os.path.splitext(file_name)
+        identifiers_to_purge.update({
+            file_name,
+            base_name,
+            f"{file_name}_parsed",
+            f"{file_name}_parsed.json",
+            f"{file_name}.json"
+        })
+
+    # 3. Clean physical files from data/pending, data/output, data/temp
+    for folder in ["data/pending", "data/output", "data/temp"]:
+        if os.path.exists(folder):
+            for f in os.listdir(folder):
+                f_path = os.path.join(folder, f)
+                if not os.path.isfile(f_path):
+                    continue
+                
+                f_lower = f.lower()
+                should_delete = False
+                
+                for ident in identifiers_to_purge:
+                    if ident.lower() == f_lower or f_lower.startswith(ident.lower()):
+                        should_delete = True
+                        break
+                        
+                if not should_delete and f.endswith(".json") and f != "bm25_index.pkl":
+                    try:
+                        with open(f_path, "r", encoding="utf-8") as fp:
+                            f_data = json.load(fp)
+                        if isinstance(f_data, dict):
+                            doc_kid = str(f_data.get("knowledge_id", ""))
+                            doc_fname = str(f_data.get("file_name", ""))
+                            if doc_kid == kid_str or (file_name and doc_fname.lower() == file_name.lower()):
+                                should_delete = True
+                    except Exception:
+                        pass
+                        
+                if should_delete:
+                    try:
+                        os.remove(f_path)
+                        logger.info(f"Purged staging/temp file for knowledge deletion: {f_path}")
+                    except Exception as err:
+                        logger.warning(f"Failed to remove file {f_path}: {err}")
+
+    # 4. Clean Vector Store Chunks (PGVector)
     vector_store = get_vector_store(request)
-    
+    if vector_store:
+        for ident in identifiers_to_purge:
+            try:
+                vector_store.delete_document(ident)
+            except Exception as vs_err:
+                logger.debug(f"vector_store.delete_document({ident}) notice: {vs_err}")
+
+    # Direct SQL cleanup on vector store table to ensure 100% vector purge
     try:
-        await delete_document_endpoint(str(knowledge_id), pipeline, bm25, vector_store)
+        from app.rag.config import settings as rag_settings
+        table_name = rag_settings.pg_collection_name
+        cleanup_query = text(f"""
+            DELETE FROM {table_name} 
+            WHERE source_file = :kid 
+               OR source_file ILIKE :kid_pattern
+               OR (:fname IS NOT NULL AND (source_file = :fname OR source_file ILIKE :fname_pattern))
+               OR metadata ->> 'knowledge_id' = :kid
+               OR (:fname IS NOT NULL AND metadata ->> 'file_name' = :fname)
+        """)
+        await db.execute(cleanup_query, {
+            "kid": kid_str,
+            "kid_pattern": f"%{kid_str}%",
+            "fname": file_name,
+            "fname_pattern": f"%{file_name}%" if file_name else None
+        })
+        await db.commit()
+    except Exception as sql_err:
+        logger.warning(f"Direct vector store table purge warning: {sql_err}")
+
+    # 5. Clean BM25 Index
+    bm25 = get_bm25_index(request)
+    if bm25:
+        for ident in identifiers_to_purge:
+            try:
+                bm25.remove_file_chunks(ident)
+            except Exception as bm_err:
+                logger.debug(f"bm25.remove_file_chunks({ident}) notice: {bm_err}")
+        try:
+            from app.rag.config import settings
+            bm25.save(settings.bm25_index_path)
+        except Exception as save_err:
+            logger.debug(f"BM25 index save error: {save_err}")
+
+    # 6. Fallback RAG endpoint call
+    pipeline = get_ingestion_pipeline(request)
+    try:
+        await delete_document_endpoint(kid_str, pipeline, bm25, vector_store)
     except Exception:
         pass
                 

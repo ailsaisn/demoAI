@@ -85,12 +85,12 @@ export function ProjectDialog({ isOpen, onClose, projectToEdit }: ProjectDialogP
 
 	return (
 		<Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
-			<DialogContent className="sm:max-w-md p-6 bg-white rounded-xl border border-gray-200 shadow-xl">
+			<DialogContent className="sm:max-w-md p-6 bg-white rounded-lg border border-gray-200 shadow-none">
 				<DialogHeader className="space-y-1">
-					<DialogTitle className="text-base font-semibold text-zinc-950">
+					<DialogTitle className="text-base font-semibold text-foreground">
 						{isEditing ? "Edit Project" : "Add Project"}
 					</DialogTitle>
-					<DialogDescription className="text-xs text-zinc-500">
+					<DialogDescription className="text-xs text-muted-foreground">
 						{isEditing
 							? "Update the project workspace name."
 							: "Create a new project workspace to group and organize knowledge documents."}
@@ -106,7 +106,7 @@ export function ProjectDialog({ isOpen, onClose, projectToEdit }: ProjectDialogP
 								placeholder="e.g. ERHA Acne Treatment 2026"
 								value={name}
 								onChange={(e) => setName(e.target.value)}
-								className="border-gray-200 bg-white focus-visible:ring-blue-500 text-sm h-9"
+								className="border-gray-200 bg-white focus-visible:ring-blue-500 text-sm h-10 rounded-lg"
 							/>
 						</FieldContent>
 					</Field>
@@ -117,18 +117,16 @@ export function ProjectDialog({ isOpen, onClose, projectToEdit }: ProjectDialogP
 						<Button
 							type="button"
 							variant="outline"
-							size="sm"
 							onClick={onClose}
 							disabled={isPending}
-							className="h-9 px-4 text-xs font-medium text-gray-700 hover:bg-gray-50 border-gray-200 rounded-lg cursor-pointer"
+							className="h-10 px-4 text-sm font-medium text-zinc-700 bg-white hover:bg-zinc-50 border-gray-200 rounded-lg cursor-pointer shadow-none"
 						>
 							Cancel
 						</Button>
 						<Button
 							type="submit"
-							size="sm"
 							disabled={isPending}
-							className="h-9 px-4 text-xs font-medium bg-blue-500 hover:bg-blue-600 text-white rounded-lg cursor-pointer shadow-none gap-1.5"
+							className="h-10 px-4 text-sm font-medium bg-blue-600 hover:bg-blue-700 text-white rounded-lg cursor-pointer shadow-none gap-1.5"
 						>
 							{isPending && <RiLoader4Line className="w-3.5 h-3.5 animate-spin" />}
 							<span>{isEditing ? "Save Changes" : "Create Project"}</span>

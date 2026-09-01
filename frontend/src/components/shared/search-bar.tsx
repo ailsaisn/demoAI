@@ -11,7 +11,7 @@ export interface SearchBarProps extends React.ComponentProps<"input"> {
 export function SearchBar({ className, containerClassName, iconClassName, ...props }: SearchBarProps) {
 	return (
 		<div className={cn("relative flex items-center w-full", containerClassName)}>
-			<RiSearchLine className={cn("absolute left-2.5 w-4 h-4 text-gray-400", iconClassName)} />
+			<RiSearchLine className={cn("absolute left-2.5 w-4 h-4 text-muted-foreground", iconClassName)} />
 			<Input
 				type="search"
 				{...props}

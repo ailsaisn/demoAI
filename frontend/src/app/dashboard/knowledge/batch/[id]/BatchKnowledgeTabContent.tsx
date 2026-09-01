@@ -1,7 +1,7 @@
 "use client";
 
-import { ChatPreview } from "@/components/shared/knowledge/ChatPreview";
-import { ConfirmationModal } from "@/components/shared/knowledge/ConfirmationModal";
+import { ChatPreview } from "@/app/dashboard/knowledge/components/preview/chat-preview";
+import { ConfirmationModal } from "@/components/shared/confirmation-modal";
 import { useState, forwardRef, useImperativeHandle } from "react";
 import { useKnowledgeDetail, useEditKnowledge, useDeleteKnowledge } from "../../hooks/use-knowledge";
 import { VisibilitySettings } from "../../api/types";

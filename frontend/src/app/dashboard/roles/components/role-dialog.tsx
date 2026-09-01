@@ -342,11 +342,11 @@ export function RoleDialog({ isOpen, onOpenChange, role, mode }: RoleDialogProps
 			<Dialog open={isOpen} onOpenChange={onOpenChange}>
 				<DialogContent
 					showCloseButton={true}
-					className="sm:max-w-3xl max-h-[90vh] p-0 flex flex-col bg-white rounded-xl overflow-hidden shadow-2xl border-0"
+					className="sm:max-w-3xl max-h-[90vh] p-0 flex flex-col bg-white rounded-lg overflow-hidden shadow-none border border-gray-200"
 				>
 					{/* Modal Header */}
 					<DialogHeader className="p-4 sm:p-5 border-b border-gray-100 flex flex-row items-center justify-between shrink-0">
-						<DialogTitle className="text-base font-medium text-gray-900">
+						<DialogTitle className="text-base font-semibold text-foreground">
 							{mode === "add" ? "Add New Role" : `Edit Role: ${role?.name}`}
 						</DialogTitle>
 					</DialogHeader>
@@ -445,7 +445,7 @@ export function RoleDialog({ isOpen, onOpenChange, role, mode }: RoleDialogProps
 						{mode === "edit" && !isSystemAdmin ? (
 							<Button
 								variant="outline"
-								className="border-red-500 text-red-600 hover:bg-red-50 hover:text-red-700"
+								className="border-red-200 text-red-600 hover:bg-red-50 hover:border-red-300 px-4 h-10 rounded-lg font-medium text-sm transition-colors cursor-pointer shadow-none"
 								onClick={handleDeleteClick}
 								disabled={isPending}
 							>
@@ -459,13 +459,13 @@ export function RoleDialog({ isOpen, onOpenChange, role, mode }: RoleDialogProps
 						<div className="flex items-center gap-3">
 							<Button
 								variant="outline"
-								className="border-blue-500 text-blue-600 hover:bg-blue-50 px-5 rounded-lg"
+								className="border-gray-200 bg-white text-zinc-700 hover:bg-zinc-50 px-4 h-10 rounded-lg font-medium text-sm transition-colors cursor-pointer shadow-none"
 								onClick={() => onOpenChange(false)}
 							>
 								Cancel
 							</Button>
 							<Button
-								className="bg-blue-600 text-white hover:bg-blue-700 px-5 rounded-lg font-medium"
+								className="bg-blue-600 text-white hover:bg-blue-700 px-4 h-10 rounded-lg font-medium text-sm transition-colors cursor-pointer shadow-none"
 								onClick={handleSave}
 								disabled={isPending || !name.trim()}
 							>
@@ -489,16 +489,16 @@ export function RoleDialog({ isOpen, onOpenChange, role, mode }: RoleDialogProps
 
 			{/* Delete Confirmation Modal */}
 			<Dialog open={isDeleteDialogOpen} onOpenChange={setIsDeleteDialogOpen}>
-				<DialogContent className="sm:max-w-md p-0 flex flex-col gap-0 rounded-xl overflow-hidden bg-white border-0 shadow-2xl">
+				<DialogContent className="sm:max-w-md p-0 flex flex-col gap-0 rounded-lg overflow-hidden bg-white border border-gray-200 shadow-none">
 					<DialogHeader className="p-5 pb-2">
-						<DialogTitle className="text-base font-semibold text-gray-900 text-left">
+						<DialogTitle className="text-base font-semibold text-foreground text-left">
 							Delete Role
 						</DialogTitle>
 					</DialogHeader>
 
 					<div className="px-5 py-2">
-						<DialogDescription className="text-sm text-gray-600 leading-relaxed text-left">
-							Are you sure you want to delete the role <span className="font-semibold text-gray-900">&quot;{role?.name}&quot;</span>? This action cannot be undone and will remove associated permissions for users assigned to this role.
+						<DialogDescription className="text-sm text-muted-foreground leading-relaxed text-left">
+							Are you sure you want to delete the role <span className="font-semibold text-foreground">&quot;{role?.name}&quot;</span>? This action cannot be undone and will remove associated permissions for users assigned to this role.
 						</DialogDescription>
 					</div>
 
@@ -508,7 +508,7 @@ export function RoleDialog({ isOpen, onOpenChange, role, mode }: RoleDialogProps
 							variant="outline"
 							onClick={() => setIsDeleteDialogOpen(false)}
 							disabled={deleteRole.isPending}
-							className="border-gray-200 text-gray-700 hover:bg-gray-100 rounded-lg px-5 h-10 font-medium text-sm"
+							className="border-gray-200 bg-white text-zinc-700 hover:bg-zinc-50 rounded-lg px-4 h-10 font-medium text-sm transition-colors cursor-pointer shadow-none"
 						>
 							Cancel
 						</Button>
@@ -516,7 +516,7 @@ export function RoleDialog({ isOpen, onOpenChange, role, mode }: RoleDialogProps
 							type="button"
 							onClick={handleConfirmDelete}
 							disabled={deleteRole.isPending}
-							className="bg-red-600 hover:bg-red-700 text-white rounded-lg px-5 h-10 font-medium text-sm shadow-none"
+							className="bg-red-600 hover:bg-red-700 text-white rounded-lg px-4 h-10 font-medium text-sm shadow-none transition-colors cursor-pointer"
 						>
 							{deleteRole.isPending ? (
 								<RiLoader4Line className="mr-1.5 h-4 w-4 animate-spin" />

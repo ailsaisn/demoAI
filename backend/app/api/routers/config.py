@@ -26,6 +26,7 @@ from app.services.db_seeder import (
 )
 from app.core.security import encrypt_api_key, decrypt_api_key
 from app.core.config import settings
+import os
 import urllib.request
 import urllib.error
 import json
@@ -751,13 +752,8 @@ async def run_system_diagnostics(
     """
     Runs automated container-internal network, database, and storage diagnostics
     to detect root causes of ingestion or RAG pipeline failures.
-    Automatically blocked in production environments for security.
+    Secured via configuration:read RBAC permission.
     """
-    if str(settings.ENVIRONMENT).lower() in ("production", "prod"):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="System diagnostics endpoint is disabled in production environments."
-        )
 
     import socket
     import time

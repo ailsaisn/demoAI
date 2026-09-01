@@ -4,6 +4,19 @@ All notable changes to the Arya Noble AI Chatbot Backend are documented in this 
 
 ---
 
+## [1.2.0] - 2026-08-31
+
+### Ingestion Prompt Lifecycle & Metadata Archival
+- **Background Ingestion Metadata Sync (`app/rag/router.py`)**:
+  - `process_ingestion_background` now synchronizes `initial_prompt`, `history`, `suggested_categories`, `document_type`, and `timing_metrics` directly into PostgreSQL `Knowledge.metadata_` on document pending transition.
+- **Approval History Archival & Clean Thread Lifecycle (`app/rag/router.py`, `app/api/routers/knowledge.py`)**:
+  - Staging conversation turns are now archived in `metadata.staging_history` upon approval, while the active `history` array resets cleanly to present canonical approved knowledge in the doctor/admin view.
+  - Refinement turns on approved documents during Edit Mode are archived in `metadata.edit_history`.
+- **Batch Executive Summary Custom Prompt Injection (`app/rag/router.py`)**:
+  - `synthesize_batch_executive_summary` accepts `user_prompt` and applies a high-priority user instruction block to the multi-file reconciliation prompt.
+
+---
+
 ## [1.1.0] - 2026-07-22
 
 ### Major Milestone: Unification of `arya-noble-rag` into `backend/app/rag/`
@@ -116,5 +129,7 @@ backend/app/rag/
 | **Ingestion Pipeline** | Single file tracking | **Multi-File Batch Sync**: Returns `batch_id` & explicit parsed `title`s (not just filename) |
 | **Prompt Engineering** | Unstructured prompts | **XML Structured Prompts**: With native tool calling & strict LLM adherence |
 | **Table Existence Check** | `:tablename::regclass` (Emits SQL `UndefinedObjectError`) | **`to_regclass(:tablename)`**: Evaluates to `NULL` without PostgreSQL error logs |
+| **Ingestion Prompt & History** | Staging turns mixed or lost on approve | **Prompt Lifecycle & Archival**: Synchronizes prompt metadata in background; archives to `staging_history` on approval & `edit_history` on edit; keeps published view clean |
+| **Batch Executive Summary** | Hardcoded static prompt | **Custom Prompt Guided Synthesis**: Incorporates user prompt instructions into multi-file batch reconciliation |
 
 

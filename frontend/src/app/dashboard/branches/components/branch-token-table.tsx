@@ -54,7 +54,7 @@ export function BranchTokenTable() {
 				</div>
 			</div>
 
-			<div className="border border-gray-200 rounded-md bg-white overflow-hidden">
+			<div className="border border-gray-200 rounded-lg bg-white overflow-hidden">
 				<Table className="[&_tr]:border-gray-100">
 					<TableHeader className="bg-gray-50/50">
 						<TableRow className="hover:bg-gray-50/50 border-b-gray-100">
@@ -70,13 +70,13 @@ export function BranchTokenTable() {
 					<TableBody>
 						{isLoading ? (
 							<TableRow>
-								<TableCell colSpan={7} className="text-center py-8 text-gray-500">
+								<TableCell colSpan={7} className="text-center py-8 text-zinc-600">
 									Loading branches...
 								</TableCell>
 							</TableRow>
 						) : filteredBranches.length === 0 ? (
 							<TableRow>
-								<TableCell colSpan={7} className="text-center py-8 text-gray-500">
+								<TableCell colSpan={7} className="text-center py-8 text-zinc-600">
 									No branches found.
 								</TableCell>
 							</TableRow>

@@ -190,6 +190,7 @@ async def _hydrate_chat_session(session: ChatSession, db: AsyncSession) -> dict:
         "id": session.id,
         "user_id": session.user_id,
         "branch_id": session.branch_id,
+        "session_type": session.session_type,
         "status": session.status,
         "summary": session.summary,
         "rating": session.rating,
@@ -202,7 +203,9 @@ async def _hydrate_chat_session(session: ChatSession, db: AsyncSession) -> dict:
         "query": "",
         "messages": 0,
         "doctor": "Unknown",
-        "branch": "Unknown Branch"
+        "user_name": "Unknown",
+        "user_type": None,
+        "branch": "General Prompt" if not session.branch_id else "Unknown Branch"
     }
     
     # Get total message count
@@ -215,21 +218,29 @@ async def _hydrate_chat_session(session: ChatSession, db: AsyncSession) -> dict:
     result_msg = await db.execute(stmt_first_msg)
     session_dict["query"] = result_msg.scalar() or ""
     
-    # Get the doctor's name and doctor type
-    stmt_user = select(User.name, User.dr_type).where(User.id == session.user_id)
+    # Get the user's name, user_type, and doctor type
+    stmt_user = select(User.name, User.dr_type, User.type).where(User.id == session.user_id)
     result_user = await db.execute(stmt_user)
     user_row = result_user.first()
     if user_row:
-        session_dict["doctor"] = user_row[0] or "Unknown"
+        user_name = user_row[0] or "Unknown"
+        session_dict["doctor"] = user_name
+        session_dict["user_name"] = user_name
         session_dict["doctor_type"] = user_row[1]
+        session_dict["user_type"] = user_row[2].value if hasattr(user_row[2], 'value') else str(user_row[2])
     else:
         session_dict["doctor"] = "Unknown"
+        session_dict["user_name"] = "Unknown"
         session_dict["doctor_type"] = None
+        session_dict["user_type"] = None
     
     # Get the branch name
-    stmt_branch = select(Branch.name).where(Branch.id == session.branch_id)
-    result_branch = await db.execute(stmt_branch)
-    session_dict["branch"] = result_branch.scalar() or "Unknown Branch"
+    if session.branch_id:
+        stmt_branch = select(Branch.name).where(Branch.id == session.branch_id)
+        result_branch = await db.execute(stmt_branch)
+        session_dict["branch"] = result_branch.scalar() or "Unknown Branch"
+    else:
+        session_dict["branch"] = "General Assistant"
     
     return session_dict
 
@@ -281,12 +292,15 @@ async def mark_feedback_read(
 @router.get("/stats", response_model=ChatStatsResponse)
 async def get_chat_stats(
     doctor_id: Optional[uuid.UUID] = None,
+    session_type: Optional[str] = None,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user_flexible)
 ):
-    """Return overview counts of doctors reached, sessions, ratings, and missing knowledge."""
+    """Return overview counts of users reached, sessions, ratings, and missing knowledge."""
     has_messages = select(ChatMessage.id).where(ChatMessage.session_id == ChatSession.id).exists()
-    base_where = [has_messages, ChatSession.session_type == "DOCTOR"]
+    base_where = [has_messages]
+    if session_type:
+        base_where.append(ChatSession.session_type == session_type)
     if not await has_chats_read_access(current_user, db):
         base_where.append(ChatSession.user_id == current_user.id)
     elif doctor_id:
@@ -316,15 +330,18 @@ async def get_chat_stats(
 async def list_chat_sessions(
     search: Optional[str] = None,
     doctor_id: Optional[uuid.UUID] = None,
+    session_type: Optional[str] = None,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user_flexible)
 ):
     has_messages = select(ChatMessage.id).where(ChatMessage.session_id == ChatSession.id).exists()
     stmt = (
         select(ChatSession)
-        .where(has_messages, ChatSession.session_type == "DOCTOR")
+        .where(has_messages)
         .order_by(ChatSession.updated_at.desc())
     )
+    if session_type:
+        stmt = stmt.where(ChatSession.session_type == session_type)
     if not await has_chats_read_access(current_user, db):
         stmt = stmt.where(ChatSession.user_id == current_user.id)
     elif doctor_id:
@@ -342,7 +359,9 @@ async def list_chat_sessions(
             if s_clean in (h.get("query") or "").lower()
             or s_clean in (h.get("summary") or "").lower()
             or s_clean in (h.get("doctor") or "").lower()
+            or s_clean in (h.get("user_name") or "").lower()
             or s_clean in (h.get("branch") or "").lower()
+            or s_clean in (h.get("session_type") or "").lower()
         ]
 
     return hydrated

@@ -36,6 +36,13 @@ class EvaluationItem(BaseModel):
     query: str = Field(..., description="Test query string (e.g. 'Apa indikasi ERHA Acne Clear Gel?')")
     expected_file: str = Field(..., description="Expected source document filename (e.g. 'ERHA Acne Clear Gel.docx')")
 
+class TextIngestRequest(BaseModel):
+    text_content: str = Field(..., description="Raw text knowledge material to convert to structured .md document")
+    title: Optional[str] = Field(None, description="Optional document title (auto-generated if not specified)")
+    prompt: Optional[str] = Field(None, description="Optional custom AI processing instruction")
+    replace_existing: bool = Field(False, description="Set to true to overwrite existing pending draft")
+
+
 class DocumentListItem(BaseModel):
     knowledge_id: str = Field(..., description="Unique document ID (UUID)")
     batch_id: Optional[str] = Field(None, description="Batch Upload ID for grouped ingestion tracking")
@@ -66,10 +73,8 @@ class PendingDocumentResponse(BaseModel):
     title: Optional[str] = Field(None, description="AI Recommended Title for Knowledge Header (e.g. 'Standard Operating Procedure (SOP) Brightening Center')")
     status: str = Field(..., description="'Approved' or 'On review'")
     document_type: Optional[str] = Field(None, description="Document type e.g. 'PRODUCT', 'TREATMENT', 'PROMOTIONAL', 'SOP', 'GENERAL'")
-    valid_from: Optional[str] = Field(None, description="Start date of promotional validity period (YYYY-MM-DD)")
-    valid_until: Optional[str] = Field(None, description="End/expiration date of promotional validity period (YYYY-MM-DD)")
     summary: Optional[str] = Field("", description="Document content in markdown format")
-    image_url: Optional[str] = Field(None, description="Image URL of the document or product in MinIO")
+    image_urls: Optional[List[str]] = Field(default=[], description="All extracted image URLs of the document in MinIO")
     text_accuracy: str = Field(..., description="AI confidence score / text accuracy percentage")
     feedback: str = Field(..., description="AI data validation feedback")
     batch_summary: Optional[str] = Field(None, description="Batch Executive Summary if multi-file")
@@ -129,7 +134,7 @@ class ApprovedDocumentResponse(BaseModel):
     valid_from: Optional[str] = Field(None, description="Start date of promotional validity period (YYYY-MM-DD)")
     valid_until: Optional[str] = Field(None, description="End/expiration date of promotional validity period (YYYY-MM-DD)")
     summary: str = Field("", description="Document summary")
-    image_url: Optional[str] = Field(None, description="Image URL of the document or product in MinIO")
+    image_urls: Optional[List[str]] = Field(default=[], description="All extracted image URLs of the document in MinIO")
     batch_summary: Optional[str] = Field(None, description="Batch Executive Summary if multi-file")
     categories: List[str] = Field(default=[], description="Document categories")
     visibility_settings: Optional[VisibilitySettings] = Field(default_factory=VisibilitySettings, description="Access control visibility settings (Clinic, Doctor Type, Doctor)")

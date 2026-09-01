@@ -68,8 +68,8 @@ export default function CategoriesPage() {
 		<div className="p-6 flex flex-col gap-6 h-full">
 			{/* Header */}
 			<div className="flex flex-col gap-1">
-				<h1 className="text-xl font-semibold text-gray-900">Category</h1>
-				<p className="text-sm text-gray-500">Explore a wide array of categorized products.</p>
+				<h1 className="text-xl font-semibold text-foreground">Category</h1>
+				<p className="text-sm text-muted-foreground">Explore a wide array of categorized products.</p>
 			</div>
 
 			<div className="flex flex-col">
@@ -81,14 +81,17 @@ export default function CategoriesPage() {
 						value={searchQuery}
 						onChange={(e) => setSearchQuery(e.target.value)}
 					/>
-					<Button className="bg-blue-500 hover:bg-blue-600" onClick={handleAddCategory}>
-						<RiAddLine className="mr-2 h-4 w-4" />
+					<Button
+						className="bg-blue-600 hover:bg-blue-700 text-white rounded-lg h-10 px-4 font-medium text-sm transition-colors cursor-pointer shadow-none gap-2"
+						onClick={handleAddCategory}
+					>
+						<RiAddLine className="size-4 shrink-0" />
 						Add Category
 					</Button>
 				</div>
 
 				{/* Table */}
-				<div className="border border-gray-200 rounded-md bg-white overflow-hidden">
+				<div className="border border-gray-200 rounded-lg bg-white overflow-hidden">
 					<Table className="[&_tr]:border-gray-100">
 						<TableHeader className="bg-gray-50/50">
 							<TableRow>
@@ -99,13 +102,13 @@ export default function CategoriesPage() {
 						<TableBody>
 							{isLoading ? (
 								<TableRow>
-									<TableCell colSpan={2} className="text-center py-8 text-gray-500">
+									<TableCell colSpan={2} className="text-center py-8 text-zinc-600">
 										Loading categories...
 									</TableCell>
 								</TableRow>
 							) : filteredCategories.length === 0 ? (
 								<TableRow>
-									<TableCell colSpan={2} className="text-center py-8 text-gray-500">
+									<TableCell colSpan={2} className="text-center py-8 text-zinc-600">
 										No categories found.
 									</TableCell>
 								</TableRow>
@@ -124,19 +127,19 @@ export default function CategoriesPage() {
 											<div className="flex justify-end gap-2">
 												<Button
 													variant="outline"
-													className="border-gray-200 font-medium"
+													className="border-gray-200 bg-white text-zinc-700 hover:bg-zinc-50 rounded-lg px-3 h-8 font-medium text-xs transition-colors cursor-pointer shadow-none gap-1.5"
 													onClick={() => handleEditCategory(category)}
 												>
-													<RiEdit2Line className="size-4 mr-1.5" />
+													<RiEdit2Line className="size-3.5 shrink-0" />
 													Edit
 												</Button>
 												<Button
 													variant="outline"
-													className="border-gray-200 font-medium disabled:opacity-50"
+													className="border-red-200 text-red-600 hover:bg-red-50 hover:border-red-300 rounded-lg px-3 h-8 font-medium text-xs transition-colors cursor-pointer shadow-none gap-1.5 disabled:opacity-50"
 													onClick={() => handleDeleteClick(category)}
 													disabled={isDeleting}
 												>
-													<RiDeleteBinLine className="size-4 mr-1.5" />
+													<RiDeleteBinLine className="size-3.5 shrink-0" />
 													Delete
 												</Button>
 											</div>

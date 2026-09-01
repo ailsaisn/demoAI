@@ -16,8 +16,8 @@ export default function ConfigPage() {
 
 				{/* 2. Configuration title and subtitle */}
 				<div className="flex flex-col gap-1">
-					<h1 className="text-xl font-semibold text-black-500">Configuration</h1>
-					<p className="text-sm text-black-300">Here is the overview data of the configuration</p>
+					<h1 className="text-xl font-semibold text-foreground">Configuration</h1>
+					<p className="text-sm text-muted-foreground">Here is the overview data of the configuration</p>
 				</div>
 
 				{/* Content Sections */}

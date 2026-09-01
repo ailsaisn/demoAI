@@ -8,8 +8,8 @@ export default function BranchPage() {
 			<div className="flex flex-col gap-6 w-full">
 				{/* Header */}
 				<div className="flex flex-col gap-1">
-					<h1 className="text-xl font-semibold text-black-500">Branch</h1>
-					<p className="text-sm text-black-300">Here is the overview data of the branches</p>
+					<h1 className="text-xl font-semibold text-foreground">Branch</h1>
+					<p className="text-sm text-muted-foreground">Here is the overview data of the branches</p>
 				</div>
 
 				{/* Content */}

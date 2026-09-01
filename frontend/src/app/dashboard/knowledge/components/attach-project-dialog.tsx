@@ -101,16 +101,16 @@ export function AttachProjectDialog({
 
 	return (
 		<Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
-			<DialogContent className="sm:max-w-md w-full bg-white p-6 rounded-xl border border-gray-200 shadow-xl">
+			<DialogContent className="sm:max-w-md w-full bg-white p-6 rounded-lg border border-gray-200 shadow-none">
 				<form onSubmit={handleSubmit} className="space-y-4">
 					<DialogHeader className="p-0 pb-1">
-						<DialogTitle className="text-base font-medium text-neutral-950">
+						<DialogTitle className="text-base font-semibold text-foreground">
 							Attach Knowledge to Project
 						</DialogTitle>
 					</DialogHeader>
 
 					<Field className="space-y-2">
-						<FieldLabel className="text-sm font-normal text-neutral-950">
+						<FieldLabel className="text-xs font-medium text-zinc-700">
 							Project
 						</FieldLabel>
 						<FieldContent>
@@ -142,14 +142,14 @@ export function AttachProjectDialog({
 							variant="outline"
 							onClick={onClose}
 							disabled={updateKnowledgeProjectMutation.isPending}
-							className="h-10 px-5 border-blue-500 text-blue-500 hover:bg-blue-50 hover:text-blue-600 rounded-lg font-medium cursor-pointer shadow-none"
+							className="h-10 px-4 border-gray-200 bg-white text-zinc-700 hover:bg-zinc-50 rounded-lg text-sm font-medium cursor-pointer shadow-none"
 						>
 							Cancel
 						</Button>
 						<Button
 							type="submit"
 							disabled={updateKnowledgeProjectMutation.isPending || isLoadingProjects}
-							className="h-10 px-5 bg-blue-500 hover:bg-blue-600 text-white rounded-lg font-medium cursor-pointer shadow-none gap-2"
+							className="h-10 px-4 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium cursor-pointer shadow-none gap-2"
 						>
 							{updateKnowledgeProjectMutation.isPending && (
 								<RiLoader4Line className="size-4 animate-spin" />

@@ -78,15 +78,15 @@ export function UserAddSheet({
               </FieldLabel>
               <FieldContent>
                 <div className="border border-gray-200 rounded-md p-4 flex flex-col items-center justify-center text-center">
-                  <div className="h-8 w-8 mb-2 flex items-center justify-center text-gray-400">
+                  <div className="h-8 w-8 mb-2 flex items-center justify-center text-zinc-500">
                     <RiImageAddLine className="h-5 w-5" />
                   </div>
                   <div className="flex gap-1 text-sm">
                     <span className="font-medium text-gray-900">Drag & Drop or</span>
-                    <span className="font-medium text-blue-500 cursor-pointer">Choose File</span>
+                    <span className="font-medium text-blue-700 cursor-pointer">Choose File</span>
                   </div>
-                  <p className="text-xs text-gray-500 mt-1">Maximum file size: 5 MB</p>
-                  <p className="text-xs text-gray-500">Format file: .jpg, .jpeg, .png</p>
+                  <p className="text-xs text-zinc-600 mt-1">Maximum file size: 5 MB</p>
+                  <p className="text-xs text-zinc-600">Format file: .jpg, .jpeg, .png</p>
                 </div>
               </FieldContent>
             </Field>
@@ -169,7 +169,7 @@ export function UserAddSheet({
                   <Button 
                     variant="ghost" 
                     size="icon" 
-                    className="absolute right-0 top-0 text-gray-500 hover:text-gray-700"
+                    className="absolute right-0 top-0 text-zinc-600 hover:text-zinc-900"
                     onClick={() => setShowPassword(!showPassword)}
                     type="button"
                   >
@@ -182,16 +182,26 @@ export function UserAddSheet({
         </div>
         
         <div className="p-4 border-t border-gray-200 bg-white flex justify-end gap-3">
-          <Button variant="outline" className="bg-white border-gray-200 text-gray-700 hover:bg-gray-50 hover:text-gray-900" onClick={() => onOpenChange(false)}>
-            <RiCloseLine className="mr-2 h-4 w-4 shrink-0" />
+          <Button
+            type="button"
+            variant="outline"
+            className="border-gray-200 bg-white text-zinc-700 hover:bg-zinc-50 rounded-lg px-4 h-10 font-medium text-sm transition-colors cursor-pointer shadow-none"
+            onClick={() => onOpenChange(false)}
+          >
+            <RiCloseLine className="mr-1.5 h-4 w-4 shrink-0" />
             Cancel
           </Button>
-          <Button 
-            className="bg-blue-600 text-white hover:bg-blue-700"
+          <Button
+            type="button"
+            className="bg-blue-600 text-white hover:bg-blue-700 rounded-lg px-4 h-10 font-medium text-sm transition-colors cursor-pointer shadow-none disabled:opacity-50"
             onClick={handleAddUser}
             disabled={createStaff.isPending}
           >
-            {createStaff.isPending ? <RiLoader4Line className="mr-2 h-4 w-4 animate-spin shrink-0" /> : <RiAddLine className="mr-2 h-4 w-4 shrink-0" />}
+            {createStaff.isPending ? (
+              <RiLoader4Line className="mr-1.5 h-4 w-4 animate-spin shrink-0" />
+            ) : (
+              <RiAddLine className="mr-1.5 h-4 w-4 shrink-0" />
+            )}
             {createStaff.isPending ? "Adding..." : "Add User"}
           </Button>
         </div>

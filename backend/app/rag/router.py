@@ -13,6 +13,7 @@ from app.rag.schemas import (
     ChatResponse, 
     UserContext,
     EvaluationItem,
+    TextIngestRequest,
     DocumentListItem,
     PendingDocumentResponse,
     RefineRequest,
@@ -351,6 +352,57 @@ def align_chunks_with_multitreatment(
         if doc_type:
             chunk_meta["document_type"] = doc_type
 
+    # Aggregate entity-level metadata (SKU, Price, Promo dates, Image URL) per entity across all chunks
+    entity_props = {}
+    for chunk in chunks:
+        if not isinstance(chunk, dict) or not chunk.get("metadata"):
+            continue
+        m = chunk["metadata"]
+        ent = m.get("entity") or m.get("product_name")
+        if not ent or ent == doc_title:
+            continue
+        if ent not in entity_props:
+            entity_props[ent] = {
+                "sku": None,
+                "price": None,
+                "valid_from": None,
+                "valid_until": None,
+                "image_url": None
+            }
+        p = entity_props[ent]
+        if m.get("sku") and not p["sku"]:
+            p["sku"] = m["sku"]
+        if m.get("price") and not p["price"]:
+            p["price"] = m["price"]
+        if m.get("valid_from") and not p["valid_from"]:
+            p["valid_from"] = m["valid_from"]
+        if m.get("valid_until") and not p["valid_until"]:
+            p["valid_until"] = m["valid_until"]
+        if m.get("image_url") and not p["image_url"]:
+            p["image_url"] = m["image_url"]
+
+    # Propagate aggregated entity metadata across ALL sub-chunks belonging to that product/treatment
+    for chunk in chunks:
+        if not isinstance(chunk, dict) or not chunk.get("metadata"):
+            continue
+        m = chunk["metadata"]
+        ent = m.get("entity") or m.get("product_name")
+        if ent and ent in entity_props:
+            p = entity_props[ent]
+            m["entity"] = ent
+            m["product_name"] = ent
+            m["treatment_name"] = ent
+            if p["sku"] and not m.get("sku"):
+                m["sku"] = p["sku"]
+            if p["price"] and not m.get("price"):
+                m["price"] = p["price"]
+            if p["valid_from"] and not m.get("valid_from"):
+                m["valid_from"] = p["valid_from"]
+            if p["valid_until"] and not m.get("valid_until"):
+                m["valid_until"] = p["valid_until"]
+            if p["image_url"] and not m.get("image_url"):
+                m["image_url"] = p["image_url"]
+
     return chunks
 
 
@@ -636,15 +688,26 @@ async def process_ingestion_background(
             with open(pending_file_path, 'w', encoding='utf-8') as f:
                 json.dump(initial_staged_doc, f, indent=4, ensure_ascii=False)
                 
-            summary = full_extracted_text
+            # ─── CANONICAL TEXT: raw parser output, NOT rewritten by LLM ───────────────────
+            # The canonical_text is the verbatim content extracted by the document parser.
+            # LLM is NOT allowed to rewrite, summarize, or add to this content.
+            # Admin sees exactly what the document contains in the Review Dashboard.
+            canonical_text = full_extracted_text
+            summary = canonical_text
             text_accuracy = "100%"
-            feedback = f"Dokumen {file_name} telah berhasil diekstrak dan tersimpan di area peninjauan."
+            feedback = f"Dokumen '{file_name}' telah berhasil diekstrak. Silakan tinjau isi dokumen di bawah sebelum menyetujui."
             suggested_categories = []
-            
+            recommended_title = clean_title_fallback
+            extracted_doc_type = "GENERAL"
+            extracted_valid_from = None
+            extracted_valid_until = None
+
+            # ─── LIGHTWEIGHT AI PROCESSING ──────────────────────────────────────────────────
+            # LLM is used ONLY to detect: title, document_type, valid_from, valid_until, categories.
+            # LLM is STRICTLY FORBIDDEN from generating or rewriting document content.
             if llm and enriched_chunks:
                 t0_llm = _time.time()
                 try:
-                    # Fetch categories from DB for LLM recommendation
                     db_categories = []
                     try:
                         from app.core.database import AsyncSessionLocal
@@ -655,8 +718,8 @@ async def process_ingestion_background(
                             cats = res.scalars().all()
                             db_categories = [{"id": str(c.id), "name": c.name} for c in cats]
                     except Exception as cat_err:
-                        logger.warning(f"Failed to fetch categories for review prompt: {cat_err}")
-                    
+                        logger.warning(f"Failed to fetch categories for metadata detection: {cat_err}")
+
                     if not db_categories:
                         default_cats = [
                             ("9b79e362-ec70-4560-902e-fd5897c07a00", "Acne Care"),
@@ -669,119 +732,50 @@ async def process_ingestion_background(
                         ]
                         db_categories = [{"id": cid, "name": cname} for cid, cname in default_cats]
 
-                    # Build full extracted markdown text from enriched_chunks
-                    full_extracted_text = "\n\n".join([c.get("text", "") for c in enriched_chunks if isinstance(c, dict) and c.get("text")])
-                    summary = full_extracted_text
+                    # Lightweight metadata detection prompt — reads first 3000 chars only
+                    preview_text = canonical_text[:3000] if len(canonical_text) > 3000 else canonical_text
 
-                    user_instruction_block = f"""
-                    CRITICAL USER CUSTOM INSTRUCTION (HIGHEST PRIORITY):
-                    "{user_prompt}"
-                    You MUST follow and fulfill the user's custom instruction above (e.g. translate to Indonesian, reformat, highlight specific sections, etc.) when generating the summary.
-                    """ if user_prompt and str(user_prompt).strip() else ""
+                    metadata_prompt = f"""
+You are a document metadata classifier for the ERHA (PT Arya Noble) medical aesthetic knowledge base.
 
-                    review_prompt = f"""
-                    You are a world-class AI Knowledge Engineer and Specialist for ERHA (PT Arya Noble) knowledge base.
-                    Your task is to refine, validate, and structure the extracted document content into clean, comprehensive, production-grade Markdown matching ChatGPT / Claude standards.
+Your ONLY task is to analyze the document excerpt below and return metadata fields.
+You are STRICTLY FORBIDDEN from generating, rewriting, summarizing, or modifying any document content.
+Return ONLY the JSON metadata object — nothing else.
 
-                    Extracted Document Content:
-                    {full_extracted_text}
+Document Excerpt (first 3000 chars):
+{preview_text}
 
-                    Available System Categories:
-                    {json.dumps(db_categories, ensure_ascii=False)}
+Available Categories:
+{json.dumps(db_categories, ensure_ascii=False)}
 
-                    {user_instruction_block}
+Extract ONLY these fields:
+1. **title**: A short, clean professional document title inferred from the content. Strip file extension prefixes. No "Knowledge Base" or "Ingestment" prefixes.
+2. **document_type**: One of: "PRODUCT" | "TREATMENT" | "PROMOTIONAL" | "SOP" | "GENERAL"
+   - PRODUCT: product catalogs, skincare items, cosmetics
+   - TREATMENT: clinic treatments, aesthetic procedures, protocols
+   - PROMOTIONAL: promo flyers, discounts, vouchers, flash sales
+   - SOP: standard operating procedures, guidelines
+   - GENERAL: anything else
+3. **valid_from**: "YYYY-MM-DD" promo start date if visible, else null
+4. **valid_until**: "YYYY-MM-DD" promo end date if visible, else null
+5. **suggested_categories**: Array of matching category objects from Available Categories. Match ALL relevant ones.
+6. **feedback**: 1 sentence in Indonesian describing the document type and content.
 
-                    FLEXIBLE & COMPREHENSIVE STRUCTURING GUIDELINES:
-                    1. **Adaptive Structure for Any Document Type**:
-                       - Documents can be of ANY nature (e.g. Skincare/Cosmetics, Treatment Protocols, SOP / Clinic Guidelines, Promotional/Discounts/Flyer, Training Slides / Presentations, Research / Clinical Literature, Price Lists, FAQ, Device/Equipment Guides, etc.).
-                       - Dynamically structure the Markdown using clear hierarchical headers (`# [Document Title]`, `## Section`, `### Subsection`), bold key terms (`**`), structured bullet points (`-`), and crisp Markdown tables (`| Col 1 | Col 2 |`) tailored to the document's actual topic.
-                    2. **100% Content & Information Preservation**:
-                       - ALL key points, steps, promo terms, specifications, numbers, ingredients/substances, parameters, tables, questions/answers, and details present in the raw text MUST be fully retained and organized.
-                       - DO NOT omit, over-condense, or skip substantive sections. Ensure all factual information from the uploaded file is thoroughly represented.
-                    3. **Promotional Period Extraction (For Promo/Flyer Documents)**:
-                       - If this document contains promotional programs, discounts, flash sales, or vouchers with validity dates, extract the start date (`valid_from`) and end date (`valid_until`) in strict `YYYY-MM-DD` format (e.g. "2026-08-01", "2026-08-31").
-                       - If no expiration date exists or if it is a general document, set `valid_from` and `valid_until` to null.
-                       - Set `document_type` to `"PROMOTIONAL"` for promotional flyers/discounts, `"PRODUCT"` for product catalog, `"TREATMENT"` for clinic treatments, `"SOP"` for SOP guidelines, or `"GENERAL"` otherwise.
-                    4. **Professional Markdown Formatting**:
-                       - Fix any OCR noise, broken line breaks, or formatting typos while preserving 100% factual accuracy.
-                       - Start directly with `# [Document Title]`. Do NOT add meta introductions like "Here is the summary".
-                    5. **Zero Redundancy & Clean Natural Phrasing (STRICT)**:
-                        - Do NOT duplicate tables, bullet points, or identical sentences across different sections.
-                        - Maintain concise, clean, and distinct sections without circular phrasing.
-                        - Write in fluent, natural, and precise language suitable for clinical doctors and functional administrators, ensuring sentences are cohesive and well-connected.
-                        - For individual product documents, prioritize a clear `## Product Overview`, a fluent 1-paragraph `## Deskripsi & Fungsi Produk` (which summarizes what the product is, intended skin types, key benefits, and usage context in one cohesive narrative), and `## Active Ingredients`.
-                    6. **Dynamic Fields & Single SKU Identifier**:
-                       - If a product or document has a SKU, place `- **SKU**: [Kode SKU]` directly below Brand or Product Name.
-                       - NEVER spill/write empty placeholders (e.g. do NOT write 'SKU: None', 'Product ID: N/A', or 'Not visible'). If any information is absent, omit that field completely.
-                    7. **DO NOT Include Category Sections in Markdown Body**:
-                       - Categories belong ONLY in the `suggested_categories` JSON field, as the user interface already displays and manages categories separately via UI badge tags.
-                    8. **Multi-Product / Catalog Document Structuring (CRITICAL)**:
-                       - If the document contains MULTIPLE products (e.g. Spot Gel AND Pressed Powder, or a full product series):
-                         - Give the document a collective title in `# [Title]` (e.g. `# Katalog ERHA Acneact Series` or `# Rangkaian Produk ERHA Acneact`).
-                         - Separate EACH individual product into its own distinct `## [Product Name]` section (e.g. `## ERHA Acneact Acne Spot Gel`, `## ERHA Acneact Acne Pressed Powder`).
-                         - Under each product section, provide:
-                           - `### Product Overview` with its specific `- **Product Name**`, `- **Brand**`, `- **Variant**`, `- **Product Type**`, `- **Intended Skin Types**`, `- **Net Content**`, `- **Harga**`, `- **SKU**`.
-                           - `### Deskripsi & Fungsi Produk` (Clear 1-paragraph narrative).
-                           - `### Active Ingredients` & `### Cara Penggunaan` (if present).
-                         - NEVER duplicate product titles consecutively (e.g. do NOT output `ERHA Acneact Acne Spot Gel\n\nERHA Acneact Acne Spot Gel`).
-                         - Keep each product's SKU, price, and specifications completely distinct and strictly local to that product.
-                         - Recommend ALL relevant categories in `suggested_categories` covering all products in the document.
-                    9. **Multi-Treatment / Clinic Protocol Structuring (CRITICAL)**:
-                       - If the document contains CLINICAL TREATMENTS, AESTHETIC PROCEDURES, or MULTI-TREATMENT PROTOCOLS (e.g. Acne Intensive Program, Acne Peel Therapy, Blue Light Therapy, Deep Acne Extraction, Microneedling, Facial):
-                         - Give the main title in `# [Document Title]` (e.g. `# ERHA Acne Center Treatments`).
-                         - Separate EACH individual treatment into its own distinct numbered header: `## 1. [Treatment Name]`, `## 2. [Treatment Name]`, etc.
-                         - Under EACH treatment, format all clinical details with clear, standard Markdown sections:
-                           - `- **Kategori Treatment**: [Category Name, e.g. Acne Treatment / Chemical Peel / LED Therapy / Scar Treatment / Facial Treatment]`
-                           - `### Deskripsi Treatment` (1 fluent narrative paragraph detailing what the treatment is, mechanism, and target patient).
-                           - `### Indikasi & Target Kondisi Kulit (Cocok Untuk)` (Structured compact bullet points `- ` without empty lines between items).
-                           - `### Kontraindikasi (Tidak Disarankan Untuk)` (Structured compact bullet points `- `, if present).
-                           - `### Manfaat & Hasil yang Diharapkan` (Structured compact bullet points `- `).
-                           - `### Persiapan Sebelum Tindakan (Pre-Care)` (Structured compact bullet points `- `, if present).
-                           - `### Tahapan Prosedur Treatment` (Ordered numbered list `1. ...` or compact bullet points `- `).
-                           - `### Kandungan & Bahan Aktif` (Structured compact bullet points `- [Bahan Aktif / Peeling Agent]`, if present).
-                           - `### Informasi & Parameter Prosedur` (Crisp Markdown Table `| Parameter | Keterangan |\n| :--- | :--- |\n| Durasi | ... |\n| Downtime | ... |\n| Jumlah Sesi | ... |\n| Interval | ... |`).
-                           - `### Perawatan Setelah Tindakan (Aftercare)` (Structured compact bullet points `- `).
-                           - `### Efek Samping & Pemulihan` (Structured compact bullet points `- `).
-                         - Format ALL procedure tables with clean Markdown pipes `| Parameter | Keterangan |\n| :--- | :--- |`.
-                         - Set `document_type` to `"TREATMENT"`.
-                         - Recommend ALL relevant categories in `suggested_categories` (e.g. `Acne Care`, `Scar Treatment`).
-                    10. **Clean, Compact Markdown Formatting (Zero Messiness & Zero Data Loss)**:
-                       - NEVER output loose scattered lines or double blank lines between bullet items. Every list must be tightly formatted with standard `- `.
-                       - Convert all unformatted tab-separated text into standard Markdown tables.
-                       - 100% preservation of all details: retain EVERY treatment, duration, downtime, session count, interval, preparation step, procedure step, aftercare rule, side effect, and ingredient.
+Return ONLY valid JSON:
+{{
+    "title": "detected document title",
+    "document_type": "PRODUCT",
+    "valid_from": null,
+    "valid_until": null,
+    "suggested_categories": [{{"id": "uuid", "name": "category name"}}],
+    "feedback": "Dokumen ini berisi informasi mengenai produk skincare ERHA."
+}}"""
 
-                    Perform the following tasks:
-                    1. **AI Recommended Title (`title`)**: Provide a clean, short, professional document title WITHOUT any prefixes like "Knowledge Ingestment" or "Knowledge Base".
-                    2. **Document Type (`document_type`)**: "TREATMENT" for clinical treatments, "PRODUCT" for product catalogs, "PROMOTIONAL" for promo flyers, "SOP" for SOPs, or "GENERAL".
-                    3. **Validity Period (`valid_from` & `valid_until`)**: Date strings in "YYYY-MM-DD" format if document contains promotional validity dates, otherwise null.
-                    4. **Structured Full Document Markdown (`summary`)**: Present the complete content in beautifully organized Markdown matching the document's domain.
-                    5. **Multi-Category Selection (`suggested_categories`)**: Recommend ALL relevant matching categories (array of objects with "id" and "name") from Available System Categories.
-                    6. **Dynamic Executive Feedback (`feedback`)**: Provide a crisp 1-2 sentence executive summary in Indonesian.
-                    7. **Text Accuracy (`text_accuracy`)**: Grade the overall text confidence score (e.g. "99%" or "100%").
-
-                    Return a valid JSON object ONLY:
-                    {{
-                        "title": "ERHA Acne Center Treatments",
-                        "document_type": "TREATMENT",
-                        "valid_from": null,
-                        "valid_until": null,
-                        "summary": "# ERHA Acne Center Treatments\\n\\n## 1. Acne Intensive Program\\n- **Kategori Treatment**: Acne Treatment\\n\\n### Deskripsi Treatment\\nAcne Intensive Program merupakan perawatan komprehensif...\\n\\n### Indikasi & Target Kondisi Kulit (Cocok Untuk)\\n- Acne vulgaris ringan\\n- Mild inflammatory acne\\n\\n### Informasi & Parameter Prosedur\\n| Parameter | Keterangan |\\n| :--- | :--- |\\n| Durasi | 60–75 menit |\\n| Downtime | 1–2 hari |\\n| Jumlah Sesi | 4–8 sesi |\\n| Interval | 2 minggu sekali |",
-                        "feedback": "Dokumen ini memuat panduan lengkap mengenai 6 protokol perawatan jerawat di ERHA Acne Center.",
-                        "text_accuracy": "100%",
-                        "suggested_categories": [
-                            {{
-                                "id": "9b79e362-ec70-4560-902e-fd5897c07a00",
-                                "name": "Acne Care"
-                            }}
-                        ]
-                    }}
-                    """
-                    llm_response = await asyncio.to_thread(llm.generate, review_prompt)
+                    llm_response = await asyncio.to_thread(llm.generate, metadata_prompt)
                     timing_metrics["llm_review_ms"] = int((_time.time() - t0_llm) * 1000)
-                    parsed_review = safe_json_loads(llm_response)
-                    raw_title = parsed_review.get("title") or clean_title_fallback
+                    parsed_meta = safe_json_loads(llm_response)
 
-                    # Strip unwanted prefixes from title
+                    raw_title = parsed_meta.get("title") or clean_title_fallback
                     prefixes_to_strip = [
                         "knowledge ingestment", "knowledge ingestion", "knowledge ingest",
                         "ingestment", "ingestion", "knowledge base", "knowledge"
@@ -790,40 +784,22 @@ async def process_ingestion_background(
                     for p in prefixes_to_strip:
                         if recommended_title.lower().startswith(p):
                             recommended_title = recommended_title[len(p):].lstrip(" :-_#\t")
-
                     for ext in [".pdf", ".docx", ".xlsx", ".csv", ".pptx", ".ppt", ".doc", ".txt"]:
                         if recommended_title.lower().endswith(ext):
                             recommended_title = recommended_title[:-len(ext)].strip()
-
                     if not recommended_title:
                         recommended_title = clean_title_fallback
 
-                    summary = parsed_review.get("summary", summary)
-                    
-                    # Strip any accidental category sections generated in markdown body
-                    import re
-                    summary = re.sub(
-                        r"(?i)\n*#+\s*(\d+[\.\)]\s*)?(Kategori\s*Terkait|Related\s*Categories|Categories|Kategori)[\s\S]*$",
-                        "",
-                        summary
-                    ).strip()
-                    
-                    text_accuracy = parsed_review.get("text_accuracy", "100%")
-                    feedback = parsed_review.get("feedback", feedback)
-                    suggested_categories = parsed_review.get("suggested_categories", [])
-                    extracted_doc_type = parsed_review.get("document_type") or "GENERAL"
-                    extracted_valid_from = parsed_review.get("valid_from")
-                    extracted_valid_until = parsed_review.get("valid_until")
-                            
+                    extracted_doc_type = parsed_meta.get("document_type") or "GENERAL"
+                    extracted_valid_from = parsed_meta.get("valid_from")
+                    extracted_valid_until = parsed_meta.get("valid_until")
+                    suggested_categories = parsed_meta.get("suggested_categories", [])
+                    feedback = parsed_meta.get("feedback", feedback)
+
                 except Exception as llm_err:
                     timing_metrics["llm_review_ms"] = int((_time.time() - t0_llm) * 1000)
-                    logger.error(f"Failed to process AI review: {llm_err}")
+                    logger.warning(f"Metadata detection LLM call failed (non-critical): {llm_err}. Using parser defaults.")
                     recommended_title = clean_title_fallback
-                    if not summary or summary == "":
-                        summary = "\n\n".join([c.get("text", "") for c in enriched_chunks if isinstance(c, dict) and c.get("text")])
-                    if not suggested_categories and db_categories:
-                        suggested_categories = [db_categories[0]]
-                    feedback = f"Dokumen {file_name} telah berhasil diekstrak dan tersimpan di area peninjauan. Pemrosesan analisis AI otomatis sementara tertunda (kuota token API perlu diperbarui). Seluruh isi teks dokumen dapat ditinjau di bawah."
                     extracted_doc_type = "GENERAL"
                     extracted_valid_from = None
                     extracted_valid_until = None
@@ -835,84 +811,61 @@ async def process_ingestion_background(
             "doctors": ["all"]
         }
 
-        # Align chunks with multi-treatment or multi-product sections
-        enriched_chunks = align_chunks_with_multitreatment(
-            summary=summary,
-            chunks=enriched_chunks,
-            doc_title=recommended_title,
-            doc_type=extracted_doc_type
-        )
-
-        # Inject metadata cleanly into every chunk with granular category priority, dates, and visibility settings
-        cat_names = [c["name"] for c in suggested_categories if isinstance(c, dict) and "name" in c] if suggested_categories else []
-        for chunk in enriched_chunks:
-            if isinstance(chunk, dict):
-                if "metadata" not in chunk:
-                    chunk["metadata"] = {}
-                chunk["metadata"]["knowledge_id"] = knowledge_id
-                chunk["metadata"]["source_file"] = file_name
-                chunk["metadata"]["title"] = recommended_title
-                if not chunk["metadata"].get("product_name"):
-                    chunk["metadata"]["product_name"] = chunk.get("metadata", {}).get("entity") or recommended_title
-                chunk["metadata"]["clinics"] = visibility_settings["clinics"]
-                chunk["metadata"]["doctor_types"] = visibility_settings["doctor_types"]
-                chunk["metadata"]["doctors"] = visibility_settings["doctors"]
-                if extracted_doc_type:
-                    chunk["metadata"]["document_type"] = extracted_doc_type
-                if extracted_valid_from:
-                    chunk["metadata"]["valid_from"] = str(extracted_valid_from).strip()
-                if extracted_valid_until:
-                    chunk["metadata"]["valid_until"] = str(extracted_valid_until).strip()
-                
-                # Chunk-level category priority, falling back to smart content matching or document-level categories
-                chunk_specific_cat = chunk.get("chunk_category")
-                if not chunk_specific_cat and cat_names:
-                    chunk_txt_lower = (chunk.get("text", "") + " " + str(chunk.get("metadata", {}).get("section", ""))).lower()
-                    for cat_candidate in cat_names:
-                        if cat_candidate.lower() in chunk_txt_lower:
-                            chunk_specific_cat = cat_candidate
-                            break
-
-                if chunk_specific_cat:
-                    chunk["metadata"]["category"] = chunk_specific_cat
-                    chunk["metadata"]["categories"] = [chunk_specific_cat] + [c for c in cat_names if c != chunk_specific_cat]
-                elif cat_names:
-                    chunk["metadata"]["category"] = cat_names[0]
-                    chunk["metadata"]["categories"] = cat_names
-                    
-                chunk.pop("chunk_category", None)
-                chunk["metadata"].pop("suggested_categories", None)
-
-        # Preserve image_url, s3_key, storage_key and prepend visual image tag if present
-        doc_image_url = None
+        # Collect ALL document-level image URLs from parser chunks AND from AI summary
+        all_doc_image_urls = []
         doc_s3_key = None
         for c in enriched_chunks:
             if isinstance(c, dict) and c.get("metadata"):
                 m = c["metadata"]
-                if m.get("image_url") and not doc_image_url:
-                    doc_image_url = m["image_url"]
+                if m.get("image_url") and m["image_url"] not in all_doc_image_urls:
+                    all_doc_image_urls.append(m["image_url"])
                 if m.get("s3_key") and not doc_s3_key:
                     doc_s3_key = m["s3_key"]
                 elif m.get("storage_key") and not doc_s3_key:
                     doc_s3_key = m["storage_key"]
 
-        if doc_image_url:
-            if doc_image_url not in summary:
-                summary = f"![{recommended_title}]({doc_image_url})\n\n{summary}"
-            if enriched_chunks and isinstance(enriched_chunks[0], dict):
-                if doc_image_url not in enriched_chunks[0].get("text", ""):
-                    enriched_chunks[0]["text"] = f"![{recommended_title}]({doc_image_url})\n\n{enriched_chunks[0].get('text', '')}"
-                enriched_chunks[0]["metadata"]["image_url"] = doc_image_url
-                if doc_s3_key:
-                    enriched_chunks[0]["metadata"]["s3_key"] = doc_s3_key
-                    enriched_chunks[0]["metadata"]["storage_key"] = doc_s3_key
+        # Extract image URLs embedded in canonical summary markdown (from parser Vision LLM output)
+        if summary:
+            import re as _re
+            for url in _re.findall(r'!\[.*?\]\((https?://[^\s\)]+)\)', summary):
+                if url and url not in all_doc_image_urls:
+                    all_doc_image_urls.append(url)
 
+        # Prepend image block to summary for dashboard display (only if images not yet embedded)
+        if all_doc_image_urls:
+            if not any(u in summary for u in all_doc_image_urls):
+                img_header_block = "\n".join([f"![{recommended_title} Image {i+1}]({u})" for i, u in enumerate(all_doc_image_urls)])
+                summary = f"{img_header_block}\n\n{summary}"
+
+        # Category names for chunk metadata
+        cat_names = [c["name"] for c in suggested_categories if isinstance(c, dict) and "name" in c] if suggested_categories else []
+
+        # Structure-aware chunking from canonical text (raw parser output — never LLM-rewritten)
+        # chunk_summary_markdown splits by ## headings, extracts contextual image_url/sku/price per chunk
+        # NOTE: These chunks are STAGING chunks only — final chunks are regenerated at Approve time
+        if summary and summary.strip():
+            try:
+                from app.rag.utils.summary_chunker import chunk_summary_markdown
+                enriched_chunks = chunk_summary_markdown(
+                    summary=summary,
+                    source_file=file_name,
+                    knowledge_id=knowledge_id,
+                    batch_id=batch_id,
+                    file_hash=file_hash,
+                    title=recommended_title,
+                    doc_type=extracted_doc_type or "GENERAL",
+                    categories=cat_names,
+                    valid_from=str(extracted_valid_from).strip() if extracted_valid_from else None,
+                    valid_until=str(extracted_valid_until).strip() if extracted_valid_until else None,
+                    visibility_settings=visibility_settings,
+                )
+                logger.info(f"Canonical text chunking produced {len(enriched_chunks)} staging chunks.")
+            except Exception as rechunk_err:
+                logger.warning(f"Canonical text chunking failed, keeping parser chunks: {rechunk_err}")
+
+        # History starts empty at ingestion — will be populated during admin Refine interactions
+        # user_prompt is preserved in initial_prompt field for reference only
         history_list = []
-        if user_prompt and str(user_prompt).strip():
-            history_list = [
-                {"role": "user", "content": str(user_prompt).strip()},
-                {"role": "assistant", "content": summary}
-            ]
 
         timing_metrics["total_ingestion_ms"] = int((_time.time() - t0_total) * 1000)
 
@@ -925,10 +878,8 @@ async def process_ingestion_background(
             "title": recommended_title,
             "status": "On review",
             "document_type": extracted_doc_type,
-            "valid_from": extracted_valid_from,
-            "valid_until": extracted_valid_until,
             "summary": summary,
-            "image_url": doc_image_url,
+            "image_urls": all_doc_image_urls,
             "text_accuracy": text_accuracy,
             "feedback": feedback,
             "batch_summary": None,
@@ -972,13 +923,28 @@ async def process_ingestion_background(
                 result = await session.execute(select(Knowledge).where(Knowledge.id == k_uuid))
                 k_entry = result.scalars().first()
                 if k_entry:
+                    k_entry.deleted_at = None
                     k_entry.status = KnowledgeStatus.PENDING
                     k_entry.title = recommended_title
                     k_entry.ai_summary = summary
                     k_entry.ai_confidence = float(text_accuracy.replace("%", "")) if isinstance(text_accuracy, str) and "%" in text_accuracy else 95.00
                     if k_entry.metadata_ is None:
                         k_entry.metadata_ = {}
-                    k_entry.metadata_["timing_metrics"] = timing_metrics
+                    k_entry.metadata_.update({
+                        "batch_id": batch_id,
+                        "file_hash": file_hash,
+                        "document_type": extracted_doc_type,
+                        "initial_prompt": user_prompt if user_prompt and str(user_prompt).strip() else None,
+                        "history": history_list,
+                        "chat_history": history_list,
+                        "suggested_categories": suggested_categories,
+                        "categories": [c["name"] for c in suggested_categories if isinstance(c, dict) and "name" in c] if suggested_categories else [],
+                        "visibility_settings": visibility_settings,
+                        "feedback": feedback,
+                        "timing_metrics": timing_metrics
+                    })
+                    from sqlalchemy.orm.attributes import flag_modified
+                    flag_modified(k_entry, "metadata_")
                     await session.commit()
         except Exception as db_err:
             logger.warning(f"Could not update status to PENDING in Knowledge DB table: {db_err}")
@@ -991,18 +957,9 @@ async def process_ingestion_background(
         with open(pending_file_path, 'w', encoding='utf-8') as f:
             json.dump(staged_document, f, indent=4, ensure_ascii=False)
 
-        # If this document is part of a multi-file batch, synthesize/update a unified Batch Executive Summary
-        if batch_id and llm:
-            try:
-                b_summary = await synthesize_batch_executive_summary(batch_id, llm)
-                if b_summary:
-                    staged_document["batch_summary"] = b_summary
-            except Exception as batch_summary_err:
-                logger.warning(f"Could not synthesize batch summary: {batch_summary_err}")
-
         logger.info(
             f"\n"
-            f"⏱️ [INGESTION TIMING] File: '{file_name}' (ID: {knowledge_id})\n"
+            f"⏱️ [SINGLE FILE INGESTION TIMING] File: '{file_name}' (ID: {knowledge_id})\n"
             f"  - Parsing Stage        : {timing_metrics['parsing_ms']} ms\n"
             f"  - LLM Review Stage     : {timing_metrics['llm_review_ms']} ms\n"
             f"  - DB Staging Stage     : {timing_metrics['database_insert_ms']} ms\n"
@@ -1012,7 +969,47 @@ async def process_ingestion_background(
     except Exception as e:
         logger.error(f"Failed background processing for document: {e}")
 
-async def synthesize_batch_executive_summary(batch_id: str, llm: BaseLLMAdapter) -> Optional[str]:
+async def trigger_batch_summary_after_all_done(batch_id: str, expected_count: int, llm: BaseLLMAdapter, user_prompt: Optional[str] = None, timeout_sec: int = 180):
+    """
+    Coordinator task that waits until all documents in a multi-file batch finish Parsing & LLM Review,
+    then triggers synthesize_batch_executive_summary EXACTLY ONCE for the entire batch.
+    """
+    import time as _time
+    t0 = _time.time()
+    logger.info(f"🚀 [BATCH COORDINATOR] Monitoring Batch '{batch_id}' ({expected_count} files)...")
+
+    while _time.time() - t0 < timeout_sec:
+        completed_count = 0
+        dirs_to_check = ["data/pending", "data/output"]
+        for d in dirs_to_check:
+            if os.path.exists(d):
+                for f in os.listdir(d):
+                    if f.endswith(".json") and f != "bm25_index.pkl":
+                        try:
+                            with open(os.path.join(d, f), "r", encoding="utf-8") as fj:
+                                data = json.load(fj)
+                            if isinstance(data, dict) and data.get("batch_id") == batch_id:
+                                if data.get("summary") and data.get("status") in ["On review", "PENDING", "APPROVED"]:
+                                    completed_count += 1
+                        except Exception:
+                            pass
+        if completed_count >= expected_count:
+            break
+        await asyncio.sleep(1.5)
+
+    t0_batch = _time.time()
+    try:
+        b_summary = await synthesize_batch_executive_summary(batch_id, llm, user_prompt=user_prompt)
+        batch_duration_ms = int((_time.time() - t0_batch) * 1000)
+        logger.info(
+            f"\n"
+            f"⏱️ [BATCH EXECUTIVE SUMMARY TIMING] Batch ID: '{batch_id}' ({expected_count} files)\n"
+            f"  - Unified Batch Summary Stage : {batch_duration_ms} ms (Executed 1x for full batch)\n"
+        )
+    except Exception as err:
+        logger.warning(f"Could not trigger unified batch summary for {batch_id}: {err}")
+
+async def synthesize_batch_executive_summary(batch_id: str, llm: BaseLLMAdapter, user_prompt: Optional[str] = None) -> Optional[str]:
     """
     Synthesizes multiple uploaded document feedbacks/summaries into a concise, unified Executive Summary paragraph.
     Identifies whether documents are clinically/operationally interrelated or independent.
@@ -1045,55 +1042,67 @@ async def synthesize_batch_executive_summary(batch_id: str, llm: BaseLLMAdapter)
     docs_text_parts = []
     for i, d in enumerate(batch_docs):
         fname = d.get('file_name', '')
-        title = d.get('title', '')
-        doctype = d.get('type', 'General')
+        title = d.get('title', '') or fname
+        doctype = d.get('document_type') or d.get('type', 'General')
         ext = os.path.splitext(fname)[1].lower()
-        
-        summary_text = d.get('summary', '') or d.get('feedback', '')
+
+        # Use AI-detected feedback (1 sentence) as document description
+        # Then supplement with up to 5 chunks of the actual parsed content
+        feedback_text = d.get('feedback', '')
         chunks = d.get('chunks', [])
-        all_chunk_texts = []
-        if chunks:
-            for c in chunks:
-                c_text = c.get('text', '') if isinstance(c, dict) else str(c)
-                if c_text and c_text.strip():
-                    all_chunk_texts.append(c_text.strip())
-        
-        full_content = "\n\n".join(all_chunk_texts) if all_chunk_texts else summary_text
-        if len(full_content) > 25000:
-            full_content = full_content[:25000]
-        
-        doc_entry = f"=== DOKUMEN {i+1}: '{fname}' (Tipe File: {ext or 'unknown'} | Kategori: {doctype} | Judul: {title}) ===\n"
-        doc_entry += f"ISI / DATA LENGKAP:\n{full_content}\n"
-            
+        chunk_samples = []
+        for c in chunks[:5]:  # only first 5 chunks to keep context manageable
+            c_text = c.get('text', '') if isinstance(c, dict) else str(c)
+            if c_text and c_text.strip():
+                chunk_samples.append(c_text.strip())
+
+        doc_entry = f"=== DOKUMEN {i+1}: '{fname}' (Tipe: {ext or 'unknown'} | Kategori: {doctype} | Judul: {title}) ===\n"
+        if feedback_text:
+            doc_entry += f"Ringkasan AI: {feedback_text}\n"
+        if chunk_samples:
+            doc_entry += f"Sampel Isi Dokumen:\n" + "\n---\n".join(chunk_samples) + "\n"
+
         docs_text_parts.append(doc_entry)
 
     docs_text = "\n\n".join(docs_text_parts)
+
+    user_instruction_block = ""
+    effective_prompt = user_prompt or next((d.get("initial_prompt") for d in batch_docs if d.get("initial_prompt")), None)
+    if effective_prompt and str(effective_prompt).strip():
+        user_instruction_block = f"""
+INSTRUKSI KHUSUS PENGGUNA (PRIORITAS TINGGI):
+"{str(effective_prompt).strip()}"
+Harap perhatikan dan penuhi instruksi pengguna di atas saat menyusun ringkasan eksekutif batch ini.
+"""
 
     batch_prompt = f"""
 Anda adalah AI Knowledge Specialist & Clinical Data Integrator untuk klinik ERHA (PT Arya Noble).
 Pengguna mengunggah {len(batch_docs)} dokumen sekaligus dalam satu batch ingest.
 
-Berikut isi lengkap seluruh dokumen yang diunggah dalam batch ini:
+Berikut ringkasan dan sampel isi masing-masing dokumen dalam batch ini:
 {docs_text}
-
+{user_instruction_block}
 Tugas Anda:
 Lakukan rekonsiliasi dan cross-reference antar dokumen di atas secara teliti.
-Hitung seluruh produk / entitas unik yang ada pada masing-masing dokumen.
+Identifikasi apakah dokumen-dokumen ini saling berkaitan (misalnya: katalog produk + product knowledge detail, atau protokol treatment + bahan aktif).
 
-ATURAN FORMAT OUTPUT WAJIB (SANGAT PENTING):
-- JANGAN gunakan heading/judul apapun (DILARANG menulis '### Batch Executive Summary', '### Executive Summary', dsb.).
-- JANGAN gunakan penomoran section seperti '1. **Status...**', '2. **Berikut...**', atau '3. **Batasan...**'.
-- Ikuti PERSIS struktur 3 bagian berikut dalam teks biasa / bullet sederhana:
+PENTING — ATURAN AKURASI:
+- HANYA gunakan informasi yang BENAR-BENAR ADA di konten dokumen di atas.
+- DILARANG mengarang, mengestimasi, atau menambah informasi yang tidak tercantum.
+- Jika informasi tidak tersedia di dokumen, nyatakan "tidak ditemukan di dokumen" — JANGAN mengisi dengan asumsi.
 
-[Paragraf 1 - Status Retrieval & Rekonsiliasi Jumlah]:
-Retrieval selesai. Saya menemukan [Jumlah X] produk pada [katalog PPT/PDF/nama dokumen A] dan [Jumlah Y] produk pada [product knowledge Excel/nama dokumen B]. Dari [Jumlah X] produk di [dokumen A], [Jumlah Z] produk berhasil dicocokkan dengan [dokumen B]. [Jumlah W] produk lainnya ditemukan di [dokumen A] tetapi belum memiliki informasi detail pada [dokumen B].
+ATURAN FORMAT OUTPUT WAJIB:
+- JANGAN gunakan heading/judul apapun (DILARANG menulis '### Batch Executive Summary', dsb.)
+- JANGAN gunakan penomoran section seperti '1. **Status...**'
+- Ikuti PERSIS struktur berikut dalam teks biasa:
 
-Berikut beberapa hasil cross-reference:
-[Nama Produk 1] → mengandung [Komposisi aktif & persentase]. Digunakan [Aturan pakai / frekuensi].
-[Nama Produk 2] → mengandung [Komposisi aktif & persentase]. Digunakan [Aturan pakai / frekuensi].
-[Nama Produk 3] → mengandung [Komposisi aktif & persentase]. Digunakan [Aturan pakai / frekuensi].
+[Paragraf 1 - Status Batch & Hubungan Antar Dokumen]:
+Sebutkan jumlah dokumen, jenis masing-masing, dan apakah mereka saling terkait atau independen.
 
-Saya tidak akan mengasumsikan komposisi, penggunaan, kontraindikasi, atau efek samping untuk [Jumlah W] produk yang hanya ditemukan di [dokumen A/katalog].
+[Jika ada cross-reference yang ditemukan — tuliskan sebagai bullet sederhana]:
+[Nama Produk/Treatment] → [informasi yang dikaitkan dari dokumen lain]
+
+[Penutup singkat — hal yang tidak dapat dicocokkan karena data tidak ada di dokumen]
 """
     try:
         batch_summary = await asyncio.to_thread(llm.generate, batch_prompt)
@@ -1301,6 +1310,7 @@ async def ingest_document(
 
                     if existing_doc:
                         knowledge = existing_doc
+                        knowledge.deleted_at = None
                         knowledge.status = KnowledgeStatus.PROCESSING
                         knowledge.ai_summary = "Processing..."
                         knowledge.original_path = file_path
@@ -1343,6 +1353,22 @@ async def ingest_document(
                 if not k_id:
                     k_id = str(_uuid.uuid4())
 
+            # Upload original document to knowledge-documents MinIO bucket
+            original_s3_key = None
+            try:
+                from app.services.storage import upload_document
+                doc_upload = upload_document(
+                    content=file_bytes,
+                    filename=target_file.filename,
+                    document_id=k_id,
+                    content_type=target_file.content_type or "application/octet-stream"
+                )
+                if doc_upload.get("status") == "success":
+                    original_s3_key = doc_upload["s3_key"]
+                    logger.info(f"📄 Original document uploaded to MinIO: {original_s3_key}")
+            except Exception as minio_err:
+                logger.warning(f"Could not upload original document to MinIO: {minio_err}")
+
             # Spawn concurrent background ingestion task
             asyncio.create_task(
                 process_ingestion_background(
@@ -1362,9 +1388,16 @@ async def ingest_document(
                 "knowledge_id": k_id,
                 "batch_id": batch_id,
                 "file_name": target_file.filename,
+                "original_s3_key": original_s3_key,
                 "duplicate_status": "PENDING_REPLACED" if (dup_status == "PENDING" and replace_existing) else "NEW",
                 "status": status_display
             })
+
+        # Spawn batch coordinator task if multi-file batch upload
+        if batch_id and len(response_items) > 1 and llm:
+            asyncio.create_task(
+                trigger_batch_summary_after_all_done(batch_id, len(response_items), llm, user_prompt=prompt)
+            )
 
         return {
             "status": "success",
@@ -1378,6 +1411,179 @@ async def ingest_document(
     except Exception as e:
         logger.error(f"Failed to ingest document(s): {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/ingest/text", tags=["Ingestion"], summary="Ingest Knowledge By Text Only")
+async def ingest_text_only(
+    req: TextIngestRequest,
+    pipeline: IngestionPipeline = Depends(get_ingestion_pipeline),
+    llm: BaseLLMAdapter = Depends(get_llm)
+):
+    """
+    ✍️ Ingest Knowledge By Text Saja:
+    Memasukkan materi pengetahuan secara langsung via teks tanpa melampirkan file.
+    Sistem secara otomatis mengonversi teks menjadi dokumen terstruktur `.md`,
+    melakukan rekonstruksi struktur/normalisasi, mengunggah ke MinIO `knowledge-documents`,
+    dan menempatkan draft di area peninjauan On Review (Pending).
+    """
+    if not req.text_content or not req.text_content.strip():
+        raise HTTPException(status_code=400, detail="Text content cannot be empty.")
+
+    try:
+        from app.models.knowledge import KnowledgeType, Knowledge, KnowledgeStatus
+        from app.models.user import User
+        from app.rag.utils.normalizer import normalize_document_text
+        from app.services.storage import upload_document
+        from app.core.database import AsyncSessionLocal
+        from sqlalchemy import select
+        import uuid as _uuid
+        import hashlib
+        import re
+
+        raw_text = req.text_content.strip()
+
+        # 1. Determine or infer title
+        doc_title = req.title.strip() if req.title and req.title.strip() else None
+        if not doc_title:
+            first_line = raw_text.split('\n')[0].strip().lstrip('#').strip()
+            if first_line and len(first_line) <= 80:
+                doc_title = first_line
+            else:
+                doc_title = f"Pengetahuan Teks {int(asyncio.get_event_loop().time())}"
+
+        # Clean title for filename
+        clean_filename_base = re.sub(r'[^\w\s-]', '', doc_title).strip().replace(' ', '_')
+        if not clean_filename_base:
+            clean_filename_base = "knowledge_text"
+        filename = f"{clean_filename_base}.md"
+
+        # 2. Normalize text into structured markdown
+        normalized_markdown = normalize_document_text(raw_text)
+        if not normalized_markdown.startswith('#'):
+            normalized_markdown = f"# {doc_title}\n\n" + normalized_markdown
+
+        file_bytes = normalized_markdown.encode('utf-8')
+        file_hash = hashlib.sha256(file_bytes).hexdigest()
+
+        # 3. Duplicate detection
+        dup_info = detect_duplicate_lifecycle(file_hash, filename)
+        dup_status = dup_info.get("status", "NEW")
+
+        if dup_status == "PUBLISHED":
+            raise HTTPException(
+                status_code=400,
+                detail=f"Materi teks '{doc_title}' sudah terpublikasi (APPROVED) di knowledge base. Silakan gunakan menu Edit Knowledge jika ingin memperbarui."
+            )
+
+        if dup_status == "PENDING" and not req.replace_existing:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Draft peninjauan untuk '{doc_title}' sudah ada di antrean On Review. Kirim 'replace_existing=true' untuk mengganti draft lama."
+            )
+
+        # 4. Save temp .md file
+        os.makedirs("data/temp", exist_ok=True)
+        file_path = f"data/temp/{filename}"
+        with open(file_path, "wb") as f_out:
+            f_out.write(file_bytes)
+
+        file_size = len(file_bytes)
+
+        # 5. Create or update Knowledge DB record
+        k_id = dup_info.get("knowledge_id") if (dup_status == "PENDING" and req.replace_existing) else None
+        async with AsyncSessionLocal() as session:
+            user_result = await session.execute(select(User).limit(1))
+            user = user_result.scalars().first()
+            user_id = user.id if user else _uuid.uuid4()
+
+            custom_uuid = None
+            if k_id:
+                try:
+                    custom_uuid = _uuid.UUID(k_id)
+                except ValueError:
+                    pass
+
+            existing_doc = None
+            if custom_uuid:
+                existing_doc = await session.get(Knowledge, custom_uuid)
+
+            if existing_doc:
+                knowledge = existing_doc
+                knowledge.title = doc_title
+                knowledge.status = KnowledgeStatus.PROCESSING
+                knowledge.ai_summary = "Processing..."
+                knowledge.original_path = file_path
+                knowledge.mime_type = "text/markdown"
+                knowledge.file_size = file_size
+                if knowledge.metadata_ is None:
+                    knowledge.metadata_ = {}
+                knowledge.metadata_["file_hash"] = file_hash
+                await session.commit()
+                await session.refresh(knowledge)
+                k_id = str(knowledge.id)
+            else:
+                knowledge = Knowledge(
+                    id=custom_uuid if custom_uuid else _uuid.uuid4(),
+                    type=KnowledgeType.GENERAL,
+                    title=doc_title,
+                    file_name=filename,
+                    original_path=file_path,
+                    mime_type="text/markdown",
+                    file_size=file_size,
+                    status=KnowledgeStatus.PROCESSING,
+                    uploaded_by=user_id,
+                    ai_summary="Processing...",
+                    ai_confidence=0.0,
+                    metadata_={"file_hash": file_hash}
+                )
+                session.add(knowledge)
+                await session.commit()
+                await session.refresh(knowledge)
+                k_id = str(knowledge.id)
+
+        # 6. Upload .md document to MinIO
+        original_s3_key = None
+        try:
+            doc_upload = upload_document(
+                content=file_bytes,
+                filename=filename,
+                document_id=k_id,
+                content_type="text/markdown"
+            )
+            if doc_upload.get("status") == "success":
+                original_s3_key = doc_upload["s3_key"]
+        except Exception as minio_err:
+            logger.warning(f"Could not upload text .md document to MinIO: {minio_err}")
+
+        # 7. Process background ingestion for staging draft
+        asyncio.create_task(
+            process_ingestion_background(
+                k_id,
+                file_path,
+                filename,
+                pipeline,
+                llm,
+                req.prompt,
+                file_hash,
+                None
+            )
+        )
+
+        return {
+            "status": "success",
+            "knowledge_id": k_id,
+            "file_name": filename,
+            "title": doc_title,
+            "original_s3_key": original_s3_key,
+            "message": f"Berhasil mengonversi teks menjadi dokumen '{filename}' dan menempatkannya di area peninjauan (On Review)."
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Text ingestion failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 
 @router.get("/ingest/pending/{knowledge_id}", tags=["Ingestion"], summary="Get Pending Details", response_model=PendingDocumentResponse)
@@ -1577,73 +1783,103 @@ async def refine_pending_document(
         else:
             history_str = "No previous refinement history.\n"
 
-        attached_prompt_note = f"\n\nNote: The user attached a new file '{attached_file_name}'. Merge and combine its facts, composition, prices, or claims with the existing staged document data." if attached_file_context else ""
+        # ─── DUAL-MODE PROMPT: SURGICAL EDIT vs MERGE ────────────────────────────────
+        if attached_file_context:
+            # ═══ MERGE MODE: Combine attached file into existing document ═══
+            refine_prompt = f"""
+You are a document merger for the ERHA (PT Arya Noble) knowledge base.
+Your job is to COMBINE the content from a newly attached file into the existing document,
+following the admin's specific instructions on how to merge.
 
-        # Prompt Gemini to refine the staged data based on instructions & history & attached file
-        refine_prompt = f"""
-        You are an intelligent medical aesthetic AI editor and validator for the ERHA (PT Arya Noble) knowledge base.
-        Your task is to refine and update the staged document strictly according to the user's explicit command.
+======================================================================
+ADMIN MERGE INSTRUCTION:
+"{request.prompt}"
+======================================================================
 
-        ======================================================================
-        CRITICAL USER EDIT INSTRUCTION (HIGHEST PRIORITY - YOU MUST EXECUTE THIS):
-        "{request.prompt}"
-        ======================================================================
+Conversation History (for context only):
+{history_str}
 
-        Conversation History:
-        {history_str}
+EXISTING DOCUMENT CONTENT:
+{json.dumps(staged_data.get("summary", ""), ensure_ascii=False)}
 
-        Current Staged Document Data:
-        {json.dumps(staged_data, indent=2, ensure_ascii=False)}
-        {attached_file_context}
-        Available System Categories:
-        {json.dumps(db_categories, ensure_ascii=False)}
+{attached_file_context}
 
-        REFINEMENT EXECUTION RULES:
-        1. **Direct Value & Text Editing (MANDATORY)**:
-           - You MUST strictly apply any modifications requested in the User Instruction (e.g. changing SKU, price, volume, ingredients, title, text, translation, or claims).
-           - If user commands "ganti nomor SKU Spot Gel jadi PRO-565346", you MUST update the SKU value for Spot Gel in the `summary` markdown and chunk text.
-           - If user commands to change price, volume, or ingredients, update the `summary` and chunks accordingly.
-        2. **Multi-Product / Multi-Treatment / Multi-Item Awareness (CRITICAL)**:
-           - When the document contains MULTIPLE products or MULTIPLE clinical treatments (e.g. Acne Intensive Program, Acne Peel Therapy, Microneedling, etc.):
-             - If the user instruction targets a SPECIFIC product or treatment (e.g. "Spot Gel" or "Acne Peel Therapy" or "Microneedling"), update ONLY that specific item's section, SKU, price, procedure parameters, and chunks.
-             - PRESERVE all other products' and treatments' sections, parameters, descriptions, and chunks completely intact without overwriting or copying values across items.
-             - If the user instruction is document-wide (e.g. translation, reformatting, disclaimer), apply it across all sections while preserving each item's specific attributes.
-             - NEVER duplicate titles consecutively (e.g. avoid repeating headers twice in a row).
-             - Keep all tables formatted in standard Markdown (`| Parameter | Keterangan |`).
-        3. **Consistency Across Summary and Chunks**:
-           - Any fact, SKU, number, or text updated in `summary` MUST also be updated in the `chunks` text so that retrieval indexing stays 100% synchronized.
-        4. **Category Management**:
-           - If the user asks to add/change categories, update `suggested_categories` and `metadata.categories` of the chunks accordingly.
-        5. **Executive Feedback**:
-           - Provide a clear, natural Indonesian sentence in `feedback` explaining what was updated based on the user's prompt (e.g. "Nomor SKU berhasil diperbarui sesuai instruksi.").
-        6. **No Regressions**:
-           - Preserve image markdown `![Title](image_url)` and other existing accurate details unless explicitly instructed to change them.
+MERGE RULES:
+1. **FOLLOW ADMIN INSTRUCTION**: The admin's instruction tells you HOW to combine the attached file.
+   - e.g. "gabungkan data produk baru dari file ini" → merge new product data into existing document.
+   - e.g. "tambahkan informasi harga dari file terlampir" → extract pricing from attached file and add to existing doc.
+2. **PRESERVE EXISTING CONTENT**: All existing document content that is NOT being merged/replaced MUST be kept VERBATIM.
+3. **USE ATTACHED FILE DATA ONLY**: Only add information that actually exists in the attached file. Do NOT fabricate.
+4. **CONSISTENT STRUCTURE**: Maintain the existing markdown heading structure (## sections). Add new sections if needed.
+5. **FEEDBACK**: Write 1 short Indonesian sentence describing what was merged (e.g. "Data harga dari file terlampir telah ditambahkan ke dokumen.").
 
-        Return a valid JSON object ONLY (do not wrap in markdown code block like ```json):
-        {{
-            "knowledge_id": "{staged_data.get('knowledge_id', knowledge_id)}",
-            "file_name": "{staged_data.get('file_name', knowledge_id)}",
-            "title": "{staged_data.get('title', 'Document Title')}",
-            "status": "On review",
-            "summary": "updated summary markdown with exact user changes applied",
-            "text_accuracy": "100%",
-            "feedback": "Perubahan berhasil diterapkan sesuai instruksi.",
-            "suggested_categories": [
-                {{"id": "category_id", "name": "category_name"}}
-            ],
-            "chunks": [
-                {{
-                    "text": "updated chunk text with exact user changes applied",
-                    "metadata": {{
-                        "knowledge_id": "{staged_data.get('knowledge_id', knowledge_id)}",
-                        "source_file": "{staged_data.get('file_name', knowledge_id)}",
-                        "category": "Acne Care",
-                        "categories": ["Acne Care"]
-                    }}
-                }}
-            ]
-        }}
-        """
+Available System Categories (update if relevant):
+{json.dumps(db_categories, ensure_ascii=False)}
+
+Return a valid JSON object ONLY (do NOT wrap in ```json blocks):
+{{
+    "knowledge_id": "{staged_data.get('knowledge_id', knowledge_id)}",
+    "file_name": "{staged_data.get('file_name', knowledge_id)}",
+    "title": "{staged_data.get('title', 'Document Title')}",
+    "status": "On review",
+    "summary": "The merged document with attached file content integrated per admin instruction",
+    "text_accuracy": "100%",
+    "feedback": "Deskripsi singkat apa yang di-merge.",
+    "suggested_categories": [
+        {{"id": "category_id", "name": "category_name"}}
+    ]
+}}
+"""
+        else:
+            # ═══ SURGICAL EDIT MODE: Apply exact changes only ═══
+            refine_prompt = f"""
+You are a precise text editor for the ERHA (PT Arya Noble) knowledge base.
+Your ONLY job is to apply the admin's explicit edit instruction to the document below.
+You are NOT a content writer. You are NOT allowed to rewrite, rephrase, restructure, or improve any content.
+
+======================================================================
+ADMIN EDIT INSTRUCTION (THE ONLY THING YOU ARE ALLOWED TO CHANGE):
+"{request.prompt}"
+======================================================================
+
+Conversation History (for context only):
+{history_str}
+
+CURRENT DOCUMENT CONTENT (canonical_text — preserve verbatim unless instructed):
+{json.dumps(staged_data.get("summary", ""), ensure_ascii=False)}
+
+STRICT EDITING RULES (VIOLATING ANY RULE IS A CRITICAL FAILURE):
+1. **SURGICAL CHANGES ONLY**: Apply ONLY the change(s) explicitly requested in the Admin Edit Instruction.
+   - If instruction says "hapus bagian Warnings" → remove only the Warnings section. Leave all other sections exactly as-is.
+   - If instruction says "ganti nama produk X menjadi Y" → change only that product name. Leave all other text unchanged.
+   - If instruction says "tambahkan SPF45 di Active Ingredients" → insert that line only. Do not modify surrounding text.
+2. **VERBATIM PRESERVATION**: Every word, sentence, paragraph, table, and bullet NOT targeted by the instruction MUST be returned character-for-character as-is.
+   - DO NOT rephrase any sentence not explicitly commanded.
+   - DO NOT reformat or restructure any section not explicitly commanded.
+   - DO NOT add explanations, transitions, or commentary not in the original.
+3. **ZERO NEW CONTENT**: You are FORBIDDEN from adding any information not present in the original document AND not in the admin's instruction.
+   - If admin says "tambahkan keterangan X" → you may add exactly that keterangan X.
+   - You may NOT add anything else.
+4. **CATEGORIES**: Only update `suggested_categories` if the admin instruction explicitly asks for it.
+5. **FEEDBACK**: Write 1 short Indonesian sentence describing exactly what was changed (e.g. "Bagian Warnings telah dihapus sesuai instruksi.").
+
+Available System Categories (only if instruction asks to change categories):
+{json.dumps(db_categories, ensure_ascii=False)}
+
+Return a valid JSON object ONLY (do NOT wrap in ```json blocks):
+{{
+    "knowledge_id": "{staged_data.get('knowledge_id', knowledge_id)}",
+    "file_name": "{staged_data.get('file_name', knowledge_id)}",
+    "title": "{staged_data.get('title', 'Document Title')}",
+    "status": "On review",
+    "summary": "VERBATIM document text with ONLY the instructed change(s) applied",
+    "text_accuracy": "100%",
+    "feedback": "Deskripsi singkat perubahan yang diterapkan.",
+    "suggested_categories": [
+        {{"id": "category_id", "name": "category_name"}}
+    ]
+}}
+"""
         
         llm_response = await asyncio.to_thread(llm.generate, refine_prompt)
         
@@ -1662,19 +1898,17 @@ async def refine_pending_document(
         # Remove legacy type if present
         updated_data.pop("type", None)
 
-        # Apply deterministic refinements for SKU, Price, and chunk synchronization
+        # Apply deterministic refinements for SKU, Price
         cur_summary = updated_data.get("summary") or staged_data.get("summary", "")
-        cur_chunks = updated_data.get("chunks") or staged_data.get("chunks", [])
         cur_title = updated_data.get("title") or staged_data.get("title") or staged_data.get("file_name", k_id)
         
-        refined_summary, refined_chunks, refined_title, refined_sku = apply_refinements_to_content(
+        refined_summary, _, refined_title, refined_sku = apply_refinements_to_content(
             user_prompt=request.prompt,
             summary=cur_summary,
-            chunks=cur_chunks,
+            chunks=[],
             title=cur_title
         )
         updated_data["summary"] = refined_summary
-        updated_data["chunks"] = refined_chunks
         if refined_title:
             updated_data["title"] = refined_title
         if refined_sku:
@@ -1700,31 +1934,43 @@ async def refine_pending_document(
         doc_valid_from = updated_data.get("valid_from") or staged_data.get("valid_from")
         doc_valid_until = updated_data.get("valid_until") or staged_data.get("valid_until")
 
-        for chunk in updated_data.get("chunks", []):
-            if isinstance(chunk, dict):
-                if "metadata" not in chunk or not isinstance(chunk["metadata"], dict):
-                    chunk["metadata"] = {}
-                chunk["metadata"]["knowledge_id"] = k_id
-                chunk["metadata"]["source_file"] = doc_file_name
-                chunk["metadata"]["title"] = doc_title
-                if not chunk["metadata"].get("product_name"):
-                    chunk["metadata"]["product_name"] = chunk.get("metadata", {}).get("entity") or doc_title
-                if doc_type:
-                    chunk["metadata"]["document_type"] = doc_type
-                if doc_valid_from:
-                    chunk["metadata"]["valid_from"] = str(doc_valid_from).strip()
-                if doc_valid_until:
-                    chunk["metadata"]["valid_until"] = str(doc_valid_until).strip()
-                if doc_file_hash:
-                    chunk["metadata"]["file_hash"] = doc_file_hash
-                if doc_batch_id:
-                    chunk["metadata"]["batch_id"] = doc_batch_id
-                if doc_img_url and "image_url" not in chunk["metadata"]:
-                    chunk["metadata"]["image_url"] = doc_img_url
-                if vis_settings:
-                    chunk["metadata"]["clinics"] = vis_settings.get("clinics", ["all"])
-                    chunk["metadata"]["doctor_types"] = vis_settings.get("doctor_types", ["all"])
-                    chunk["metadata"]["doctors"] = vis_settings.get("doctors", ["all"])
+        # ─── RE-CHUNK from updated summary (same pipeline as Approve) ─────────────
+        # Do NOT use LLM-returned chunks. Always re-chunk from summary for consistency.
+        cat_names = []
+        raw_cats = updated_data.get("suggested_categories", staged_data.get("suggested_categories", []))
+        for c in raw_cats:
+            if isinstance(c, dict) and "name" in c:
+                cat_names.append(c["name"])
+            elif isinstance(c, str):
+                cat_names.append(c)
+
+        updated_chunks = []
+        if refined_summary and refined_summary.strip():
+            try:
+                from app.rag.utils.summary_chunker import chunk_summary_markdown
+                updated_chunks = chunk_summary_markdown(
+                    summary=refined_summary,
+                    source_file=doc_file_name,
+                    knowledge_id=k_id,
+                    batch_id=doc_batch_id,
+                    file_hash=doc_file_hash or "",
+                    title=doc_title,
+                    doc_type=doc_type or "GENERAL",
+                    categories=cat_names,
+                    valid_from=str(doc_valid_from).strip() if doc_valid_from else None,
+                    valid_until=str(doc_valid_until).strip() if doc_valid_until else None,
+                    visibility_settings=vis_settings if isinstance(vis_settings, dict) else {},
+                )
+                logger.info(f"Refine Pending: re-chunked summary into {len(updated_chunks)} chunks.")
+            except Exception as rechunk_err:
+                logger.warning(f"Refine Pending: re-chunking failed, using LLM chunks: {rechunk_err}")
+                updated_chunks = updated_data.get("chunks", staged_data.get("chunks", []))
+                # Patch metadata on fallback chunks
+                for chunk in updated_chunks:
+                    if isinstance(chunk, dict):
+                        if "metadata" not in chunk:
+                            chunk["metadata"] = {}
+                        chunk["metadata"]["knowledge_id"] = k_id
         
         # Save the updated data back in exact requested schema order
         final_updated_data = {
@@ -1739,14 +1985,15 @@ async def refine_pending_document(
             "valid_until": doc_valid_until,
             "summary": updated_data.get("summary", ""),
             "image_url": doc_img_url,
+            "image_urls": staged_data.get("image_urls", []),
             "text_accuracy": updated_data.get("text_accuracy") or staged_data.get("text_accuracy", "100%"),
             "feedback": updated_data.get("feedback") or staged_data.get("feedback", ""),
             "batch_summary": updated_data.get("batch_summary") or staged_data.get("batch_summary"),
-            "suggested_categories": updated_data.get("suggested_categories", []),
+            "suggested_categories": raw_cats,
             "visibility_settings": vis_settings,
             "initial_prompt": updated_data.get("initial_prompt") or staged_data.get("initial_prompt"),
             "history": new_hist,
-            "chunks": updated_data.get("chunks", [])
+            "chunks": updated_chunks
         }
         if staged_data.get("timing_metrics"):
             final_updated_data["timing_metrics"] = staged_data.get("timing_metrics")
@@ -2012,31 +2259,22 @@ async def edit_approved_document(
             "doctors": ["all"]
         })
 
-        primary_cat = updated_categories[0] if updated_categories else None
-        for chunk in updated_chunks:
-            if isinstance(chunk, dict):
-                if "metadata" not in chunk:
-                    chunk["metadata"] = {}
-                chunk["metadata"]["knowledge_id"] = knowledge_id
-                chunk["metadata"]["source_file"] = updated_title
-                chunk["metadata"]["title"] = updated_title
-                chunk["metadata"]["product_name"] = updated_title
-                if primary_cat:
-                    chunk["metadata"]["category"] = primary_cat
-                if updated_categories:
-                    chunk["metadata"]["categories"] = updated_categories
-                if updated_summary:
-                    chunk["metadata"]["summary"] = updated_summary
-                if updated_doc_type:
-                    chunk["metadata"]["document_type"] = updated_doc_type
-                if updated_valid_from:
-                    chunk["metadata"]["valid_from"] = str(updated_valid_from).strip()
-                if updated_valid_until:
-                    chunk["metadata"]["valid_until"] = str(updated_valid_until).strip()
-                if vis_settings:
-                    chunk["metadata"]["clinics"] = vis_settings.get("clinics", ["all"])
-                    chunk["metadata"]["doctor_types"] = vis_settings.get("doctor_types", ["all"])
-                    chunk["metadata"]["doctors"] = vis_settings.get("doctors", ["all"])
+        if updated_summary and updated_summary.strip():
+            try:
+                from app.rag.utils.summary_chunker import chunk_summary_markdown
+                updated_chunks = chunk_summary_markdown(
+                    summary=updated_summary,
+                    source_file=existing_doc.get("file_name", updated_title),
+                    knowledge_id=knowledge_id,
+                    batch_id=existing_doc.get("batch_id"),
+                    file_hash=existing_doc.get("file_hash", ""),
+                    title=updated_title,
+                    doc_type=updated_doc_type or "GENERAL",
+                    categories=updated_categories,
+                    visibility_settings=vis_settings,
+                )
+            except Exception as rechunk_err:
+                logger.warning(f"Update approved re-chunking failed: {rechunk_err}")
 
         approved_doc_structure = {
             "knowledge_id": knowledge_id,
@@ -2136,30 +2374,24 @@ async def edit_pending_document(
         })
         existing_doc["visibility_settings"] = vis_settings
 
-        updated_chunks = existing_doc.get("chunks", existing_doc.get("corrected_chunks", existing_doc.get("raw_chunks", [])))
-        primary_cat = updated_categories[0] if updated_categories else None
         str_categories = [c["name"] if isinstance(c, dict) else c for c in normalized_categories]
-        
-        for chunk in updated_chunks:
-            if isinstance(chunk, dict):
-                if "metadata" not in chunk:
-                    chunk["metadata"] = {}
-                if str_categories:
-                    chunk["metadata"]["categories"] = str_categories
-                if primary_cat:
-                    chunk["metadata"]["category"] = primary_cat["name"] if isinstance(primary_cat, dict) else primary_cat
-                if updated_summary:
-                    chunk["metadata"]["summary"] = updated_summary
-                if updated_doc_type:
-                    chunk["metadata"]["document_type"] = updated_doc_type
-                if updated_valid_from:
-                    chunk["metadata"]["valid_from"] = str(updated_valid_from).strip()
-                if updated_valid_until:
-                    chunk["metadata"]["valid_until"] = str(updated_valid_until).strip()
-                if vis_settings:
-                    chunk["metadata"]["clinics"] = vis_settings.get("clinics", ["all"])
-                    chunk["metadata"]["doctor_types"] = vis_settings.get("doctor_types", ["all"])
-                    chunk["metadata"]["doctors"] = vis_settings.get("doctors", ["all"])
+        if updated_summary and updated_summary.strip():
+            try:
+                from app.rag.utils.summary_chunker import chunk_summary_markdown
+                updated_chunks = chunk_summary_markdown(
+                    summary=updated_summary,
+                    source_file=existing_doc.get("file_name", updated_title),
+                    knowledge_id=knowledge_id,
+                    batch_id=existing_doc.get("batch_id"),
+                    file_hash=existing_doc.get("file_hash", ""),
+                    title=updated_title,
+                    doc_type=updated_doc_type or "GENERAL",
+                    categories=str_categories,
+                    visibility_settings=vis_settings,
+                )
+                existing_doc["chunks"] = updated_chunks
+            except Exception as rechunk_err:
+                logger.warning(f"Update pending re-chunking failed: {rechunk_err}")
 
         with open(pending_file, "w", encoding="utf-8") as f:
             json.dump(existing_doc, f, indent=4, ensure_ascii=False)
@@ -2261,107 +2493,167 @@ async def refine_approved_document(
         else:
             history_str = "No previous refinement history.\n"
 
-        attached_prompt_note = f"\n\nNote: The user attached a new file '{attached_file_name}'. Merge and combine its facts, composition, prices, or claims with the existing approved document data." if attached_file_context else ""
+        # ─── DUAL-MODE PROMPT: SURGICAL EDIT vs MERGE ────────────────────────────────
+        if attached_file_context:
+            # ═══ MERGE MODE: Combine attached file into existing approved document ═══
+            refine_prompt = f"""
+You are a document merger for the ERHA (PT Arya Noble) knowledge base.
+Your job is to COMBINE the content from a newly attached file into the existing approved document,
+following the admin's specific instructions on how to merge.
 
-        refine_prompt = f"""
-        You are an intelligent medical aesthetic AI editor and validator for the ERHA (PT Arya Noble) knowledge base.
-        You are refining an APPROVED document strictly according to the user's explicit command.
+======================================================================
+ADMIN MERGE INSTRUCTION:
+"{request.prompt}"
+======================================================================
 
-        ======================================================================
-        CRITICAL USER EDIT INSTRUCTION (HIGHEST PRIORITY - YOU MUST EXECUTE THIS):
-        "{request.prompt}"
-        ======================================================================
+Conversation History (for context only):
+{history_str}
 
-        Conversation History:
-        {history_str}
+EXISTING APPROVED DOCUMENT CONTENT:
+{json.dumps(existing_doc.get("summary", ""), ensure_ascii=False)}
 
-        Current Document Data:
-        {json.dumps(existing_doc, indent=2, ensure_ascii=False)}
-        {attached_file_context}
-        Available Categories:
-        {json.dumps(db_categories, ensure_ascii=False)}
+{attached_file_context}
 
-        REFINEMENT EXECUTION RULES:
-        1. **Direct Value & Text Editing (MANDATORY)**:
-           - You MUST strictly apply any modifications requested in the User Instruction (e.g. changing SKU, price, volume, ingredients, title, text, translation, or claims).
-           - If user commands "ganti nomor SKU Spot Gel jadi PRO-565346", you MUST update the SKU value for Spot Gel in the `summary` markdown and chunk text.
-           - If user commands to change price, volume, or ingredients, update the `summary` and chunks accordingly.
-        2. **Multi-Product / Multi-Treatment / Multi-Item Awareness (CRITICAL)**:
-           - When the document contains MULTIPLE products or MULTIPLE clinical treatments (e.g. Acne Intensive Program, Acne Peel Therapy, Microneedling, etc.):
-             - If the user instruction targets a SPECIFIC product or treatment (e.g. "Spot Gel" or "Acne Peel Therapy" or "Microneedling"), update ONLY that specific item's section, SKU, price, procedure parameters, and chunks.
-             - PRESERVE all other products' and treatments' sections, parameters, descriptions, and chunks completely intact without overwriting or copying values across items.
-             - If the user instruction is document-wide (e.g. translation, reformatting, disclaimer), apply it across all sections while preserving each item's specific attributes.
-             - NEVER duplicate titles consecutively (e.g. avoid repeating headers twice in a row).
-             - Keep all tables formatted in standard Markdown (`| Parameter | Keterangan |`).
-        3. **Consistency Across Summary and Chunks**:
-           - Any fact, SKU, number, or text updated in `summary` MUST also be updated in the `chunks` text so that retrieval indexing stays 100% synchronized.
-        4. **No Regressions**:
-           - Preserve image markdown `![Title](image_url)` and other existing accurate details unless explicitly instructed to change them.
+MERGE RULES:
+1. **FOLLOW ADMIN INSTRUCTION**: The admin's instruction tells you HOW to combine the attached file.
+   - e.g. "gabungkan data produk baru dari file ini" → merge new product data into existing document.
+   - e.g. "tambahkan informasi harga dari file terlampir" → extract pricing from attached file and add to existing doc.
+2. **PRESERVE EXISTING CONTENT**: All existing document content that is NOT being merged/replaced MUST be kept VERBATIM.
+3. **USE ATTACHED FILE DATA ONLY**: Only add information that actually exists in the attached file. Do NOT fabricate.
+4. **CONSISTENT STRUCTURE**: Maintain the existing markdown heading structure (## sections). Add new sections if needed.
+5. **CATEGORIES**: Only update `categories` if the merged content introduces new topics.
 
-        Return a valid JSON object ONLY (do not wrap in markdown code block like ```json):
-        {{
-            "summary": "updated summary markdown with exact user changes applied",
-            "categories": ["category_name"],
-            "chunks": [ {{ "text": "updated chunk text with exact user changes applied", "metadata": {{}} }} ]
-        }}
-        """
+Available System Categories (update if relevant):
+{json.dumps(db_categories, ensure_ascii=False)}
+
+Return a valid JSON object ONLY (do NOT wrap in ```json blocks):
+{{
+    "summary": "The merged document with attached file content integrated per admin instruction",
+    "categories": ["category_name"]
+}}
+"""
+        else:
+            # ═══ SURGICAL EDIT MODE: Apply exact changes only ═══
+            refine_prompt = f"""
+You are a precise text editor for the ERHA (PT Arya Noble) knowledge base.
+Your ONLY job is to apply the admin's explicit edit instruction to the approved document below.
+You are NOT a content writer. You are NOT allowed to rewrite, rephrase, restructure, or improve any content.
+
+======================================================================
+ADMIN EDIT INSTRUCTION (THE ONLY THING YOU ARE ALLOWED TO CHANGE):
+"{request.prompt}"
+======================================================================
+
+Conversation History (for context only):
+{history_str}
+
+CURRENT APPROVED DOCUMENT CONTENT (preserve verbatim unless instructed):
+{json.dumps(existing_doc.get("summary", ""), ensure_ascii=False)}
+
+STRICT EDITING RULES (VIOLATING ANY RULE IS A CRITICAL FAILURE):
+1. **SURGICAL CHANGES ONLY**: Apply ONLY the change(s) explicitly requested in the Admin Edit Instruction.
+   - If instruction says "hapus bagian Warnings" → remove only that section. Leave all other sections exactly as-is.
+   - If instruction says "ganti nama produk X menjadi Y" → change only that product name. Leave all other text unchanged.
+   - If instruction says "tambahkan SPF45 di Active Ingredients" → insert that line only.
+2. **VERBATIM PRESERVATION**: Every word, sentence, paragraph, table, and bullet NOT targeted by the instruction MUST be returned character-for-character as-is.
+   - DO NOT rephrase any sentence not explicitly commanded.
+   - DO NOT reformat or restructure any section not explicitly commanded.
+   - DO NOT add explanations, transitions, or commentary not in the original.
+3. **ZERO NEW CONTENT**: You are FORBIDDEN from adding any information not present in the original document AND not in the admin's instruction.
+4. **CATEGORIES**: Only update `categories` if the admin instruction explicitly asks for it.
+
+Available System Categories (only if instruction asks to change categories):
+{json.dumps(db_categories, ensure_ascii=False)}
+
+Return a valid JSON object ONLY (do NOT wrap in ```json blocks):
+{{
+    "summary": "VERBATIM document text with ONLY the instructed change(s) applied",
+    "categories": ["category_name"]
+}}
+"""
         
         llm_res = await asyncio.to_thread(llm.generate, refine_prompt)
-        clean_json = llm_res.strip()
-        if clean_json.startswith("```"):
-            lines = clean_json.split("\n")
-            if lines[0].startswith("```"):
-                lines = lines[1:]
-            if lines and lines[-1].startswith("```"):
-                lines = lines[:-1]
-            clean_json = "\n".join(lines).strip()
-            
-        parsed_refined = json.loads(clean_json)
+        parsed_refined = safe_json_loads(llm_res)
         updated_summary = parsed_refined.get("summary", existing_doc.get("summary", ""))
         updated_categories = parsed_refined.get("categories", existing_doc.get("categories", []))
-        updated_chunks = parsed_refined.get("chunks", existing_doc.get("chunks", []))
         file_name = existing_doc.get("file_name", knowledge_id)
+        doc_type = existing_doc.get("document_type") if isinstance(existing_doc, dict) else None
+        doc_title = existing_doc.get("title", file_name) if isinstance(existing_doc, dict) else file_name
+        doc_valid_from = existing_doc.get("valid_from") if isinstance(existing_doc, dict) else None
+        doc_valid_until = existing_doc.get("valid_until") if isinstance(existing_doc, dict) else None
 
         # Apply deterministic refinements for SKU, Price, and chunk synchronization
-        refined_summary, refined_chunks, refined_title, refined_sku = apply_refinements_to_content(
+        refined_summary, _, refined_title, refined_sku = apply_refinements_to_content(
             user_prompt=request.prompt,
             summary=updated_summary,
-            chunks=updated_chunks,
-            title=existing_doc.get("title", file_name)
+            chunks=[],
+            title=doc_title
         )
         updated_summary = refined_summary
-        updated_chunks = refined_chunks
 
-        doc_type = existing_doc.get("document_type") if isinstance(existing_doc, dict) else None
+        # ─── RE-CHUNK from updated summary (same as Approve flow) ────────────────────
+        # Do NOT use LLM-returned chunks directly — always re-chunk from summary
+        # to ensure consistent, well-structured chunks go into the vector DB.
+        vis_settings = existing_doc.get("visibility_settings") or {
+            "clinics": ["all"], "doctor_types": ["all"], "doctors": ["all"]
+        }
+        cat_names = []
+        for c in updated_categories:
+            if isinstance(c, dict) and "name" in c:
+                cat_names.append(c["name"])
+            elif isinstance(c, str):
+                cat_names.append(c)
 
-        primary_cat = updated_categories[0] if updated_categories else None
-        for chunk in updated_chunks:
-            if isinstance(chunk, dict):
-                if "metadata" not in chunk:
-                    chunk["metadata"] = {}
-                chunk["metadata"]["knowledge_id"] = knowledge_id
-                if primary_cat:
-                    chunk["metadata"]["category"] = primary_cat
-                if updated_categories:
-                    chunk["metadata"]["categories"] = updated_categories
-                if updated_summary:
-                    chunk["metadata"]["summary"] = updated_summary
-                if doc_type:
-                    chunk["metadata"]["document_type"] = doc_type
+        updated_chunks = []
+        if updated_summary and updated_summary.strip():
+            try:
+                from app.rag.utils.summary_chunker import chunk_summary_markdown
+                updated_chunks = chunk_summary_markdown(
+                    summary=updated_summary,
+                    source_file=file_name,
+                    knowledge_id=knowledge_id,
+                    batch_id=existing_doc.get("batch_id") if isinstance(existing_doc, dict) else None,
+                    file_hash=existing_doc.get("file_hash", "") if isinstance(existing_doc, dict) else "",
+                    title=doc_title,
+                    doc_type=doc_type or "GENERAL",
+                    categories=cat_names,
+                    valid_from=str(doc_valid_from).strip() if doc_valid_from else None,
+                    valid_until=str(doc_valid_until).strip() if doc_valid_until else None,
+                    visibility_settings=vis_settings,
+                )
+                logger.info(f"Refine Approved: re-chunked summary into {len(updated_chunks)} chunks for re-indexing.")
+            except Exception as rechunk_err:
+                logger.warning(f"Refine Approved: re-chunking failed, falling back to LLM chunks: {rechunk_err}")
+                # Fallback: use LLM chunks with metadata patch
+                updated_chunks = parsed_refined.get("chunks", existing_doc.get("chunks", []))
+                for chunk in updated_chunks:
+                    if isinstance(chunk, dict):
+                        if "metadata" not in chunk:
+                            chunk["metadata"] = {}
+                        chunk["metadata"]["knowledge_id"] = knowledge_id
+                        if cat_names:
+                            chunk["metadata"]["category"] = cat_names[0]
+                            chunk["metadata"]["categories"] = cat_names
+                        if doc_type:
+                            chunk["metadata"]["document_type"] = doc_type
 
         approved_doc_structure = {
             "knowledge_id": knowledge_id,
             "batch_id": existing_doc.get("batch_id") if isinstance(existing_doc, dict) else None,
             "file_name": file_name,
             "file_hash": existing_doc.get("file_hash") if isinstance(existing_doc, dict) else None,
-            "title": existing_doc.get("title", file_name) if isinstance(existing_doc, dict) else file_name,
+            "title": doc_title,
             "status": "Approved",
             "document_type": doc_type,
+            "valid_from": doc_valid_from,
+            "valid_until": doc_valid_until,
             "summary": updated_summary,
             "image_url": existing_doc.get("image_url") if isinstance(existing_doc, dict) else None,
+            "image_urls": existing_doc.get("image_urls", []) if isinstance(existing_doc, dict) else [],
             "batch_summary": existing_doc.get("batch_summary") if isinstance(existing_doc, dict) else None,
-            "categories": updated_categories,
-            "visibility_settings": existing_doc.get("visibility_settings") if isinstance(existing_doc, dict) else None,
+            "categories": cat_names,
+            "suggested_categories": existing_doc.get("suggested_categories", []) if isinstance(existing_doc, dict) else [],
+            "visibility_settings": vis_settings,
             "chunks": updated_chunks
         }
         # If part of a multi-file batch, re-synthesize updated batch executive summary
@@ -2376,6 +2668,13 @@ async def refine_approved_document(
 
         with open(approved_file, "w", encoding="utf-8") as f:
             json.dump(approved_doc_structure, f, indent=4, ensure_ascii=False)
+
+        # Sync canonical JSON to MinIO after refine
+        try:
+            from app.services.storage import upload_canonical_json
+            upload_canonical_json(knowledge_id, approved_doc_structure)
+        except Exception as canon_err:
+            logger.warning(f"Could not sync canonical JSON to MinIO after refine: {canon_err}")
 
         target_store = (pipeline.vector_store if pipeline and pipeline.vector_store else vector_store)
         if target_store:
@@ -2438,44 +2737,9 @@ async def approve_document(
             doc_valid_from = data.get("valid_from") if isinstance(data, dict) else None
             doc_valid_until = data.get("valid_until") if isinstance(data, dict) else None
             
-            for chunk in chunks:
-                if isinstance(chunk, dict):
-                    if "metadata" not in chunk:
-                        chunk["metadata"] = {}
-                    chunk["metadata"]["knowledge_id"] = k_id
-                    chunk["metadata"]["source_file"] = doc_title
-                    chunk["metadata"]["title"] = doc_title
-                    chunk["metadata"]["product_name"] = doc_title
-                    if doc_type:
-                        chunk["metadata"]["document_type"] = doc_type
-                    if doc_valid_from:
-                        chunk["metadata"]["valid_from"] = str(doc_valid_from).strip()
-                    if doc_valid_until:
-                        chunk["metadata"]["valid_until"] = str(doc_valid_until).strip()
-                    
-                    # Ensure categories are preserved
-                    cats = data.get("suggested_categories", data.get("categories", []))
-                    str_cats = [c["name"] if isinstance(c, dict) else c for c in cats]
-                    if str_cats:
-                        chunk["metadata"]["categories"] = str_cats
-                    if "summary" not in chunk["metadata"] and "summary" in data:
-                        chunk["metadata"]["summary"] = data.get("summary")
-                    if data.get("image_url") and "image_url" not in chunk["metadata"]:
-                        chunk["metadata"]["image_url"] = data.get("image_url")
-                    if data.get("sku") and "sku" not in chunk["metadata"]:
-                        chunk["metadata"]["sku"] = data.get("sku")
-                    
-            if pipeline.vector_store:
-                logger.info(f"Indexing chunks for knowledge_id {k_id} into vector store...")
-                pipeline.vector_store.insert_chunks(chunks)
-            else:
-                logger.warning("No vector store instance available for indexing.")
-                
-            if bm25:
-                logger.info(f"Indexing chunks for knowledge_id {k_id} into BM25 index...")
-                bm25.add_chunks(chunks)
-                bm25.save(settings.bm25_index_path)
-                
+            # Re-chunk from the LATEST summary (admin may have refined it)
+            # This ensures chunks always match the approved summary content
+            approve_summary = data.get("summary", "") if isinstance(data, dict) else ""
             raw_cats = data.get("categories") or data.get("suggested_categories") or []
             parsed_cats = []
             if isinstance(raw_cats, list):
@@ -2491,8 +2755,42 @@ async def approve_document(
                 "doctors": ["all"]
             }
 
+            if approve_summary and approve_summary.strip():
+                try:
+                    from app.rag.utils.summary_chunker import chunk_summary_markdown
+                    chunks = chunk_summary_markdown(
+                        summary=approve_summary,
+                        source_file=file_name,
+                        knowledge_id=k_id,
+                        batch_id=data.get("batch_id") if isinstance(data, dict) else None,
+                        file_hash=data.get("file_hash", "") if isinstance(data, dict) else "",
+                        title=doc_title,
+                        doc_type=doc_type or "GENERAL",
+                        categories=parsed_cats,
+                        valid_from=str(doc_valid_from).strip() if doc_valid_from else None,
+                        valid_until=str(doc_valid_until).strip() if doc_valid_until else None,
+                        visibility_settings=vis_settings,
+                    )
+                    logger.info(f"Approve: re-chunked summary into {len(chunks)} structure-aware chunks for indexing.")
+                except Exception as rechunk_err:
+                    logger.warning(f"Approve: re-chunking failed, using existing chunks: {rechunk_err}")
+
+            if pipeline.vector_store:
+                logger.info(f"Indexing chunks for knowledge_id {k_id} into vector store...")
+                pipeline.vector_store.insert_chunks(chunks)
+            else:
+                logger.warning("No vector store instance available for indexing.")
+                
+            if bm25:
+                logger.info(f"Indexing chunks for knowledge_id {k_id} into BM25 index...")
+                bm25.add_chunks(chunks)
+                bm25.save(settings.bm25_index_path)
+
             os.makedirs("data/output", exist_ok=True)
             approved_file = os.path.join("data/output", f"{k_id}.json")
+            staging_hist = data.get("history", []) if isinstance(data, dict) else []
+            initial_prompt_val = data.get("initial_prompt") if isinstance(data, dict) else None
+
             approved_doc_structure = {
                 "knowledge_id": k_id,
                 "batch_id": data.get("batch_id") if isinstance(data, dict) else None,
@@ -2501,11 +2799,12 @@ async def approve_document(
                 "title": doc_title,
                 "status": "Approved",
                 "document_type": doc_type,
-                "valid_from": doc_valid_from,
-                "valid_until": doc_valid_until,
-                "summary": data.get("summary", "") if isinstance(data, dict) else "",
-                "image_url": data.get("image_url") if isinstance(data, dict) else None,
+                "summary": approve_summary,
+                "image_urls": data.get("image_urls", []) if isinstance(data, dict) else [],
                 "batch_summary": data.get("batch_summary") if isinstance(data, dict) else None,
+                "initial_prompt": initial_prompt_val,
+                "staging_history": staging_hist,
+                "history": [],
                 "categories": parsed_cats,
                 "suggested_categories": raw_cats,
                 "visibility_settings": vis_settings,
@@ -2516,6 +2815,15 @@ async def approve_document(
                 
             if os.path.exists(pending_file):
                 os.remove(pending_file)
+
+            # Upload canonical JSON to MinIO knowledge-documents bucket
+            try:
+                from app.services.storage import upload_canonical_json
+                canon_result = upload_canonical_json(k_id, approved_doc_structure)
+                if canon_result.get("status") == "success":
+                    logger.info(f"📋 Canonical JSON uploaded to MinIO for '{k_id}': {canon_result['s3_key']}")
+            except Exception as canon_err:
+                logger.warning(f"Could not upload canonical JSON to MinIO for '{k_id}': {canon_err}")
                 
             # Dual-sync update to Knowledge DB table
             try:
@@ -2533,6 +2841,16 @@ async def approve_document(
                     k_entry = res_k.scalars().first()
                     if k_entry:
                         k_entry.status = KnowledgeStatus.APPROVED
+                        if k_entry.metadata_ is None:
+                            k_entry.metadata_ = {}
+                        if staging_hist:
+                            k_entry.metadata_["staging_history"] = staging_hist
+                        k_entry.metadata_["history"] = []
+                        k_entry.metadata_["chat_history"] = []
+                        if initial_prompt_val:
+                            k_entry.metadata_["initial_prompt"] = initial_prompt_val
+                        from sqlalchemy.orm.attributes import flag_modified
+                        flag_modified(k_entry, "metadata_")
                         await session.commit()
             except Exception as db_err:
                 logger.warning(f"Could not dual-sync approved status to Knowledge DB table for {k_id}: {db_err}")
@@ -2981,9 +3299,8 @@ class QueryGeneralResponse(BaseModel):
 
 def _extract_kb_action(llm_answer: str) -> Optional[Dict[str, Any]]:
     """
-    Parses the LLM response to extract a JSON action block (edit or delete).
-    Returns the parsed action dict if found, None otherwise.
-    Supports editing ANY field/topic requested by user.
+    Parses the LLM response to extract a JSON action block.
+    Supports 2-step action lifecycle: edit_preview, edit_execute, delete_preview, delete_execute, edit, delete, cancel.
     """
     import re as _re
     pattern = r'```json\s*\n?\s*(\{[^`]+?\})\s*\n?\s*```'
@@ -2994,13 +3311,12 @@ def _extract_kb_action(llm_answer: str) -> Optional[Dict[str, Any]]:
             parsed = json.loads(match.strip())
             if isinstance(parsed, dict):
                 action = parsed.get("action")
-                if action == "edit" and parsed.get("knowledge_id") and parsed.get("field"):
-                    return parsed
-                elif action == "delete":
+                if action in ("edit_preview", "edit_execute", "edit", "delete_preview", "delete_execute", "delete", "cancel"):
                     return parsed
         except (json.JSONDecodeError, ValueError):
             continue
     return None
+
 
 def _apply_kb_edit(
     knowledge_id: str,
@@ -3010,16 +3326,16 @@ def _apply_kb_edit(
     bm25_index
 ) -> Dict[str, Any]:
     """
-    Applies an edit for ANY topic/field to an approved KB document and re-indexes.
+    Applies an edit for ANY topic/field to a KB document (approved or pending) and re-indexes.
     Preserves all other fields, metadata, and document summaries 100% intact.
     Automatically synchronizes chunk text content for vector & BM25 search.
     """
-    approved_file = resolve_approved_file(knowledge_id)
-    if not approved_file:
-        return {"success": False, "error": f"Dokumen dengan ID/Nama '{knowledge_id}' tidak ditemukan di approved KB."}
+    target_file = resolve_approved_file(knowledge_id) or resolve_pending_file(knowledge_id)
+    if not target_file:
+        return {"success": False, "error": f"Dokumen dengan ID/Nama '{knowledge_id}' tidak ditemukan di Knowledge Base."}
 
     try:
-        with open(approved_file, "r", encoding="utf-8") as f:
+        with open(target_file, "r", encoding="utf-8") as f:
             existing_doc = json.load(f)
 
         doc_kid = str(existing_doc.get("knowledge_id") or knowledge_id)
@@ -3147,7 +3463,7 @@ def _apply_kb_edit(
                 if existing_doc.get("categories"):
                     chunk["metadata"]["categories"] = existing_doc["categories"]
 
-        with open(approved_file, "w", encoding="utf-8") as f:
+        with open(target_file, "w", encoding="utf-8") as f:
             json.dump(existing_doc, f, indent=4, ensure_ascii=False)
 
         if vector_store:
@@ -3188,8 +3504,8 @@ def _apply_kb_delete(
     bm25_index
 ) -> Dict[str, Any]:
     """
-    Deletes an approved or pending document, removes JSON files, and clears PGVector & BM25 indices.
-    Supports single document deletion by ID/name, or batch deletion of all expired promos.
+    Deletes a KB document (approved or pending), removes JSON files, clears PGVector & BM25 indices,
+    soft-deletes PostgreSQL DB record, and cleans MinIO files.
     """
     pending_dir = "data/pending"
     approved_dir = "data/output"
@@ -3220,7 +3536,7 @@ def _apply_kb_delete(
                                 parsed_vu = parse_date_safely(vu)
                                 if parsed_vu and parsed_vu < today:
                                     is_expired = True
-                            
+
                             if is_expired:
                                 doc_id = str(f_data.get("knowledge_id", f.replace(".json", "")))
                                 doc_title = str(f_data.get("title", f_data.get("file_name", doc_id)))
@@ -3248,10 +3564,10 @@ def _apply_kb_delete(
             return {
                 "success": True,
                 "knowledge_id": "none",
-                "title": "Tidak ada dokumen promo expired yang ditemukan di database."
+                "title": "Tidak ada dokumen promo expired yang ditemukan di basis pengetahuan."
             }
 
-    # 2. Regular Single/Specific Document Deletion
+    # 2. Regular Single/Specific Document Deletion (Search pending and approved)
     for folder in [pending_dir, approved_dir]:
         if os.path.exists(folder):
             for f in os.listdir(folder):
@@ -3287,6 +3603,44 @@ def _apply_kb_delete(
             logger.info(f"[QUERY-GENERAL] Removed BM25 chunks for '{target_kid}'")
         except Exception as e:
             logger.warning(f"[QUERY-GENERAL] BM25 delete error for '{target_kid}': {e}")
+
+    # 5. Soft-delete PostgreSQL Knowledge DB record
+    try:
+        from app.core.database import AsyncSessionLocal
+        from app.models.knowledge import Knowledge
+        from sqlalchemy import select, func
+        import uuid as _uuid
+        import asyncio
+
+        async def _soft_delete_db():
+            async with AsyncSessionLocal() as session:
+                custom_uuid = None
+                try:
+                    custom_uuid = _uuid.UUID(target_kid)
+                except ValueError:
+                    pass
+                k_rec = None
+                if custom_uuid:
+                    k_rec = await session.get(Knowledge, custom_uuid)
+                else:
+                    res = await session.execute(select(Knowledge).where(Knowledge.file_name == target_kid).order_by(Knowledge.created_at.desc()))
+                    k_rec = res.scalars().first()
+
+                if k_rec:
+                    k_rec.deleted_at = func.now()
+                    await session.commit()
+                    logger.info(f"[QUERY-GENERAL] Soft-deleted Knowledge DB record '{target_kid}'")
+
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                asyncio.create_task(_soft_delete_db())
+            else:
+                loop.run_until_complete(_soft_delete_db())
+        except Exception:
+            asyncio.run(_soft_delete_db())
+    except Exception as db_err:
+        logger.warning(f"[QUERY-GENERAL] DB soft delete error for '{target_kid}': {db_err}")
 
     if was_deleted:
         return {"success": True, "knowledge_id": target_kid, "title": deleted_title}
@@ -3358,75 +3712,120 @@ async def query_general_endpoint(
 
         context_for_prompt = context if not is_context_empty else "(Tidak ada dokumen yang ditemukan di Knowledge Base untuk kueri ini.)"
 
-        # 2. Build prompt with resolved system prompt
-        history_str = ""
-        if request.history:
-            for msg in request.history:
-                role = "User" if msg.get("role") == "user" else "Assistant"
-                content = msg.get("content", "")
-                history_str += f"{role}: {content}\n"
-        else:
-            history_str = "No previous conversation.\n"
+        # 2. Check for Pending Confirmation from Previous Conversation History
+        target_vs = (pipeline.retriever.vector_store if pipeline.retriever and hasattr(pipeline.retriever, 'vector_store') else vector_store)
+        target_bm25 = (pipeline.retriever.bm25_index if pipeline.retriever and hasattr(pipeline.retriever, 'bm25_index') else bm25)
 
-        full_prompt = (
-            f"{system_prompt}\n\n"
-            f"--- DATA KNOWLEDGE BASE YANG DITEMUKAN ---\n"
-            f"{context_for_prompt}\n\n"
-            f"--- RIWAYAT PERCAKAPAN ---\n"
-            f"{history_str}\n"
-            f"User: {user_prompt}\n"
-            f"Assistant:"
-        )
+        clean_user_prompt = user_prompt.strip().lower()
+        last_preview_action = None
+        if request.history and len(request.history) >= 1:
+            last_msg = request.history[-1]
+            if last_msg.get("role") in ("assistant", "Assistant"):
+                last_preview_action = _extract_kb_action(last_msg.get("content", ""))
 
-        # 3. Generate LLM response
-        import asyncio
-        answer = await asyncio.to_thread(pipeline.llm_adapter.generate, full_prompt)
+        is_affirmative = any(word in clean_user_prompt for word in ["ya", "setuju", "ok", "oke", "lanjut", "terapkan", "hapus", "ya hapus", "ya, hapus"])
+        is_negative = any(word in clean_user_prompt for word in ["batal", "tidak", "cancel", "jangan", "ngga", "gak"])
 
-        # 4. Clean up output
-        from app.rag.services.guardrails import OutputGuard
-        answer = OutputGuard.redact_pii(answer)
-
-        # 5. Check if LLM response contains an edit or delete action
         action_type = "read"
         target_kid = None
-        
-        action_data = _extract_kb_action(answer)
-        if action_data:
-            act = action_data.get("action")
-            kid = action_data.get("knowledge_id")
+        answer = ""
 
-            target_vs = (pipeline.retriever.vector_store if pipeline.retriever and hasattr(pipeline.retriever, 'vector_store') else vector_store)
-            target_bm25 = (pipeline.retriever.bm25_index if pipeline.retriever and hasattr(pipeline.retriever, 'bm25_index') else bm25)
+        # CASE A: Confirmation for pending EDIT_PREVIEW
+        if last_preview_action and last_preview_action.get("action") in ("edit_preview", "edit") and (is_affirmative or is_negative):
+            kid = last_preview_action.get("knowledge_id")
+            field = last_preview_action.get("field", "summary")
+            new_val = last_preview_action.get("new_value", "")
 
-            if act == "edit":
-                field = action_data.get("field", "summary")
-                new_val = action_data.get("new_value", "")
-                logger.info(f"[QUERY-GENERAL] Edit action detected: knowledge_id='{kid}', field='{field}'")
-                
-                edit_result = _apply_kb_edit(kid, field, new_val, target_vs, target_bm25)
-                if edit_result.get("success"):
-                    action_type = "edit_applied"
+            if is_affirmative and not is_negative:
+                edit_res = _apply_kb_edit(kid, field, new_val, target_vs, target_bm25)
+                if edit_res.get("success"):
+                    action_type = "edit_executed"
                     target_kid = kid
-                    import re as _re
-                    answer = _re.sub(r'```json\s*\n?\s*\{[^`]+?\}\s*\n?\s*```', '', answer).strip()
-                    answer += f"\n\n✅ **Perubahan berhasil diterapkan!**\n- **Dokumen ID**: `{kid}`\n- **Field**: {field}\n- **Status**: Data telah diupdate dan di-reindex ke database."
+                    answer = (
+                        f"📝 **Perubahan Berhasil Diterapkan!**\n\n"
+                        f"Perubahan pada dokumen telah berhasil disimpan dan diindeks secara resmi ke dalam **Basis Data Pengetahuan ERHA**.\n\n"
+                        f"- **Dokumen ID**: `{kid}`\n"
+                        f"- **Bagian yang Diperbarui**: {field}\n"
+                        f"- **Nilai Baru**: {new_val}\n"
+                        f"- **Status**: Aktif & Terpublikasi"
+                    )
                 else:
-                    error_msg = edit_result.get("error", "Unknown error")
-                    answer += f"\n\n⚠️ **Gagal menerapkan perubahan**: {error_msg}"
+                    action_type = "edit_failed"
+                    answer = f"⚠️ **Gagal menerapkan perubahan pada dokumen**: {edit_res.get('error', 'Terjadi kesalahan sistem.')}"
+            else:
+                action_type = "cancelled"
+                answer = "😊 Baik, perubahan dokumen telah dibatalkan atas permintaan Anda. Tidak ada data yang diubah."
 
-            elif act == "delete":
-                logger.info(f"[QUERY-GENERAL] Delete action detected: knowledge_id='{kid}'")
-                del_result = _apply_kb_delete(kid, target_vs, target_bm25)
-                if del_result.get("success"):
-                    action_type = "delete_applied"
+        # CASE B: Confirmation for pending DELETE_PREVIEW
+        elif last_preview_action and last_preview_action.get("action") in ("delete_preview", "delete") and (is_affirmative or is_negative):
+            kid = last_preview_action.get("knowledge_id")
+
+            if is_affirmative and not is_negative:
+                del_res = _apply_kb_delete(kid, target_vs, target_bm25)
+                if del_res.get("success"):
+                    action_type = "delete_executed"
                     target_kid = kid
-                    doc_title = del_result.get("title", kid)
-                    import re as _re
-                    answer = _re.sub(r'```json\s*\n?\s*\{[^`]+?\}\s*\n?\s*```', '', answer).strip()
-                    answer += f"\n\n🗑️ **Dokumen berhasil dihapus!**\n- **Nama Dokumen**: `{doc_title}`\n- **Dokumen ID**: `{kid}`\n- **Status**: File dan seluruh index (PGVector & BM25) telah dibersihkan."
+                    doc_title = del_res.get("title", kid)
+                    answer = (
+                        f"🗑️ **Dokumen Berhasil Dihapus!**\n\n"
+                        f"Dokumen **'{doc_title}'** telah berhasil dihapus secara permanen dari **Basis Data Pengetahuan ERHA**.\n\n"
+                        f"- **Nama Dokumen**: `{doc_title}`\n"
+                        f"- **Dokumen ID**: `{kid}`\n"
+                        f"- **Status**: Terhapus Bersih (Dokumen, Foto, dan Indikator Pencarian)"
+                    )
                 else:
-                    error_msg = del_result.get("error", "Unknown error")
-                    answer += f"\n\n⚠️ **Gagal menghapus dokumen**: {error_msg}"
+                    action_type = "delete_failed"
+                    answer = f"⚠️ **Gagal menghapus dokumen**: {del_res.get('error', 'Dokumen tidak ditemukan.')}"
+            else:
+                action_type = "cancelled"
+                answer = "😊 Baik, penghapusan dokumen telah dibatalkan atas permintaan Anda. Dokumen tetap aman tersimpan."
+
+        # CASE C: Normal Prompt Processing via LLM
+        else:
+            history_str = ""
+            if request.history:
+                for msg in request.history:
+                    role = "User" if msg.get("role") == "user" else "Assistant"
+                    content = msg.get("content", "")
+                    history_str += f"{role}: {content}\n"
+            else:
+                history_str = "No previous conversation.\n"
+
+            full_prompt = (
+                f"{system_prompt}\n\n"
+                f"--- DATA KNOWLEDGE BASE YANG DITEMUKAN ---\n"
+                f"{context_for_prompt}\n\n"
+                f"--- RIWAYAT PERCAKAPAN ---\n"
+                f"{history_str}\n"
+                f"User: {user_prompt}\n"
+                f"Assistant:"
+            )
+
+            import asyncio
+            answer = await asyncio.to_thread(pipeline.llm_adapter.generate, full_prompt)
+
+            from app.rag.services.guardrails import OutputGuard
+            answer = OutputGuard.redact_pii(answer)
+
+            action_data = _extract_kb_action(answer)
+            if action_data:
+                act = action_data.get("action")
+                kid = action_data.get("knowledge_id")
+
+                if act in ("edit_preview", "edit"):
+                    action_type = "edit_preview"
+                    target_kid = kid
+                elif act in ("delete_preview", "delete"):
+                    action_type = "delete_preview"
+                    target_kid = kid
+                elif act == "cancel":
+                    action_type = "cancelled"
+                elif act in ("edit_execute", "edit_applied"):
+                    action_type = "edit_executed"
+                    target_kid = kid
+                elif act in ("delete_execute", "delete_applied"):
+                    action_type = "delete_executed"
+                    target_kid = kid
 
         logger.info(
             f"[QUERY-GENERAL] prompt='{user_prompt}' | "
@@ -3482,6 +3881,14 @@ async def reset_database(
                             os.remove(os.path.join(folder, f))
                         except Exception as file_err:
                             logger.warning(f"Could not remove file {f}: {file_err}")
+
+        # 3.5. Clear MinIO S3 Object Storage (images & knowledge-documents buckets)
+        try:
+            from app.services.storage import clear_all_buckets
+            minio_res = clear_all_buckets()
+            logger.info(f"MinIO bucket reset completed: {minio_res}")
+        except Exception as minio_err:
+            logger.warning(f"MinIO bucket reset failed: {minio_err}")
 
         # 4. Soft-delete all records in PostgreSQL Knowledge table (MUST succeed)
         try:

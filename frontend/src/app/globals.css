@@ -145,7 +145,7 @@
   
   --border: var(--color-black-100);
   --input: var(--color-black-100);
-  --ring: var(--color-blue-300);
+  --ring: var(--color-blue-400);
   
   --radius: 0.625rem;
   
@@ -156,7 +156,7 @@
   --sidebar-accent: var(--color-black-50);
   --sidebar-accent-foreground: var(--color-black-900);
   --sidebar-border: var(--color-black-100);
-  --sidebar-ring: var(--color-blue-300);
+  --sidebar-ring: var(--color-blue-400);
 }
 
 .dark {
@@ -167,20 +167,20 @@
   --popover: var(--color-black-800);
   --popover-foreground: var(--color-white-50);
   
-  --primary: var(--color-blue-500);
-  --primary-foreground: var(--color-white-50);
+  --primary: var(--color-blue-400);
+  --primary-foreground: var(--color-black-900);
   
   --secondary: var(--color-black-700);
   --secondary-foreground: var(--color-white-50);
   
   --muted: var(--color-black-700);
-  --muted-foreground: var(--color-black-300);
+  --muted-foreground: var(--color-black-100);
   
   --accent: var(--color-black-700);
   --accent-foreground: var(--color-white-50);
   
-  --destructive: var(--color-red-600);
-  --destructive-foreground: var(--color-white-50);
+  --destructive: var(--color-red-400);
+  --destructive-foreground: var(--color-black-900);
   
   --border: var(--color-black-700);
   --input: var(--color-black-700);
@@ -188,8 +188,8 @@
   
   --sidebar: var(--color-black-900);
   --sidebar-foreground: var(--color-white-50);
-  --sidebar-primary: var(--color-blue-500);
-  --sidebar-primary-foreground: var(--color-white-50);
+  --sidebar-primary: var(--color-blue-400);
+  --sidebar-primary-foreground: var(--color-black-900);
   --sidebar-accent: var(--color-black-700);
   --sidebar-accent-foreground: var(--color-white-50);
   --sidebar-border: var(--color-black-700);

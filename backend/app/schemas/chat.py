@@ -19,7 +19,8 @@ class ChatSessionUpdate(BaseModel):
 class ChatSessionResponse(BaseModel):
     id: UUID
     user_id: UUID
-    branch_id: UUID
+    branch_id: Optional[UUID] = None
+    session_type: Optional[str] = "DOCTOR"
     status: ChatStatus
     summary: Optional[str] = None
     rating: Optional[ChatRating] = None
@@ -36,6 +37,8 @@ class ChatHistoryResponse(ChatSessionResponse):
     query: str
     messages: int
     doctor: str
+    user_name: Optional[str] = None
+    user_type: Optional[str] = None
     branch: str
     doctor_type: Optional[str] = None
     

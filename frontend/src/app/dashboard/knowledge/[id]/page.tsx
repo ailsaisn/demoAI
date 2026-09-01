@@ -1,7 +1,7 @@
 "use client";
 
-import { ChatPreview } from "@/components/shared/knowledge/ChatPreview";
-import { ConfirmationModal } from "@/components/shared/knowledge/ConfirmationModal";
+import { ChatPreview } from "@/app/dashboard/knowledge/components/preview/chat-preview";
+import { ConfirmationModal } from "@/components/shared/confirmation-modal";
 import { Button } from "@/components/ui/button";
 import { RiArrowLeftLine, RiDeleteBin7Line, RiEdit2Line, RiCheckLine } from "@remixicon/react";
 import { toast } from "sonner";
@@ -84,7 +84,12 @@ export default function KnowledgeDetailPage({ params }: { params: Promise<{ id: 
 			{/* Title Header with Actions */}
 			<div className="flex items-center gap-4 p-4 border-b border-gray-200 shrink-0 bg-white justify-between">
 				<div className="flex items-center gap-4">
-					<Button variant="ghost" size="icon" onClick={() => router.back()} className="text-gray-500 hover:text-gray-900">
+					<Button
+						variant="ghost"
+						size="icon"
+						onClick={() => router.back()}
+						className="size-9 rounded-lg text-zinc-500 hover:text-zinc-900 hover:bg-zinc-100"
+					>
 						<RiArrowLeftLine className="size-5" />
 					</Button>
 					<div>
@@ -98,7 +103,7 @@ export default function KnowledgeDetailPage({ params }: { params: Promise<{ id: 
 						) : (
 							<h1 className="text-lg font-semibold text-gray-900">{formatDisplayTitle(data?.title)}</h1>
 						)}
-						<p className="text-sm text-gray-500">Knowledge Document Details</p>
+						<p className="text-sm text-zinc-600">Knowledge Document Details</p>
 					</div>
 				</div>
 
@@ -108,7 +113,7 @@ export default function KnowledgeDetailPage({ params }: { params: Promise<{ id: 
 							onClick={() => setIsDeleteModalOpen(true)}
 							disabled={deleteMutation.isPending || isLoading}
 							variant="outline"
-							className="gap-2 text-red-600 hover:text-red-700 hover:bg-red-50 border-red-200"
+							className="gap-2 border-red-200 text-red-600 hover:text-red-700 hover:bg-red-50 hover:border-red-300 rounded-lg px-4 h-10 font-medium text-sm transition-colors cursor-pointer shadow-none"
 						>
 							<RiDeleteBin7Line className="size-4" />
 							Delete Knowledge
@@ -117,7 +122,7 @@ export default function KnowledgeDetailPage({ params }: { params: Promise<{ id: 
 					{hasWriteAccess && data?.status === "APPROVED" && (
 						<Button
 							variant={isEditMode ? "default" : "outline"}
-							className={`gap-2 ${isEditMode ? "bg-emerald-600 hover:bg-emerald-700 text-white" : "text-zinc-950"}`}
+							className={`gap-2 ${isEditMode ? "bg-blue-600 hover:bg-blue-700 text-white" : "border-gray-200 bg-white text-zinc-700 hover:bg-zinc-50"} rounded-lg shadow-none h-10 px-4 font-medium text-sm transition-colors cursor-pointer`}
 							disabled={isLoading || editKnowledge.isPending}
 							onClick={() => {
 								if (isEditMode) {

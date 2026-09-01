@@ -4,7 +4,7 @@ from contextlib import asynccontextmanager
 from loguru import logger
 from app.core.config import settings
 from app.core.logger import setup_logging
-from app.api.routers import auth, users, branches, categories, projects, knowledge, chats, webhooks, config, events, roles
+from app.api.routers import auth, users, branches, categories, projects, knowledge, chats, webhooks, config, events, roles, bandwidth, search, system
 
 # Initialize centralized logging and interceptors immediately
 setup_logging()
@@ -76,6 +76,13 @@ async def lifespan(app: FastAPI):
         logger.info("RAG components initialized successfully!")
     except Exception as e:
         logger.error(f"Failed to initialize RAG lifespan: {e}")
+
+    # Initialize MinIO dual-bucket storage (images + knowledge-documents)
+    try:
+        from app.services.storage import ensure_all_buckets
+        ensure_all_buckets()
+    except Exception as e:
+        logger.warning(f"MinIO bucket initialization failed (non-fatal): {e}")
 
     yield
 
@@ -164,6 +171,9 @@ app.include_router(chats.router, prefix="/api/chats")
 app.include_router(webhooks.router, prefix="/api")
 app.include_router(config.router, prefix="/api")
 app.include_router(events.router, prefix="/api/events")
+app.include_router(bandwidth.router, prefix="/api")
+app.include_router(search.router, prefix="/api/search")
+app.include_router(system.router, prefix="/api")
 
 # --- RAG Integration Router ---
 try:

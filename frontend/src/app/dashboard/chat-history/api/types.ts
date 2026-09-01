@@ -3,12 +3,13 @@ export type ChatRole = "USER" | "AI" | "SYSTEM" | "HUMAN_AGENT";
 export type ChatRating = "GOOD" | "BAD" | "1" | "2" | "3" | "4" | "5";
 
 export interface ChatSessionBase {
-  branch_id: string; // UUID
+  branch_id?: string | null; // UUID
 }
 
 export interface ChatSessionResponse extends ChatSessionBase {
   id: string;
   user_id: string;
+  session_type?: string;
   status: ChatStatus;
   summary?: string | null;
   rating?: ChatRating | null;
@@ -24,6 +25,8 @@ export interface ChatHistoryResponse extends ChatSessionResponse {
   query: string;
   messages: number;
   doctor: string;
+  user_name?: string;
+  user_type?: string;
   branch: string;
   doctor_type?: string | null;
 }

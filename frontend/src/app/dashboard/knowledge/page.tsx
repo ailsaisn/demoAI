@@ -1,9 +1,9 @@
 "use client";
 
 import { useState } from "react";
-import { KnowledgeSummary } from "@/components/shared/knowledge/knowledge-summary";
+import { KnowledgeSummary } from "./components/knowledge-summary";
 import { ProjectsTable } from "./components/projects-table";
-import { KnowledgeTable } from "@/components/shared/knowledge/knowledge-table";
+import { KnowledgeTable } from "./components/knowledge-table";
 import { SearchBar } from "@/components/shared/search-bar";
 
 export default function KnowledgePage() {

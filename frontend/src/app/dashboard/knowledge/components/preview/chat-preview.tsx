@@ -1,6 +1,5 @@
 import { knowledgeKeys } from "@/app/dashboard/knowledge/api/keys";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import {
 	MessageScroller,
 	MessageScrollerSmartButton,
@@ -40,7 +39,7 @@ import { useState, useEffect, useRef, useMemo } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { toast } from "sonner";
-import { VisibilitySettings as VisibilitySettingsUI } from "./VisibilitySettings";
+import { VisibilitySettings as VisibilitySettingsUI } from "./visibility-settings";
 import {
 	VisibilitySettings as IVisibilitySettings,
 	KnowledgeResponse,
@@ -49,9 +48,9 @@ import {
 	useGeneralChatSession,
 	useSendGeneralChatMessage,
 } from "@/app/dashboard/knowledge/hooks/use-knowledge";
-import { CategorySettings } from "./CategorySettings";
-import { ClassificationSidebar } from "./ClassificationSidebar";
-import { TitleSettings } from "./TitleSettings";
+import { CategorySettings } from "./category-settings";
+import { ClassificationSidebar } from "./classification-sidebar";
+import { TitleSettings } from "./title-settings";
 
 interface ChatPreviewProps {
 	mode?: "knowledge" | "general";
@@ -114,6 +113,9 @@ export function ChatPreview({
 	const sendGeneralMsg = useSendGeneralChatMessage(mode === "general" ? sessionId : null);
 
 	const [userChatMessages, setUserChatMessages] = useState<Message[]>(() => {
+		if (knowledgeStatus === "APPROVED" && !isEditMode) {
+			return [];
+		}
 		// If Knowledge document has saved chat history in DB metadata, load it
 		const meta = knowledge?.metadata as Record<string, unknown> | undefined;
 		const savedHistory = (meta?.history || meta?.chat_history) as
@@ -135,7 +137,9 @@ export function ChatPreview({
 				| Array<{ role: "user" | "assistant"; content: string }>
 				| undefined;
 			const timer = setTimeout(() => {
-				if (Array.isArray(savedHistory) && savedHistory.length > 0) {
+				if (knowledgeStatus === "APPROVED" && !isEditMode) {
+					setUserChatMessages([]);
+				} else if (Array.isArray(savedHistory) && savedHistory.length > 0) {
 					setUserChatMessages(
 						savedHistory.map((m) => ({
 							role: m.role,
@@ -148,7 +152,7 @@ export function ChatPreview({
 			}, 0);
 			return () => clearTimeout(timer);
 		}
-	}, [mode, knowledgeId, knowledge?.id, knowledge?.metadata]);
+	}, [mode, knowledgeId, knowledge?.id, knowledge?.metadata, knowledgeStatus, isEditMode]);
 
 	const sessionMessages = generalSession?.messages;
 	const dbMessages: Message[] = useMemo(() => {
@@ -176,6 +180,7 @@ export function ChatPreview({
 		activeTab || (files && files.length > 0 ? (files[0].file_name as string) : null);
 
 	const fileInputRef = useRef<HTMLInputElement>(null);
+	const textareaRef = useRef<HTMLTextAreaElement>(null);
 	const queryClient = useQueryClient();
 	const [isDragging, setIsDragging] = useState(false);
 	const dragCounter = useRef(0);
@@ -331,9 +336,13 @@ export function ChatPreview({
 			: null;
 
 	const messages: Message[] = [];
+	const hasInitialInHistory = userChatMessages.some(
+		(m, idx) => idx <= 1 && m.role === "assistant" && m.content === aiSummary,
+	);
+
 	if (
 		initialSummaryMessage &&
-		userChatMessages.length === 0 &&
+		!hasInitialInHistory &&
 		(!sessionId || mode !== "general")
 	) {
 		messages.push(initialSummaryMessage);
@@ -467,6 +476,9 @@ export function ChatPreview({
 		setInput("");
 		setAttachedFiles([]);
 		setIsLoading(true);
+		if (textareaRef.current) {
+			textareaRef.current.style.height = "auto";
+		}
 
 		try {
 			if (mode === "general") {
@@ -674,7 +686,7 @@ export function ChatPreview({
 														<RiLoader4Line className="size-4 animate-spin shrink-0" />
 														<span>3. Building Search Index...</span>
 													</div>
-													<div className="flex items-center gap-2.5 text-zinc-400">
+													<div className="flex items-center gap-2.5 text-zinc-600">
 														<span className="size-4 flex items-center justify-center text-[10px]">
 															○
 														</span>
@@ -774,7 +786,7 @@ export function ChatPreview({
 												)}
 											</div>
 											<div
-												className={`${messages[0].role === "user" ? "bg-blue-500 text-white" : "bg-transparent border border-zinc-200 text-zinc-950"} p-3.5 rounded-md text-sm w-full min-w-0 overflow-hidden prose prose-sm max-w-none prose-p:leading-relaxed prose-pre:bg-zinc-800 prose-pre:text-zinc-100 prose-p:my-1.5 prose-ul:my-1.5 prose-ul:pl-4 prose-ol:my-1.5 prose-ol:pl-4 prose-li:my-0.5 prose-headings:my-2.5 prose-table:w-full prose-table:border prose-table:border-blue-200/60 prose-table:rounded-md prose-table:overflow-hidden prose-table:my-3 prose-table:bg-white prose-th:bg-blue-100/50 prose-th:px-3 prose-th:py-2.5 prose-th:text-left prose-th:font-semibold prose-th:text-blue-900 prose-th:border-b prose-th:border-blue-200/60 prose-td:px-3 prose-td:py-2.5 prose-td:border-b prose-td:border-blue-100/60 last:prose-td:border-0 whitespace-pre-wrap`}
+												className={`${messages[0].role === "user" ? "bg-primary text-primary-foreground" : "bg-transparent border border-zinc-200 text-zinc-950"} p-3.5 rounded-md text-sm w-full min-w-0 overflow-hidden prose prose-sm max-w-none prose-p:leading-relaxed prose-pre:bg-zinc-800 prose-pre:text-zinc-100 prose-p:my-1.5 prose-ul:my-1.5 prose-ul:pl-4 prose-ol:my-1.5 prose-ol:pl-4 prose-li:my-0.5 prose-headings:my-2.5 prose-table:w-full prose-table:border prose-table:border-blue-200/60 prose-table:rounded-md prose-table:overflow-hidden prose-table:my-3 prose-table:bg-white prose-th:bg-blue-100/50 prose-th:px-3 prose-th:py-2.5 prose-th:text-left prose-th:font-semibold prose-th:text-blue-900 prose-th:border-b prose-th:border-blue-200/60 prose-td:px-3 prose-td:py-2.5 prose-td:border-b prose-td:border-blue-100/60 last:prose-td:border-0 whitespace-pre-wrap`}
 											>
 												{messages[0].role === "assistant" ? (
 													<>
@@ -851,7 +863,7 @@ export function ChatPreview({
 													)}
 												</div>
 												<div
-													className={`${msg.role === "user" ? "bg-blue-500 text-white" : "bg-transparent border border-zinc-200 text-zinc-950"} p-3.5 rounded-md text-sm w-full min-w-0 overflow-hidden prose prose-sm max-w-none prose-p:leading-relaxed prose-pre:bg-zinc-800 prose-pre:text-zinc-100 prose-p:my-1.5 prose-ul:my-1.5 prose-ul:pl-4 prose-ol:my-1.5 prose-ol:pl-4 prose-li:my-0.5 prose-headings:my-2.5 prose-table:w-full prose-table:border prose-table:border-blue-200/60 prose-table:rounded-md prose-table:overflow-hidden prose-table:my-3 prose-table:bg-white prose-th:bg-blue-100/50 prose-th:px-3 prose-th:py-2.5 prose-th:text-left prose-th:font-semibold prose-th:text-blue-900 prose-th:border-b prose-th:border-blue-200/60 prose-td:px-3 prose-td:py-2.5 prose-td:border-b prose-td:border-blue-100/60 last:prose-td:border-0 whitespace-pre-wrap`}
+													className={`${msg.role === "user" ? "bg-primary text-primary-foreground" : "bg-transparent border border-zinc-200 text-zinc-950"} p-3.5 rounded-md text-sm w-full min-w-0 overflow-hidden prose prose-sm max-w-none prose-p:leading-relaxed prose-pre:bg-zinc-800 prose-pre:text-zinc-100 prose-p:my-1.5 prose-ul:my-1.5 prose-ul:pl-4 prose-ol:my-1.5 prose-ol:pl-4 prose-li:my-0.5 prose-headings:my-2.5 prose-table:w-full prose-table:border prose-table:border-blue-200/60 prose-table:rounded-md prose-table:overflow-hidden prose-table:my-3 prose-table:bg-white prose-th:bg-blue-100/50 prose-th:px-3 prose-th:py-2.5 prose-th:text-left prose-th:font-semibold prose-th:text-blue-900 prose-th:border-b prose-th:border-blue-200/60 prose-td:px-3 prose-td:py-2.5 prose-td:border-b prose-td:border-blue-100/60 last:prose-td:border-0 whitespace-pre-wrap`}
 												>
 													{msg.role === "assistant" ? (
 														<>
@@ -969,10 +981,24 @@ export function ChatPreview({
 						</div>
 					)}
 
-					<Input
+					<textarea
+						ref={textareaRef}
+						rows={1}
+						autoFocus
 						value={input}
-						onChange={(e) => setInput(e.target.value)}
-						onKeyDown={(e) => e.key === "Enter" && !e.shiftKey && handleSend()}
+						onChange={(e) => {
+							setInput(e.target.value);
+							e.target.style.height = "auto";
+							e.target.style.height = `${e.target.scrollHeight}px`;
+						}}
+						onKeyDown={(e) => {
+							if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
+								e.preventDefault();
+								handleSend();
+							} else if (e.key === "Escape") {
+								e.currentTarget.blur();
+							}
+						}}
 						placeholder={
 							knowledgeStatus === "PROCESSING"
 								? "Waiting for ingestion to complete..."
@@ -983,7 +1009,7 @@ export function ChatPreview({
 										: "Ask questions or request adjustments..."
 						}
 						disabled={mode === "general" ? false : isInputDisabled}
-						className="w-full bg-transparent border-none shadow-none focus-visible:ring-0 px-0 outline-none text-sm text-gray-700 placeholder:text-gray-500"
+						className="w-full bg-transparent resize-none border-none shadow-none focus-visible:ring-0 px-0 outline-none text-sm text-zinc-900 placeholder:text-zinc-500 max-h-32 overflow-y-auto custom-scrollbar disabled:opacity-50 disabled:cursor-not-allowed"
 					/>
 
 					<input
@@ -1014,9 +1040,14 @@ export function ChatPreview({
 							onClick={handleSend}
 							disabled={isProcessing || (!input.trim() && attachedFiles.length === 0)}
 							size="icon"
-							className="bg-blue-500 text-white hover:bg-blue-600 shrink-0"
+							title="Send (Enter) • New line (Shift+Enter)"
+							className="bg-blue-600 text-white hover:bg-blue-700 shrink-0 rounded-lg shadow-none cursor-pointer"
 						>
-							<RiCornerDownLeftLine className="w-4 h-4" />
+							{isProcessing ? (
+								<RiLoader4Line className="w-4 h-4 animate-spin" />
+							) : (
+								<RiCornerDownLeftLine className="w-4 h-4" />
+							)}
 						</Button>
 					</div>
 				</div>

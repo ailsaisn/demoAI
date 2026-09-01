@@ -134,9 +134,9 @@ export default function NotificationsPage() {
 		<div className="flex flex-col h-full gap-4 p-6">
 			{/* Header */}
 			<div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-				<div className="flex flex-col gap-0.5">
+				<div className="flex flex-col gap-1">
 					<div className="flex items-center gap-2">
-						<h1 className="text-lg font-semibold text-foreground">Notifications</h1>
+						<h1 className="text-xl font-semibold text-foreground">Notifications</h1>
 						{unreadCount > 0 && (
 							<Badge
 								variant="secondary"
@@ -146,19 +146,18 @@ export default function NotificationsPage() {
 							</Badge>
 						)}
 					</div>
-					<p className="text-xs text-muted-foreground">
+					<p className="text-sm text-muted-foreground">
 						Reported missing data issues and doctor feedback across chat sessions.
 					</p>
 				</div>
 
 				<Button
 					variant="outline"
-					size="sm"
-					className="h-8 text-xs border-gray-200 font-medium self-start sm:self-auto"
+					className="h-9 px-3 text-xs sm:text-sm border-gray-200 bg-white text-zinc-700 hover:bg-zinc-50 rounded-lg font-medium self-start sm:self-auto shadow-none cursor-pointer gap-1.5"
 					onClick={handleMarkAllAsRead}
 					disabled={unreadCount === 0 || markAsReadMutation.isPending}
 				>
-					<RiCheckDoubleLine className="size-3.5 mr-1.5 text-muted-foreground" />
+					<RiCheckDoubleLine className="size-3.5 text-zinc-500" />
 					Mark all as read
 				</Button>
 			</div>
@@ -171,7 +170,7 @@ export default function NotificationsPage() {
 						type="button"
 						onClick={() => setActiveTab("all")}
 						className={cn(
-							"px-2.5 py-1 rounded text-xs font-medium transition-colors",
+							"px-2.5 py-1 rounded-lg text-xs font-medium transition-colors",
 							activeTab === "all"
 								? "bg-gray-100 text-gray-900 font-semibold"
 								: "text-muted-foreground hover:text-foreground hover:bg-gray-50",
@@ -183,7 +182,7 @@ export default function NotificationsPage() {
 						type="button"
 						onClick={() => setActiveTab("unread")}
 						className={cn(
-							"px-2.5 py-1 rounded text-xs font-medium transition-colors",
+							"px-2.5 py-1 rounded-lg text-xs font-medium transition-colors",
 							activeTab === "unread"
 								? "bg-gray-100 text-gray-900 font-semibold"
 								: "text-muted-foreground hover:text-foreground hover:bg-gray-50",
@@ -195,7 +194,7 @@ export default function NotificationsPage() {
 						type="button"
 						onClick={() => setActiveTab("read")}
 						className={cn(
-							"px-2.5 py-1 rounded text-xs font-medium transition-colors",
+							"px-2.5 py-1 rounded-lg text-xs font-medium transition-colors",
 							activeTab === "read"
 								? "bg-gray-100 text-gray-900 font-semibold"
 								: "text-muted-foreground hover:text-foreground hover:bg-gray-50",
@@ -214,7 +213,7 @@ export default function NotificationsPage() {
 							variant="outline"
 							size="sm"
 							onClick={handleResetDropdownFilters}
-							className="text-xs text-red-600 hover:text-red-700 bg-white hover:bg-red-50 border-red-200 hover:border-red-300 rounded-md cursor-pointer h-8 px-2.5 gap-1.5 shadow-none transition-colors"
+							className="text-xs text-red-600 hover:text-red-700 bg-white hover:bg-red-50 border-red-200 hover:border-red-300 rounded-lg cursor-pointer h-9 px-3 gap-1.5 shadow-none transition-colors"
 						>
 							<RiFilterOffLine className="size-3.5 text-red-500" />
 							Reset
@@ -227,19 +226,19 @@ export default function NotificationsPage() {
 							render={
 								<Button
 									variant="outline"
-									className="h-8 min-w-36 max-w-52 justify-between gap-1.5 bg-white font-normal text-gray-700 hover:bg-gray-50 border-gray-200 text-xs shadow-none cursor-pointer"
+									className="h-9 min-w-36 max-w-52 justify-between gap-1.5 bg-white font-normal text-zinc-700 hover:bg-zinc-50 border-gray-200 text-xs rounded-lg shadow-none cursor-pointer"
 								/>
 							}
 						>
 							<div className="flex items-center gap-1.5 truncate">
-								<RiUserLine className="size-3.5 shrink-0 text-gray-500" />
+								<RiUserLine className="size-3.5 shrink-0 text-zinc-500" />
 								<span className="truncate">
 									{doctorFilter === "ALL" ? "All Doctors" : doctorFilter}
 								</span>
 							</div>
-							<RiArrowDownSLine className="size-3.5 shrink-0 text-gray-400" />
+							<RiArrowDownSLine className="size-3.5 shrink-0 text-zinc-400" />
 						</DropdownMenuTrigger>
-						<DropdownMenuContent align="end" className="w-52 max-h-56 overflow-y-auto bg-white border border-gray-200 text-xs">
+						<DropdownMenuContent align="end" className="w-52 max-h-56 overflow-y-auto bg-white border border-gray-200 text-xs rounded-lg shadow-none">
 							<DropdownMenuRadioGroup value={doctorFilter} onValueChange={setDoctorFilter}>
 								<DropdownMenuRadioItem closeOnClick value="ALL">
 									All Doctors
@@ -259,19 +258,19 @@ export default function NotificationsPage() {
 							render={
 								<Button
 									variant="outline"
-									className="h-8 min-w-36 max-w-52 justify-between gap-1.5 bg-white font-normal text-gray-700 hover:bg-gray-50 border-gray-200 text-xs shadow-none cursor-pointer"
+									className="h-9 min-w-36 max-w-52 justify-between gap-1.5 bg-white font-normal text-zinc-700 hover:bg-zinc-50 border-gray-200 text-xs rounded-lg shadow-none cursor-pointer"
 								/>
 							}
 						>
 							<div className="flex items-center gap-1.5 truncate">
-								<RiMedicineBottleLine className="size-3.5 shrink-0 text-gray-500" />
+								<RiMedicineBottleLine className="size-3.5 shrink-0 text-zinc-500" />
 								<span className="truncate">
 									{doctorTypeFilter === "ALL" ? "All Doctor Types" : doctorTypeFilter}
 								</span>
 							</div>
-							<RiArrowDownSLine className="size-3.5 shrink-0 text-gray-400" />
+							<RiArrowDownSLine className="size-3.5 shrink-0 text-zinc-400" />
 						</DropdownMenuTrigger>
-						<DropdownMenuContent align="end" className="w-52 max-h-56 overflow-y-auto bg-white border border-gray-200 text-xs">
+						<DropdownMenuContent align="end" className="w-52 max-h-56 overflow-y-auto bg-white border border-gray-200 text-xs rounded-lg shadow-none">
 							<DropdownMenuRadioGroup value={doctorTypeFilter} onValueChange={setDoctorTypeFilter}>
 								<DropdownMenuRadioItem closeOnClick value="ALL">
 									All Doctor Types
@@ -397,7 +396,7 @@ export default function NotificationsPage() {
 												{item.feedback}
 											</p>
 										) : (
-											<p className="text-gray-400 italic text-[11px]">
+											<p className="text-muted-foreground italic text-[11px]">
 												No written comment provided.
 											</p>
 										)}

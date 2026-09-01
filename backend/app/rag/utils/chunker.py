@@ -130,7 +130,243 @@ class CustomChunker:
                 "metadata": base_metadata
             })
 
-        return self._merge_and_split(processed_chunks, max_length_for_semantic)
+        return processed_chunks
+
+    # =========================================================================
+    # STRUCTURE-AWARE SUMMARY CHUNKING
+    # Splits AI-reviewed Markdown summary by ## headings for precise retrieval.
+    # Used at both ingest-time (preview) and approve-time (final indexing).
+    # =========================================================================
+    def chunk_summary_markdown(
+        self,
+        summary: str,
+        source_file: str = "",
+        knowledge_id: str = "",
+        batch_id: str = None,
+        file_hash: str = "",
+        title: str = "",
+        doc_type: str = "GENERAL",
+        categories: List[str] = None,
+        valid_from: str = None,
+        valid_until: str = None,
+        visibility_settings: Dict = None,
+        max_section_chars: int = 1200,
+    ) -> List[Dict]:
+        """
+        Structure-aware chunking of AI-reviewed Markdown summary.
+
+        Strategy:
+        1. Split by ## heading boundaries (each product/treatment = 1 logical section)
+        2. Tables stay intact within their parent section (never cut mid-row)
+        3. If a section exceeds max_section_chars, split at paragraph (\\n\\n)
+           boundaries with entity header prepended to each sub-chunk
+        4. Extract contextual image_url, sku, price, promo dates per chunk from text
+        5. Trivial sections (< 30 chars) are discarded
+        """
+        if not summary or not summary.strip():
+            return []
+
+        categories = categories or []
+        visibility_settings = visibility_settings or {
+            "clinics": ["all"], "doctor_types": ["all"], "doctors": ["all"]
+        }
+
+        # --- Phase 1: Split summary into sections by ## headings ---
+        # Use regex to split while preserving the ## header in each section
+        raw_sections = re.split(r'(?=\n##\s+)', summary)
+        sections = []
+        for s in raw_sections:
+            s = s.strip()
+            if s and len(s) >= 30:
+                sections.append(s)
+
+        # If no ## splits found, treat the whole summary as one section
+        if not sections:
+            sections = [summary.strip()]
+
+        logger.info(f"Structure-aware chunking: split summary into {len(sections)} sections by ## headings.")
+
+        # --- Phase 2: Build chunks from sections ---
+        chunks = []
+        chunk_idx = 0
+
+        for section_text in sections:
+            # Detect entity name from ## header
+            h2_match = re.match(r'^##\s+(?:\d+[\.\)]\s*)?(.+)', section_text)
+            entity_name = h2_match.group(1).strip() if h2_match else title
+
+            # If section is within target size, keep as 1 self-contained chunk
+            if len(section_text) <= max_section_chars:
+                chunk_idx += 1
+                chunks.append({
+                    "text": section_text,
+                    "metadata": self._build_chunk_meta(
+                        chunk_text=section_text,
+                        entity_name=entity_name,
+                        chunk_index=chunk_idx,
+                        source_file=source_file,
+                        knowledge_id=knowledge_id,
+                        batch_id=batch_id,
+                        file_hash=file_hash,
+                        title=title,
+                        doc_type=doc_type,
+                        categories=categories,
+                        valid_from=valid_from,
+                        valid_until=valid_until,
+                        visibility_settings=visibility_settings,
+                    )
+                })
+            else:
+                # --- Phase 3: Recursive paragraph splitting for long sections ---
+                paragraphs = [p.strip() for p in section_text.split("\n\n") if p.strip()]
+                running_parts = []
+                running_len = 0
+
+                for para in paragraphs:
+                    # Check if adding this paragraph would exceed target
+                    if running_len + len(para) > max_section_chars and running_parts:
+                        # Flush current accumulator as a chunk
+                        chunk_idx += 1
+                        sub_text = "\n\n".join(running_parts)
+                        # Prepend entity header if not already present
+                        if entity_name and not sub_text.startswith("##"):
+                            sub_text = f"## {entity_name}\n\n{sub_text}"
+                        chunks.append({
+                            "text": sub_text,
+                            "metadata": self._build_chunk_meta(
+                                chunk_text=sub_text,
+                                entity_name=entity_name,
+                                chunk_index=chunk_idx,
+                                source_file=source_file,
+                                knowledge_id=knowledge_id,
+                                batch_id=batch_id,
+                                file_hash=file_hash,
+                                title=title,
+                                doc_type=doc_type,
+                                categories=categories,
+                                valid_from=valid_from,
+                                valid_until=valid_until,
+                                visibility_settings=visibility_settings,
+                            )
+                        })
+                        running_parts = []
+                        running_len = 0
+
+                    running_parts.append(para)
+                    running_len += len(para)
+
+                # Flush remaining
+                if running_parts:
+                    chunk_idx += 1
+                    sub_text = "\n\n".join(running_parts)
+                    if entity_name and not sub_text.startswith("##"):
+                        sub_text = f"## {entity_name}\n\n{sub_text}"
+                    chunks.append({
+                        "text": sub_text,
+                        "metadata": self._build_chunk_meta(
+                            chunk_text=sub_text,
+                            entity_name=entity_name,
+                            chunk_index=chunk_idx,
+                            source_file=source_file,
+                            knowledge_id=knowledge_id,
+                            batch_id=batch_id,
+                            file_hash=file_hash,
+                            title=title,
+                            doc_type=doc_type,
+                            categories=categories,
+                            valid_from=valid_from,
+                            valid_until=valid_until,
+                            visibility_settings=visibility_settings,
+                        )
+                    })
+
+        logger.info(f"Structure-aware chunking complete: {len(chunks)} chunks from {len(sections)} sections.")
+        return chunks
+
+    def _build_chunk_meta(
+        self,
+        chunk_text: str,
+        entity_name: str,
+        chunk_index: int,
+        source_file: str = "",
+        knowledge_id: str = "",
+        batch_id: str = None,
+        file_hash: str = "",
+        title: str = "",
+        doc_type: str = "GENERAL",
+        categories: List[str] = None,
+        valid_from: str = None,
+        valid_until: str = None,
+        visibility_settings: Dict = None,
+    ) -> Dict[str, Any]:
+        """
+        Build complete chunk metadata with contextual field extraction from chunk text.
+        Extracts: image_url, sku, price, promo dates.
+        """
+        categories = categories or []
+        visibility_settings = visibility_settings or {
+            "clinics": ["all"], "doctor_types": ["all"], "doctors": ["all"]
+        }
+
+        meta = {
+            "source_file": source_file,
+            "product_name": entity_name,
+            "treatment_name": entity_name,
+            "entity": entity_name,
+            "section": entity_name,
+            "page": 1,
+            "chunk_index": chunk_index,
+            "knowledge_id": knowledge_id,
+            "batch_id": batch_id,
+            "file_hash": file_hash,
+            "title": title,
+            "document_type": doc_type,
+            "clinics": visibility_settings.get("clinics", ["all"]),
+            "doctor_types": visibility_settings.get("doctor_types", ["all"]),
+            "doctors": visibility_settings.get("doctors", ["all"]),
+        }
+
+        # Extract contextual image_url from markdown image tags in chunk text
+        if chunk_text:
+            img_matches = re.findall(r'!\[.*?\]\((https?://[^\s\)]+)\)', chunk_text)
+            if img_matches:
+                meta["image_url"] = img_matches[0]
+
+            # Extract SKU
+            sku_match = re.search(
+                r'(?:-\s*\*\*SKU\*\*|\bSKU\b)\s*[:=]\s*([A-Za-z0-9\-\_]+)',
+                chunk_text, re.IGNORECASE
+            )
+            if sku_match:
+                meta["sku"] = sku_match.group(1).strip()
+
+            # Extract Price/Harga
+            price_match = re.search(
+                r'(?:-\s*\*\*(?:Harga|Price|Harga Normal|Harga Promo)\*\*|\b(?:Harga|Price)\b)\s*[:=]\s*([^\n\r]+)',
+                chunk_text, re.IGNORECASE
+            )
+            if price_match:
+                meta["price"] = price_match.group(1).strip()
+
+            # Extract promo dates (YYYY-MM-DD)
+            date_matches = re.findall(r'\b(20\d{2}-\d{2}-\d{2})\b', chunk_text)
+            if len(date_matches) >= 2:
+                meta["valid_from"] = date_matches[0]
+                meta["valid_until"] = date_matches[1]
+            elif len(date_matches) == 1:
+                meta["valid_until"] = date_matches[0]
+            else:
+                if valid_from:
+                    meta["valid_from"] = valid_from
+                if valid_until:
+                    meta["valid_until"] = valid_until
+
+        # Categories
+        if categories:
+            meta["category"] = categories[0]
+            meta["categories"] = categories
+
+        return meta
 
     # =========================================================================
     # FAST PATH: Document -> Section -> Entity/Treatment -> Semantic Chunking
@@ -175,7 +411,8 @@ class CustomChunker:
 
         for page_data in pages:
             page_num = page_data.get("page", 1)
-            page_image_url = page_data.get("image_url")
+            page_image_urls = page_data.get("image_urls") or ([page_data.get("image_url")] if page_data.get("image_url") else [])
+            page_image_url = page_image_urls[0] if page_image_urls else page_data.get("image_url")
             page_text = page_data.get("text", "").strip()
             if not page_text:
                 continue
@@ -184,13 +421,40 @@ class CustomChunker:
             current_entity_lines = []
             current_table_lines = []
 
-            def _build_meta() -> Dict[str, Any]:
+            def _build_meta(chunk_text: str = "") -> Dict[str, Any]:
                 meta = {
                     "section": current_section,
                     "entity": current_entity,
                     "page": page_num
                 }
-                if page_image_url:
+                extracted_urls = []
+                if chunk_text:
+                    found_matches = re.findall(r'!\[.*?\]\((https?://[^\s\)]+)\)', chunk_text)
+                    for u in found_matches:
+                        if u not in extracted_urls:
+                            extracted_urls.append(u)
+
+                    sku_match = re.search(r'(?:-\s*\*\*SKU\*\*|\bSKU\b)\s*[:=]\s*([A-Za-z0-9\-\_]+)', chunk_text, re.IGNORECASE)
+                    if sku_match:
+                        meta["sku"] = sku_match.group(1).strip()
+
+                    # Extract promo validity period (YYYY-MM-DD) per product chunk if present
+                    date_matches = re.findall(r'\b(20\d{2}-\d{2}-\d{2})\b', chunk_text)
+                    if len(date_matches) >= 2:
+                        meta["valid_from"] = date_matches[0]
+                        meta["valid_until"] = date_matches[1]
+                    elif len(date_matches) == 1:
+                        meta["valid_until"] = date_matches[0]
+
+                    # Extract Price / Harga per product chunk if present
+                    price_match = re.search(r'(?:-\s*\*\*(?:Harga|Price|Harga Normal|Harga Promo)\*\*|\b(?:Harga|Price)\b)\s*[:=]\s*([^\n\r]+)', chunk_text, re.IGNORECASE)
+                    if price_match:
+                        meta["price"] = price_match.group(1).strip()
+
+                all_urls = list(dict.fromkeys(extracted_urls + page_image_urls))
+                if all_urls:
+                    meta["image_url"] = all_urls[0]
+                elif page_image_url:
                     meta["image_url"] = page_image_url
                 return meta
 
@@ -212,7 +476,7 @@ class CustomChunker:
                 if len(block_text) <= 1200:
                     processed_chunks.append({
                         "text": block_text,
-                        "metadata": _build_meta()
+                        "metadata": _build_meta(block_text)
                     })
                 else:
                     # Split long entity into logical semantic sub-units (e.g. paragraphs / double newlines)
@@ -228,7 +492,7 @@ class CustomChunker:
                                     sub_text = f"### {current_entity}\n\n{sub_text}"
                                 processed_chunks.append({
                                     "text": sub_text,
-                                    "metadata": _build_meta()
+                                    "metadata": _build_meta(sub_text)
                                 })
                                 running_sub = []
                         if running_sub:
@@ -237,12 +501,12 @@ class CustomChunker:
                                 sub_text = f"### {current_entity}\n\n{sub_text}"
                             processed_chunks.append({
                                 "text": sub_text,
-                                "metadata": _build_meta()
+                                "metadata": _build_meta(sub_text)
                             })
                     else:
                         processed_chunks.append({
                             "text": block_text,
-                            "metadata": _build_meta()
+                            "metadata": _build_meta(block_text)
                         })
 
                 current_entity_lines = []
@@ -257,12 +521,13 @@ class CustomChunker:
                     for tbl in sub_tables:
                         processed_chunks.append({
                             "text": tbl,
-                            "metadata": _build_meta()
+                            "metadata": _build_meta(tbl)
                         })
                 else:
+                    table_txt = "\n".join(current_table_lines)
                     processed_chunks.append({
-                        "text": "\n".join(current_table_lines),
-                        "metadata": _build_meta()
+                        "text": table_txt,
+                        "metadata": _build_meta(table_txt)
                     })
                 current_table_lines = []
 
@@ -342,3 +607,139 @@ class CustomChunker:
 
         logger.warning(f"Unknown parse_result type: {type(parse_result)}. Attempting Docling chunking.")
         return self._chunk_docling_document(parse_result, max_length_for_semantic)
+
+
+# ===========================================================================
+# Standalone function: chunk_summary_markdown
+# Does NOT require CustomChunker init (no embedding model needed).
+# Can be imported directly: from app.rag.utils.chunker import chunk_summary_markdown
+# ===========================================================================
+def chunk_summary_markdown(
+    summary: str,
+    source_file: str = "",
+    knowledge_id: str = "",
+    batch_id: str = None,
+    file_hash: str = "",
+    title: str = "",
+    doc_type: str = "GENERAL",
+    categories: list = None,
+    valid_from: str = None,
+    valid_until: str = None,
+    visibility_settings: dict = None,
+    max_section_chars: int = 1200,
+) -> list:
+    """
+    Standalone structure-aware chunking of AI-reviewed Markdown summary.
+    Delegates to CustomChunker._build_chunk_meta for metadata extraction.
+    No embedding model required.
+    """
+    if not summary or not summary.strip():
+        return []
+
+    categories = categories or []
+    visibility_settings = visibility_settings or {
+        "clinics": ["all"], "doctor_types": ["all"], "doctors": ["all"]
+    }
+
+    # Split summary into sections by ## headings
+    raw_sections = re.split(r'(?=\n##\s+)', summary)
+    sections = [s.strip() for s in raw_sections if s.strip() and len(s.strip()) >= 30]
+    if not sections:
+        sections = [summary.strip()]
+
+    logger.info(f"Structure-aware chunking: split summary into {len(sections)} sections by ## headings.")
+
+    # Lightweight meta builder (no class instance needed)
+    def _build_meta(chunk_text, entity_name, chunk_index):
+        meta = {
+            "source_file": source_file,
+            "product_name": entity_name,
+            "treatment_name": entity_name,
+            "entity": entity_name,
+            "section": entity_name,
+            "page": 1,
+            "chunk_index": chunk_index,
+            "knowledge_id": knowledge_id,
+            "batch_id": batch_id,
+            "file_hash": file_hash,
+            "title": title,
+            "document_type": doc_type,
+            "clinics": visibility_settings.get("clinics", ["all"]),
+            "doctor_types": visibility_settings.get("doctor_types", ["all"]),
+            "doctors": visibility_settings.get("doctors", ["all"]),
+        }
+        if chunk_text:
+            img_matches = re.findall(r'!\[.*?\]\((https?://[^\s\)]+)\)', chunk_text)
+            if img_matches:
+                meta["image_url"] = img_matches[0]
+            sku_match = re.search(
+                r'(?:-\s*\*\*SKU\*\*|\bSKU\b)\s*[:=]\s*([A-Za-z0-9\-\_]+)',
+                chunk_text, re.IGNORECASE
+            )
+            if sku_match:
+                meta["sku"] = sku_match.group(1).strip()
+            price_match = re.search(
+                r'(?:-\s*\*\*(?:Harga|Price|Harga Normal|Harga Promo)\*\*|\b(?:Harga|Price)\b)\s*[:=]\s*([^\n\r]+)',
+                chunk_text, re.IGNORECASE
+            )
+            if price_match:
+                meta["price"] = price_match.group(1).strip()
+            date_matches = re.findall(r'\b(20\d{2}-\d{2}-\d{2})\b', chunk_text)
+            if len(date_matches) >= 2:
+                meta["valid_from"] = date_matches[0]
+                meta["valid_until"] = date_matches[1]
+            elif len(date_matches) == 1:
+                meta["valid_until"] = date_matches[0]
+            else:
+                if valid_from:
+                    meta["valid_from"] = valid_from
+                if valid_until:
+                    meta["valid_until"] = valid_until
+        if categories:
+            meta["category"] = categories[0]
+            meta["categories"] = categories
+        return meta
+
+    chunks = []
+    chunk_idx = 0
+
+    for section_text in sections:
+        h2_match = re.match(r'^##\s+(?:\d+[\.\)]\s*)?(.+)', section_text)
+        entity_name = h2_match.group(1).strip() if h2_match else title
+
+        if len(section_text) <= max_section_chars:
+            chunk_idx += 1
+            chunks.append({
+                "text": section_text,
+                "metadata": _build_meta(section_text, entity_name, chunk_idx)
+            })
+        else:
+            paragraphs = [p.strip() for p in section_text.split("\n\n") if p.strip()]
+            running_parts = []
+            running_len = 0
+            for para in paragraphs:
+                if running_len + len(para) > max_section_chars and running_parts:
+                    chunk_idx += 1
+                    sub_text = "\n\n".join(running_parts)
+                    if entity_name and not sub_text.startswith("##"):
+                        sub_text = f"## {entity_name}\n\n{sub_text}"
+                    chunks.append({
+                        "text": sub_text,
+                        "metadata": _build_meta(sub_text, entity_name, chunk_idx)
+                    })
+                    running_parts = []
+                    running_len = 0
+                running_parts.append(para)
+                running_len += len(para)
+            if running_parts:
+                chunk_idx += 1
+                sub_text = "\n\n".join(running_parts)
+                if entity_name and not sub_text.startswith("##"):
+                    sub_text = f"## {entity_name}\n\n{sub_text}"
+                chunks.append({
+                    "text": sub_text,
+                    "metadata": _build_meta(sub_text, entity_name, chunk_idx)
+                })
+
+    logger.info(f"Structure-aware chunking complete: {len(chunks)} chunks from {len(sections)} sections.")
+    return chunks

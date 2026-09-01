@@ -56,18 +56,18 @@ export function CategoryDialog({ isOpen, onOpenChange, mode, category }: Categor
 
 	return (
 		<Dialog open={isOpen} onOpenChange={onOpenChange}>
-			<DialogContent className="max-w-120 p-0 overflow-hidden bg-white rounded-xl">
+			<DialogContent className="max-w-120 p-0 overflow-hidden bg-white rounded-lg border border-gray-200 shadow-none">
 				<form onSubmit={handleSubmit}>
 					<DialogHeader className="p-4 border-b border-gray-100">
-						<DialogTitle className="text-base font-medium text-gray-900">{title}</DialogTitle>
+						<DialogTitle className="text-base font-semibold text-foreground">{title}</DialogTitle>
 					</DialogHeader>
 
 					<div className="p-4 flex flex-col gap-4">
 						{isEdit && category && (
 							<div className="flex flex-col gap-1.5">
-								<label className="text-sm text-gray-900">Display</label>
+								<label className="text-xs font-medium text-zinc-700">Display</label>
 								<div>
-									<Badge variant="secondary" className="bg-black-50 text-black-500">
+									<Badge variant="secondary" className="bg-gray-100 text-gray-700 rounded-md">
 										{category.name}
 									</Badge>
 								</div>
@@ -75,13 +75,13 @@ export function CategoryDialog({ isOpen, onOpenChange, mode, category }: Categor
 						)}
 
 						<div className="flex flex-col gap-1.5">
-							<label className="text-sm text-gray-900">Input Category Name</label>
+							<label className="text-xs font-medium text-zinc-700">Category Name</label>
 							<div className="relative">
 								<Input
 									value={name}
 									onChange={(e) => setName(e.target.value)}
 									placeholder="Category Name"
-									className="w-full bg-white h-10"
+									className="w-full bg-white h-10 border-gray-200 rounded-lg focus-visible:ring-blue-500 text-sm"
 									disabled={isPending}
 									autoFocus
 								/>
@@ -89,13 +89,22 @@ export function CategoryDialog({ isOpen, onOpenChange, mode, category }: Categor
 						</div>
 					</div>
 
-					<DialogFooter className="p-4 border-t border-gray-100 sm:justify-end">
+					<DialogFooter className="p-4 border-t border-gray-100 flex items-center justify-end gap-2 bg-zinc-50/50">
+						<Button
+							type="button"
+							variant="outline"
+							onClick={() => onOpenChange(false)}
+							disabled={isPending}
+							className="border-gray-200 bg-white text-zinc-700 hover:bg-zinc-50 rounded-lg px-4 h-10 font-medium text-sm transition-colors cursor-pointer shadow-none"
+						>
+							Cancel
+						</Button>
 						<Button
 							type="submit"
-							className="bg-black-50 hover:bg-black-50/80 text-black-500 font-medium px-5 disabled:opacity-50"
+							className="bg-blue-600 hover:bg-blue-700 text-white rounded-lg px-4 h-10 font-medium text-sm transition-colors cursor-pointer shadow-none disabled:opacity-50"
 							disabled={isPending || !name.trim()}
 						>
-							<RiCheckLine className="size-4 mr-2" />
+							<RiCheckLine className="size-4 mr-1.5" />
 							{buttonText}
 						</Button>
 					</DialogFooter>

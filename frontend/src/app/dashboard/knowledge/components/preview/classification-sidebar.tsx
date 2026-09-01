@@ -1,4 +1,4 @@
-import { KnowledgeResponse } from "@/app/dashboard/knowledge/api/types";
+import { KnowledgeResponse, VisibilitySettings } from "@/app/dashboard/knowledge/api/types";
 import {
 	useApproveKnowledge,
 	useEditKnowledge,
@@ -7,9 +7,8 @@ import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { RiCheckLine, RiLoader4Line } from "@remixicon/react";
 import { useSession } from "@/hooks/use-session";
-import { VisibilitySettings } from "@/app/dashboard/knowledge/api/types";
-import { ConfirmationModal } from "./ConfirmationModal";
-import { IngestSuccessModal } from "./IngestSuccessModal";
+import { ConfirmationModal } from "@/components/shared/confirmation-modal";
+import { IngestSuccessModal } from "./ingest-success-modal";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 

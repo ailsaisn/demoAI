@@ -4,7 +4,7 @@ import { Suspense, useEffect, useState, useRef } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { RiArrowLeftLine, RiRefreshLine } from "@remixicon/react";
-import { ChatPreview } from "@/components/shared/knowledge/ChatPreview";
+import { ChatPreview } from "@/app/dashboard/knowledge/components/preview/chat-preview";
 import { useCreateGeneralChatSession } from "@/app/dashboard/knowledge/hooks/use-knowledge";
 
 function GeneralChatContent() {
@@ -59,7 +59,7 @@ function GeneralChatContent() {
 						variant="ghost"
 						size="icon"
 						onClick={() => router.push("/dashboard/ingest")}
-						className="text-gray-500 hover:text-gray-900"
+						className="size-9 rounded-lg text-zinc-500 hover:text-zinc-900 hover:bg-zinc-100"
 						title="Back to Ingest"
 					>
 						<RiArrowLeftLine className="size-5" />
@@ -73,10 +73,9 @@ function GeneralChatContent() {
 				<div className="flex items-center gap-2">
 					<Button
 						variant="outline"
-						size="sm"
 						onClick={handleNewSession}
 						disabled={createSession.isPending}
-						className="gap-2 text-zinc-700 hover:text-zinc-900"
+						className="gap-2 border-gray-200 bg-white text-zinc-700 hover:bg-zinc-50 rounded-lg px-4 h-10 font-medium text-sm transition-colors cursor-pointer shadow-none"
 					>
 						<RiRefreshLine className="size-4" />
 						New Session

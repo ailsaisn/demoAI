@@ -192,7 +192,7 @@ export function UserStaffProfileSheet({
 													<Button
 														variant="ghost"
 														size="icon"
-														className="absolute right-0 top-0 text-gray-500 hover:text-gray-700"
+														className="absolute right-0 top-0 text-zinc-600 hover:text-zinc-900"
 														onClick={() => setShowPassword(!showPassword)}
 														type="button"
 													>
@@ -235,8 +235,9 @@ export function UserStaffProfileSheet({
 						{isEditing ? (
 							<div className="p-4 border-t border-gray-200 bg-white flex justify-end gap-3">
 								<Button
+									type="button"
 									variant="outline"
-									className="bg-white border-gray-200 text-gray-700 hover:bg-gray-50 hover:text-gray-900"
+									className="border-gray-200 bg-white text-zinc-700 hover:bg-zinc-50 rounded-lg px-4 h-10 font-medium text-sm transition-colors cursor-pointer shadow-none"
 									onClick={() => {
 										setIsEditing(false);
 										if (staff) {
@@ -246,18 +247,19 @@ export function UserStaffProfileSheet({
 										}
 									}}
 								>
-									<RiCloseLine className="mr-2 h-4 w-4 shrink-0" />
+									<RiCloseLine className="mr-1.5 h-4 w-4 shrink-0" />
 									Cancel
 								</Button>
 								<Button
-									className="bg-blue-600 hover:bg-blue-700 text-white"
+									type="button"
+									className="bg-blue-600 hover:bg-blue-700 text-white rounded-lg px-4 h-10 font-medium text-sm transition-colors cursor-pointer shadow-none disabled:opacity-50"
 									onClick={handleSave}
 									disabled={updateStaff.isPending}
 								>
 									{updateStaff.isPending ? (
-										<RiLoader4Line className="mr-2 h-4 w-4 animate-spin shrink-0" />
+										<RiLoader4Line className="mr-1.5 h-4 w-4 animate-spin shrink-0" />
 									) : (
-										<RiCheckLine className="mr-2 h-4 w-4 shrink-0" />
+										<RiCheckLine className="mr-1.5 h-4 w-4 shrink-0" />
 									)}
 									{updateStaff.isPending ? "Saving..." : "Save Changes"}
 								</Button>
@@ -265,19 +267,21 @@ export function UserStaffProfileSheet({
 						) : (
 							<div className="p-4 border-t border-gray-200 bg-white flex justify-end gap-3">
 								<Button
+									type="button"
 									variant="outline"
-									className="border-red-500 text-red-600 hover:bg-red-50 hover:text-red-700 disabled:opacity-50"
+									className="border-red-200 text-red-600 hover:bg-red-50 hover:border-red-300 rounded-lg px-4 h-10 font-medium text-sm transition-colors cursor-pointer shadow-none disabled:opacity-50"
 									onClick={handleDeleteClick}
 									disabled={deleteUser.isPending}
 								>
-									<RiDeleteBinLine className="mr-2 h-4 w-4 shrink-0" />
+									<RiDeleteBinLine className="mr-1.5 h-4 w-4 shrink-0" />
 									Delete User
 								</Button>
 								<Button
-									className="bg-blue-600 text-white hover:bg-blue-700"
+									type="button"
+									className="bg-blue-600 text-white hover:bg-blue-700 rounded-lg px-4 h-10 font-medium text-sm transition-colors cursor-pointer shadow-none"
 									onClick={() => setIsEditing(true)}
 								>
-									<RiEdit2Line className="mr-2 h-4 w-4 shrink-0" />
+									<RiEdit2Line className="mr-1.5 h-4 w-4 shrink-0" />
 									Edit Profile
 								</Button>
 							</div>

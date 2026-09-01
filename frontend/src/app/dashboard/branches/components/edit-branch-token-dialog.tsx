@@ -71,9 +71,9 @@ export function EditBranchTokenDialog({ branch }: EditBranchTokenDialogProps) {
 				<RiEdit2Line className="size-4 mr-2" />
 				Edit Token Limit
 			</DialogTrigger>
-			<DialogContent className="sm:max-w-md w-full bg-white p-0">
+			<DialogContent className="sm:max-w-md w-full bg-white p-0 rounded-lg border border-gray-200 shadow-none overflow-hidden">
 				<DialogHeader className="p-4 border-b border-gray-200">
-					<DialogTitle className="text-base font-medium text-black-500 text-left">
+					<DialogTitle className="text-base font-semibold text-foreground text-left">
 						Edit Branch Token Limit
 					</DialogTitle>
 				</DialogHeader>
@@ -92,20 +92,20 @@ export function EditBranchTokenDialog({ branch }: EditBranchTokenDialogProps) {
 								const isInvalid = field.state.meta.errors && field.state.meta.errors.length > 0;
 								return (
 									<Field data-invalid={isInvalid}>
-										<FieldLabel htmlFor="token_limit">Token Limit</FieldLabel>
+										<FieldLabel htmlFor="token_limit" className="text-xs font-medium text-zinc-700">Token Limit</FieldLabel>
 										<div className="relative">
 											<Input
 												name={field.name}
 												id="token_limit"
 												type="number"
 												placeholder="1000"
-												className="h-10 rounded-lg border-gray-200 bg-white text-sm text-black-500 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none focus-visible:ring-blue-500"
+												className="h-10 rounded-lg border-gray-200 bg-white text-sm text-foreground [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none focus-visible:ring-blue-500"
 												value={field.state.value}
 												onChange={(e) => field.handleChange(e.target.value)}
 												onBlur={field.handleBlur}
 												aria-invalid={isInvalid}
 											/>
-											<span className="absolute right-3 top-1/2 -translate-y-1/2 text-sm text-black-200 pointer-events-none">
+											<span className="absolute right-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground pointer-events-none">
 												per month
 											</span>
 										</div>
@@ -118,11 +118,11 @@ export function EditBranchTokenDialog({ branch }: EditBranchTokenDialogProps) {
 						</form.Field>
 					</div>
 
-					<div className="p-4 border-t border-gray-200 flex justify-end gap-3 bg-white rounded-b-xl">
+					<div className="p-4 border-t border-gray-200 flex justify-end gap-2 bg-zinc-50/50">
 						<Button
 							type="button"
 							variant="outline"
-							className="border-blue-500 text-blue-500 hover:text-blue-600 hover:bg-blue-50 rounded-lg font-medium px-5 shadow-none"
+							className="border-gray-200 bg-white text-zinc-700 hover:bg-zinc-50 rounded-lg px-4 h-10 font-medium text-sm transition-colors cursor-pointer shadow-none"
 							onClick={() => setOpen(false)}
 						>
 							Cancel
@@ -132,7 +132,7 @@ export function EditBranchTokenDialog({ branch }: EditBranchTokenDialogProps) {
 								<Button
 									type="submit"
 									disabled={!canSubmit || updateBranch.isPending || isSubmitting}
-									className="bg-blue-600 text-white hover:bg-blue-700 rounded-lg font-medium px-5 shadow-none disabled:opacity-50 disabled:bg-black-50 disabled:text-black-200"
+									className="bg-blue-600 text-white hover:bg-blue-700 rounded-lg px-4 h-10 font-medium text-sm transition-colors cursor-pointer shadow-none disabled:opacity-50"
 								>
 									{updateBranch.isPending || isSubmitting ? (
 										<RiLoader4Line className="mr-2 h-4 w-4 animate-spin shrink-0" />

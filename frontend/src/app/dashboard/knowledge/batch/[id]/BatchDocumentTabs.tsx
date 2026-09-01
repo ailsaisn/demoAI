@@ -46,10 +46,10 @@ export function BatchDocumentTabs({
 			{/* Sub-header with document count and dropdown picker */}
 			<div className="flex items-center justify-between gap-2 w-full min-w-0">
 				<div className="flex items-center gap-2 min-w-0">
-					<h4 className="text-xs font-semibold text-blue-900/80 uppercase tracking-wider truncate">
+					<h4 className="text-xs font-semibold text-blue-900 uppercase tracking-wider truncate">
 						Documents in this batch ({documents.length})
 					</h4>
-					<span className="text-xs text-zinc-400 font-normal shrink-0">
+					<span className="text-xs text-zinc-600 font-normal shrink-0">
 						• Viewing {activeIndex + 1} of {documents.length}
 					</span>
 				</div>
@@ -72,7 +72,7 @@ export function BatchDocumentTabs({
 								)}
 							>
 								<div className="flex items-center gap-2 min-w-0 flex-1">
-									<span className="text-[11px] text-zinc-400 font-mono w-4 shrink-0">
+									<span className="text-[11px] text-zinc-600 font-mono w-4 shrink-0">
 										{idx + 1}.
 									</span>
 									<span className="truncate" title={doc.title || doc.file_name}>
@@ -118,7 +118,7 @@ export function BatchDocumentTabs({
 								value={tabDoc.id}
 								data-tab-id={tabDoc.id}
 								title={tabDoc.title || `Document ${tabIndex + 1}`}
-								className="w-48 shrink-0 relative inline-flex items-center justify-between font-medium text-xs text-blue-900/60 hover:text-blue-600 data-active:text-blue-600 data-active:after:bg-blue-600 px-2.5 py-1.5 transition-all cursor-pointer"
+								className="w-48 shrink-0 relative inline-flex items-center justify-between font-medium text-xs text-zinc-700 hover:text-blue-700 data-active:text-blue-700 data-active:after:bg-blue-700 px-2.5 py-1.5 transition-all cursor-pointer"
 							>
 								<span className="truncate min-w-0 flex-1 text-left">
 									{tabDoc.title || `Document ${tabIndex + 1}`}

@@ -16,8 +16,8 @@ class Settings(BaseSettings):
     ENVIRONMENT: str = "development" # "development" | "staging" | "production"
 
     # RAG & LLM Settings
-    EMBEDDING_PROVIDER: str = "huggingface"
-    EMBEDDING_MODEL_NAME: str = "BAAI/bge-m3"
+    EMBEDDING_PROVIDER: str = "openai"
+    EMBEDDING_MODEL_NAME: str = "text-embedding-3-small"
     LLM_MODEL_NAME: str = "gpt-5.4-mini"
     OPENAI_API_KEY: Optional[str] = None
 
@@ -25,7 +25,8 @@ class Settings(BaseSettings):
     S3_ENDPOINT_URL: str = "http://localhost:9000"
     S3_ACCESS_KEY: str = "minioadmin"
     S3_SECRET_KEY: str = "minioadmin"
-    S3_BUCKET: str = "erha-knowledge-assets"
+    S3_BUCKET: str = "images"
+    S3_DOCUMENTS_BUCKET: str = "knowledge-documents"
     S3_REGION: str = "us-east-1"
     S3_USE_PATH_STYLE: bool = True
 

@@ -93,10 +93,10 @@ export function LoginForm({ className, ...props }: React.ComponentProps<"form">)
 			<FieldGroup>
 				<div className="flex flex-col items-center text-center">
 					<div className="mb-4 flex h-12 w-12 items-center justify-center rounded-lg bg-blue-50">
-						<RiRobot2Line className="h-7 w-7 text-blue-500" />
+						<RiRobot2Line className="h-7 w-7 text-blue-600" />
 					</div>
-					<h1 className="mb-1 text-xl font-semibold text-neutral-900">Hello, welcome back</h1>
-					<p className="text-sm text-neutral-600">
+					<h1 className="mb-1 text-xl font-semibold text-foreground">Hello, welcome back</h1>
+					<p className="text-sm text-muted-foreground">
 						Sign in to manage conversations, knowledge, and chatbot performance.
 					</p>
 				</div>
@@ -175,7 +175,7 @@ export function LoginForm({ className, ...props }: React.ComponentProps<"form">)
 											type="button"
 											variant="ghost"
 											size="icon"
-											className="absolute right-0 top-0 h-full px-3 py-2 text-gray-500 hover:text-gray-700 hover:bg-transparent"
+											className="absolute right-0 top-0 h-full px-3 py-2 text-zinc-600 hover:text-zinc-900 hover:bg-transparent"
 											onClick={() => setShowPassword(!showPassword)}
 										>
 											{showPassword ? (

@@ -125,19 +125,21 @@ class DocumentParser:
 
             with zipfile.ZipFile(file_path, 'r') as z:
                 media_files = [f for f in z.namelist() if f.startswith('word/media/')]
-                for idx, media_name in enumerate(media_files[:5], start=1):
+                extracted_image_urls = []
+                for idx, media_name in enumerate(media_files, start=1):
                     img_bytes = z.read(media_name)
                     img_ext = os.path.splitext(media_name)[1].lower().replace(".", "")
                     if img_ext in ["png", "jpg", "jpeg", "webp"]:
                         fname = f"docx_img_{idx}_{os.path.basename(media_name)}"
                         upload_res = upload_image(img_bytes, fname, content_type=f"image/{img_ext}")
                         img_url = upload_res.get("image_url")
-                        if img_url and pages:
-                            clean_img_title = os.path.splitext(os.path.basename(file_path))[0]
-                            pages[0]["text"] = f"![{clean_img_title}]({img_url})\n\n" + pages[0]["text"]
-                            pages[0]["image_url"] = img_url
-                            logger.info(f"🖼️ Extracted and uploaded embedded DOCX image '{media_name}' to MinIO -> {img_url}")
-                            break
+                        if img_url:
+                            extracted_image_urls.append(img_url)
+                            logger.info(f"🖼️ Extracted and uploaded embedded DOCX image #{idx} '{media_name}' to MinIO -> {img_url}")
+                
+                if extracted_image_urls and pages:
+                    pages[0]["image_urls"] = extracted_image_urls
+                    pages[0]["image_url"] = extracted_image_urls[0]
         except Exception as img_err:
             logger.debug(f"DOCX embedded image extraction skipped: {img_err}")
 
@@ -198,8 +200,9 @@ class DocumentParser:
             doc = fitz.open(file_path)
             for i, page in enumerate(doc):
                 img_list = page.get_images()
+                page_image_urls = []
                 img_markdowns = []
-                for img_idx, img_info in enumerate(img_list[:3]):
+                for img_idx, img_info in enumerate(img_list):
                     xref = img_info[0]
                     base_img = doc.extract_image(xref)
                     img_bytes = base_img.get("image")
@@ -208,13 +211,18 @@ class DocumentParser:
                         fname = f"pdf_p{i+1}_img{img_idx+1}.{img_ext}"
                         upload_res = upload_image(img_bytes, fname, content_type=f"image/{img_ext}")
                         img_url = upload_res.get("image_url")
-                        if img_url:
-                            img_markdowns.append(f"![{fname}]({img_url})")
                 if img_markdowns and i < len(pages):
                     pages[i]["text"] += "\n\n" + "\n".join(img_markdowns)
-                    pages[i]["image_url"] = upload_res.get("image_url")
+                    pages[i]["image_urls"] = page_image_urls
+                    pages[i]["image_url"] = page_image_urls[0] if page_image_urls else None
         except Exception as img_err:
             logger.debug(f"PDF embedded image extraction skipped/optional: {img_err}")
+
+        # Apply Structure Reconstruction / Document Normalization on each page's extracted text
+        from app.rag.utils.normalizer import normalize_document_text
+        for p in pages:
+            if p.get("text"):
+                p["text"] = normalize_document_text(p["text"])
 
         return ParseResult(pages=pages, method="fast")
 
@@ -227,12 +235,55 @@ class DocumentParser:
 
         ext = os.path.splitext(file_path)[1].lower()
         pages = []
+        extracted_image_urls = []
+
+        # Extract embedded images from .xlsx/.xlsm media parts and upload to MinIO first
+        if ext in [".xlsx", ".xlsm"]:
+            try:
+                import zipfile
+                from app.services.storage import upload_images_parallel
+
+                with zipfile.ZipFile(file_path, 'r') as z:
+                    media_files = [f for f in z.namelist() if f.startswith('xl/media/')]
+                    # Collect all image data first
+                    upload_batch = []
+                    for idx, media_name in enumerate(media_files, start=1):
+                        img_bytes = z.read(media_name)
+                        img_ext = os.path.splitext(media_name)[1].lower().replace(".", "")
+                        if img_ext in ["png", "jpg", "jpeg", "webp"]:
+                            upload_batch.append({
+                                "content": img_bytes,
+                                "filename": f"excel_img_{idx}_{os.path.basename(media_name)}",
+                                "content_type": f"image/{img_ext}"
+                            })
+
+                    # Upload all images in parallel (1x client init, concurrent put_object)
+                    if upload_batch:
+                        results = upload_images_parallel(upload_batch)
+                        for res in results:
+                            img_url = res.get("image_url")
+                            if img_url:
+                                extracted_image_urls.append(img_url)
+                        logger.info(f"Parallel upload: {len(extracted_image_urls)} Excel images uploaded to MinIO.")
+            except Exception as img_err:
+                logger.debug(f"Excel embedded image extraction skipped: {img_err}")
 
         try:
+            def _df_to_markdown_safe(dataframe) -> str:
+                try:
+                    return dataframe.to_markdown(index=False)
+                except Exception:
+                    headers = [str(c) for c in dataframe.columns]
+                    lines = ["| " + " | ".join(headers) + " |", "| " + " | ".join(["---"] * len(headers)) + " |"]
+                    for _, row in dataframe.iterrows():
+                        row_vals = ["" if pd.isna(v) else str(v).replace("\n", " ").strip() for v in row]
+                        lines.append("| " + " | ".join(row_vals) + " |")
+                    return "\n".join(lines)
+
             if ext == ".csv":
                 df = pd.read_csv(file_path)
                 df = df.dropna(how="all")
-                md_table = df.to_markdown(index=False)
+                md_table = _df_to_markdown_safe(df)
                 pages.append({
                     "page": 1,
                     "text": f"### CSV Data Table\n\n{md_table}"
@@ -244,39 +295,51 @@ class DocumentParser:
                         if df.empty:
                             continue
                         df = df.dropna(how="all")
-                        md_table = df.to_markdown(index=False)
+
+                        # If Excel has an image/photo column, inject extracted image URLs row-by-row
+                        if extracted_image_urls:
+                            photo_col = None
+                            for col in df.columns:
+                                col_str = str(col).lower()
+                                if any(k in col_str for k in ["foto", "gambar", "photo", "image", "picture"]):
+                                    photo_col = col
+                                    break
+                            
+                            if photo_col is not None:
+                                img_idx = 0
+                                new_col_vals = []
+                                for r_idx in range(len(df)):
+                                    if img_idx < len(extracted_image_urls):
+                                        prod_name = ""
+                                        for name_col in df.columns:
+                                            if any(nk in str(name_col).lower() for nk in ["nama", "product", "title", "item"]):
+                                                val = str(df.at[df.index[r_idx], name_col])
+                                                if val and val != "nan":
+                                                    prod_name = val
+                                                    break
+                                        img_alt = prod_name or f"Foto Produk {img_idx+1}"
+                                        new_col_vals.append(f"![{img_alt}]({extracted_image_urls[img_idx]})")
+                                        img_idx += 1
+                                    else:
+                                        val_existing = str(df.at[df.index[r_idx], photo_col])
+                                        new_col_vals.append("" if val_existing == "nan" else val_existing)
+                                df[photo_col] = new_col_vals
+
+                        md_table = _df_to_markdown_safe(df)
                         sheet_text = f"### Sheet: {sheet_name}\n\n{md_table}"
                         pages.append({
                             "page": page_idx,
-                            "text": sheet_text
+                            "text": sheet_text,
+                            "image_urls": extracted_image_urls,
+                            "image_url": extracted_image_urls[0] if extracted_image_urls else None
                         })
 
             if not pages:
                 pages = [{"page": 1, "text": "Dokumen spreadsheet kosong."}]
 
-            # Extract embedded images from .xlsx media parts and upload to MinIO
-            if ext in [".xlsx", ".xlsm"]:
-                try:
-                    import zipfile
-                    from app.services.storage import upload_image
-
-                    with zipfile.ZipFile(file_path, 'r') as z:
-                        media_files = [f for f in z.namelist() if f.startswith('xl/media/')]
-                        for idx, media_name in enumerate(media_files[:5], start=1):
-                            img_bytes = z.read(media_name)
-                            img_ext = os.path.splitext(media_name)[1].lower().replace(".", "")
-                            if img_ext in ["png", "jpg", "jpeg", "webp"]:
-                                fname = f"excel_img_{idx}_{os.path.basename(media_name)}"
-                                upload_res = upload_image(img_bytes, fname, content_type=f"image/{img_ext}")
-                                img_url = upload_res.get("image_url")
-                                if img_url and pages:
-                                    clean_img_title = os.path.splitext(os.path.basename(file_path))[0]
-                                    pages[0]["text"] = f"![{clean_img_title}]({img_url})\n\n" + pages[0]["text"]
-                                    pages[0]["image_url"] = img_url
-                                    logger.info(f"🖼️ Extracted and uploaded embedded Excel image '{media_name}' to MinIO -> {img_url}")
-                                    break
-                except Exception as img_err:
-                    logger.debug(f"Excel embedded image extraction skipped: {img_err}")
+            if extracted_image_urls and pages:
+                pages[0]["image_urls"] = extracted_image_urls
+                pages[0]["image_url"] = extracted_image_urls[0]
 
             return ParseResult(pages=pages, method="fast")
         except Exception as e:
@@ -296,6 +359,7 @@ class DocumentParser:
 
             for slide_idx, slide in enumerate(prs.slides, start=1):
                 slide_texts = []
+                slide_image_urls = []
                 slide_title = f"Slide {slide_idx}"
 
                 # Extract title if present
@@ -327,6 +391,22 @@ class DocumentParser:
                                 table_rows.insert(1, delimiter)
                             slide_texts.append("\n".join(table_rows))
 
+                    # Extract embedded images in shapes
+                    elif hasattr(shape, "image"):
+                        try:
+                            from app.services.storage import upload_image
+                            img_obj = shape.image
+                            img_bytes = img_obj.blob
+                            img_ext = img_obj.ext
+                            fname = f"pptx_s{slide_idx}_img.{img_ext}"
+                            upload_res = upload_image(img_bytes, fname, content_type=f"image/{img_ext}")
+                            img_url = upload_res.get("image_url")
+                            if img_url:
+                                slide_image_urls.append(img_url)
+                                slide_texts.append(f"![{slide_title} Image]({img_url})")
+                        except Exception as shape_img_err:
+                            logger.debug(f"PPTX slide image shape extraction skipped: {shape_img_err}")
+
                 # Extract speaker notes if any
                 if slide.has_notes_slide and slide.notes_slide.notes_text_frame:
                     notes = slide.notes_slide.notes_text_frame.text.strip()
@@ -337,32 +417,38 @@ class DocumentParser:
                     full_slide_content = f"### Slide {slide_idx}: {slide_title}\n\n" + "\n".join(slide_texts)
                     pages.append({
                         "page": slide_idx,
-                        "text": full_slide_content
+                        "text": full_slide_content,
+                        "image_urls": slide_image_urls,
+                        "image_url": slide_image_urls[0] if slide_image_urls else None
                     })
 
             if not pages:
                 pages = [{"page": 1, "text": "Presentasi PowerPoint kosong."}]
 
-            # Extract embedded images from .pptx media parts and upload to MinIO
+            # Extract embedded images from .pptx media parts zip fallback
             try:
                 import zipfile
                 from app.services.storage import upload_image
 
                 with zipfile.ZipFile(file_path, 'r') as z:
                     media_files = [f for f in z.namelist() if f.startswith('ppt/media/')]
-                    for idx, media_name in enumerate(media_files[:5], start=1):
+                    extracted_image_urls = []
+                    for idx, media_name in enumerate(media_files, start=1):
                         img_bytes = z.read(media_name)
                         img_ext = os.path.splitext(media_name)[1].lower().replace(".", "")
                         if img_ext in ["png", "jpg", "jpeg", "webp"]:
                             fname = f"pptx_img_{idx}_{os.path.basename(media_name)}"
                             upload_res = upload_image(img_bytes, fname, content_type=f"image/{img_ext}")
                             img_url = upload_res.get("image_url")
-                            if img_url and pages:
-                                clean_img_title = os.path.splitext(os.path.basename(file_path))[0]
-                                pages[0]["text"] = f"![{clean_img_title}]({img_url})\n\n" + pages[0]["text"]
-                                pages[0]["image_url"] = img_url
-                                logger.info(f"🖼️ Extracted and uploaded embedded PPTX image '{media_name}' to MinIO -> {img_url}")
-                                break
+                            if img_url:
+                                extracted_image_urls.append(img_url)
+                                logger.info(f"🖼️ Extracted and uploaded embedded PPTX image #{idx} '{media_name}' to MinIO -> {img_url}")
+                    
+                    if extracted_image_urls and pages:
+                        existing_urls = pages[0].get("image_urls", [])
+                        combined_urls = list(dict.fromkeys(existing_urls + extracted_image_urls))
+                        pages[0]["image_urls"] = combined_urls
+                        pages[0]["image_url"] = combined_urls[0]
             except Exception as img_err:
                 logger.debug(f"PPTX embedded image extraction skipped: {img_err}")
 
@@ -469,28 +555,25 @@ class DocumentParser:
                     client = OpenAI(**client_kwargs)
                     prompt_text = (
                         "You are an expert medical aesthetic AI knowledge engineer for PT Arya Noble (ERHA) Knowledge Base.\n\n"
-                        "Your task is to analyze the provided image and extract accurate, non-redundant, and cohesive product/clinical knowledge.\n\n"
-                        "## Critical Guidelines:\n"
-                        "1. **Dynamic Fields (NO Empty Placeholders)**: Extract fields ONLY if actual information is visible/available. If SKU is not visible, set `sku` to null. NEVER output placeholder phrases like 'None visible in the image', 'N/A', or 'Not available'.\n"
-                        "2. **Single Identifier (SKU)**: Extract only the official SKU if visible on packaging/label. Do not produce redundant ID fields.\n"
-                        "3. **Deskripsi & Fungsi Produk (Cohesive Narrative)**: Write a single, fluent, natural language paragraph explaining what the product is, intended skin types/conditions, key benefits, and usage context. This paragraph will serve as the primary concise description when the AI recommends products to doctors.\n"
-                        "4. **Active Ingredients**: List only the specific active ingredients/compounds.\n"
-                        "5. **No Visual Fluff**: Do NOT describe background color, packaging graphics, lighting, or photography angles.\n\n"
+                        "Your task is to analyze the provided image (which could be a Product Photo or a Clinical Before-After Face Condition Photo) and extract accurate, fluent, and cohesive knowledge.\n\n"
+                        "## Guidelines:\n"
+                        "1. **Natural & Cohesive Language**: Write natural, professional, fluent Indonesian prose suitable for clinical doctors and aesthetic specialists. Avoid stiff key-value forms or empty template blocks.\n"
+                        "2. **Product Photos (Foto Produk)**:\n"
+                        "   - Describe the product name, intended skin types, key benefits, and usage naturally.\n"
+                        "   - Include active ingredients in standard markdown bullet points.\n"
+                        "3. **Before-After Face Condition Photos (Foto Wajah Before-After)**:\n"
+                        "   - State the treatment/product name.\n"
+                        "   - Analyze the clinical skin condition changes (Before vs After) naturally (e.g. reduction of inflammatory acne lesions, fading of post-acne erythema, smoothing of skin texture).\n"
+                        "4. **No Visual Fluff**: Do NOT describe background color, packaging graphics, lighting, or photography angles.\n\n"
                         "## Output Format (Valid JSON ONLY):\n"
                         "{\n"
                         '  "title": "ERHA Acneact Gentle Acne Moisturizer",\n'
                         '  "product_name": "ERHA Acneact Gentle Acne Moisturizer",\n'
+                        '  "document_type": "PRODUCT",\n'
                         '  "brand": "ERHA",\n'
                         '  "sku": null,\n'
-                        '  "variant": "Gentle Acne Moisturizer",\n'
-                        '  "product_type": "Moisturizer / Pelembap Wajah",\n'
-                        '  "intended_skin_types": ["Oily skin", "Acne-prone skin", "Sensitive skin"],\n'
-                        '  "net_content": "30 g",\n'
-                        '  "deskripsi_fungsi": "ERHA Acneact Gentle Acne Moisturizer adalah pelembap ringan dalam rangkaian Acneact yang diformulasikan khusus untuk kulit berminyak dan berjerawat. Digunakan setelah pembersih dan serum dalam rutinitas pagi maupun malam hari untuk menjaga hidrasi kulit optimal dengan tekstur yang nyaman, cepat meresap, dan tidak menyumbat pori-pori.",\n'
-                        '  "active_ingredients": [\n'
-                        '    "Granactive Acne Peptide",\n'
-                        '    "Salicylic Acid (BHA)"\n'
-                        '  ]\n'
+                        '  "active_ingredients": ["Granactive Acne Peptide", "Salicylic Acid (BHA)"],\n'
+                        '  "summary_markdown": "# ERHA Acneact Gentle Acne Moisturizer\\n\\nERHA Acneact Gentle Acne Moisturizer adalah pelembap wajah ringan yang diformulasikan khusus untuk kulit berminyak, berjerawat, dan sensitif. Memiliki tekstur gel-krim yang cepat meresap dan tidak menyumbat pori-pori.\\n\\n## Manfaat & Penggunaan\\n- Melembapkan kulit berjerawat sekaligus menenangkan kemerahan.\\n- Membantu mengontrol produksi sebum berlebih.\\n- Digunakan secara merata pada wajah setelah pembersih dan serum.\\n\\n## Active Ingredients\\n- **Granactive Acne Peptide**: Membantu meredakan peradangan jerawat.\\n- **Salicylic Acid (BHA)**: Merawat pori-pori dan mencegah timbulnya jerawat baru."\n'
                         "}"
                     )
 
@@ -537,64 +620,46 @@ class DocumentParser:
                             img_title = data.get("title") or data.get("product_name") or os.path.splitext(file_name)[0]
                             p_name = data.get("product_name") or img_title
                             brand = data.get("brand") or "ERHA"
-                            sku_val = data.get("sku")
-                            # Normalize SKU - ignore none/null/not visible strings
-                            clean_sku = str(sku_val).strip() if sku_val and str(sku_val).strip().lower() not in ["none", "null", "none visible in the image", "not visible", "n/a", "-"] else None
-
-                            variant = data.get("variant")
-                            p_type = data.get("product_type")
-                            skin_types = data.get("intended_skin_types") or []
-                            net_content = data.get("net_content")
-                            deskripsi_fungsi = data.get("deskripsi_fungsi") or data.get("searchable_knowledge") or data.get("summary") or ""
                             active_ing = data.get("active_ingredients") or []
+                            sku_val = data.get("sku")
+                            clean_sku = str(sku_val).strip() if sku_val and str(sku_val).strip().lower() not in ["none", "null", "n/a", "-"] else None
 
                             extracted_meta.update({
                                 "title": img_title,
                                 "product_name": p_name,
                                 "brand": brand,
                                 "sku": clean_sku,
-                                "active_ingredients": active_ing,
-                                "searchable_knowledge": deskripsi_fungsi
+                                "active_ingredients": active_ing
                             })
 
-                            # Build clean, high-density structured markdown dynamically (WITHOUT empty fields)
-                            md_blocks = [f"![{img_title}]({image_url})\n\n# {img_title}"]
-
-                            overview_lines = ["## Product Overview"]
-                            if p_name:
-                                overview_lines.append(f"- **Product Name**: {p_name}")
-                            if brand:
-                                overview_lines.append(f"- **Brand**: {brand}")
-                            if clean_sku:
-                                overview_lines.append(f"- **SKU**: {clean_sku}")
-                            if variant and str(variant).strip().lower() not in ["none", "null", "n/a"]:
-                                overview_lines.append(f"- **Variant**: {variant}")
-                            if p_type and str(p_type).strip().lower() not in ["none", "null", "n/a"]:
-                                overview_lines.append(f"- **Product Type**: {p_type}")
-                            if skin_types:
-                                if isinstance(skin_types, list):
-                                    overview_lines.append(f"- **Intended Skin Types**: {', '.join([str(s) for s in skin_types if s])}")
-                                elif str(skin_types).strip().lower() not in ["none", "null", "n/a"]:
-                                    overview_lines.append(f"- **Intended Skin Types**: {skin_types}")
-                            if net_content and str(net_content).strip().lower() not in ["none", "null", "n/a"]:
-                                overview_lines.append(f"- **Net Content**: {net_content}")
-                            md_blocks.append("\n".join(overview_lines))
-
-                            if deskripsi_fungsi:
-                                md_blocks.append(f"## Deskripsi & Fungsi Produk\n{deskripsi_fungsi}")
-
-                            if active_ing:
-                                ing_lines = ["## Active Ingredients"]
-                                if isinstance(active_ing, list):
-                                    for ing in active_ing:
-                                        if ing and str(ing).strip():
-                                            ing_lines.append(f"- {ing}")
-                                else:
-                                    ing_lines.append(f"- {active_ing}")
-                                if len(ing_lines) > 1:
+                            # If Vision LLM provided a beautiful fluent summary_markdown directly, use it!
+                            raw_summary_md = data.get("summary_markdown")
+                            if raw_summary_md and raw_summary_md.strip():
+                                summary_text = raw_summary_md.strip()
+                                # Ensure image URL is embedded right below the first H1 title
+                                if image_url and image_url not in summary_text:
+                                    lines = summary_text.split("\n")
+                                    if lines and lines[0].startswith("#"):
+                                        summary_text = lines[0] + f"\n\n![{img_title}]({image_url})\n" + "\n".join(lines[1:])
+                                    else:
+                                        summary_text = f"# {img_title}\n\n![{img_title}]({image_url})\n\n" + summary_text
+                                extracted_text = summary_text
+                            else:
+                                # Fallback natural markdown
+                                md_blocks = [f"# {img_title}\n\n![{img_title}]({image_url})"]
+                                deskripsi = data.get("deskripsi_fungsi") or data.get("searchable_knowledge") or ""
+                                if deskripsi:
+                                    md_blocks.append(f"## Deskripsi & Fungsi Produk\n{deskripsi}")
+                                if active_ing:
+                                    ing_lines = ["## Active Ingredients"]
+                                    if isinstance(active_ing, list):
+                                        for ing in active_ing:
+                                            if ing and str(ing).strip():
+                                                ing_lines.append(f"- {ing}")
+                                    else:
+                                        ing_lines.append(f"- {active_ing}")
                                     md_blocks.append("\n".join(ing_lines))
-
-                            extracted_text = "\n\n".join(md_blocks)
+                                extracted_text = "\n\n".join(md_blocks)
 
                         except Exception as json_err:
                             logger.warning(f"Could not parse Vision LLM JSON response for '{file_name}': {json_err}. Using raw output.")
@@ -622,6 +687,7 @@ class DocumentParser:
             page_data = {
                 "page": 1,
                 "text": extracted_text,
+                "image_urls": [image_url] if image_url else [],
                 "image_url": image_url,
                 "s3_key": s3_key,
                 "storage_key": s3_key,

@@ -89,16 +89,16 @@ export function DoctorAdjustLimitDialog({
 				}
 			}}
 		>
-			<DialogContent className="sm:max-w-md p-0 flex flex-col gap-0 rounded-md overflow-hidden bg-white border-0">
+			<DialogContent className="sm:max-w-md p-0 flex flex-col gap-0 rounded-lg overflow-hidden bg-white border border-gray-200 shadow-none">
 				<DialogHeader className="p-4 border-b border-gray-100 flex flex-row items-center justify-between">
-					<DialogTitle className="text-base font-medium text-gray-900">
+					<DialogTitle className="text-base font-semibold text-foreground">
 						Adjust Token Limit
 					</DialogTitle>
 				</DialogHeader>
 
 				<div className="p-4 flex flex-col gap-4">
 					{/* Branch Context Info */}
-					<div className="flex flex-col gap-1 text-sm bg-gray-50 p-3 rounded-md border border-gray-100">
+					<div className="flex flex-col gap-1 text-sm bg-gray-50 p-3 rounded-lg border border-gray-100">
 						<span className="font-medium text-gray-700">Assigned Branch Limit:</span>
 						{branches.length > 0 ? (
 							branches.map((b) => (
@@ -111,7 +111,7 @@ export function DoctorAdjustLimitDialog({
 						)}
 					</div>
 
-					<div className="flex flex-col gap-1 text-sm text-gray-900">
+					<div className="flex flex-col gap-1 text-sm text-foreground">
 						<span>
 							Current doctor limit: {currentEffectiveLimit.toLocaleString()}{" "}
 							{isGlobalLimitActive && (
@@ -125,7 +125,7 @@ export function DoctorAdjustLimitDialog({
 					</div>
 
 					{isBranchLimitUnset ? (
-						<div className="bg-amber-50 border border-amber-500 rounded-md p-4 text-sm text-amber-800 flex gap-2">
+						<div className="bg-amber-50 border border-amber-500 rounded-lg p-4 text-sm text-amber-800 flex gap-2">
 							<RiInformationLine className="h-5 w-5 shrink-0 text-amber-600" />
 							<span>
 								{isNoBranchAssigned
@@ -136,7 +136,7 @@ export function DoctorAdjustLimitDialog({
 					) : (
 						<>
 							<div className="flex flex-col gap-2">
-								<span className="text-sm font-medium text-gray-900">
+								<span className="text-xs font-medium text-zinc-700">
 									{isGlobalLimitActive ? "Custom Token Limit (Override)" : "New Token Limit"}
 								</span>
 								<div className="relative flex items-center">
@@ -145,9 +145,9 @@ export function DoctorAdjustLimitDialog({
 										value={newLimit}
 										max={maxBranchLimit}
 										onChange={(e) => setNewLimit(Number(e.target.value))}
-										className="h-10 border-gray-200 focus-visible:ring-blue-500 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+										className="h-10 border-gray-200 rounded-lg focus-visible:ring-blue-500 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none text-sm"
 									/>
-									<span className="absolute right-3 text-sm text-gray-400">tokens</span>
+									<span className="absolute right-3 text-sm text-muted-foreground">tokens</span>
 								</div>
 								{isExceedingBranch && (
 									<span className="text-xs text-red-600">
@@ -156,7 +156,7 @@ export function DoctorAdjustLimitDialog({
 								)}
 							</div>
 
-							<div className="bg-blue-50 border border-blue-600 rounded-md p-4 text-sm text-blue-600 flex gap-2">
+							<div className="bg-blue-50 border border-blue-600 rounded-lg p-4 text-sm text-blue-600 flex gap-2">
 								<RiInformationLine className="h-5 w-5 shrink-0" />
 								<span>
 									We recommend not setting the token limit below the used token amount ({tokensUsed.toLocaleString()}).
@@ -166,9 +166,18 @@ export function DoctorAdjustLimitDialog({
 					)}
 				</div>
 
-				<div className="p-4 border-t border-gray-100 flex justify-end">
+				<div className="p-4 border-t border-gray-100 flex items-center justify-end gap-2 bg-zinc-50/50">
 					<Button
-						className="bg-blue-600 text-white hover:bg-blue-700 px-6 rounded-md disabled:opacity-50"
+						type="button"
+						variant="outline"
+						onClick={() => onOpenChange(false)}
+						disabled={updateDoctorAccess.isPending}
+						className="border-gray-200 bg-white text-zinc-700 hover:bg-zinc-50 rounded-lg px-4 h-10 font-medium text-sm transition-colors cursor-pointer shadow-none"
+					>
+						Cancel
+					</Button>
+					<Button
+						className="bg-blue-600 text-white hover:bg-blue-700 px-4 h-10 rounded-lg font-medium text-sm transition-colors cursor-pointer shadow-none disabled:opacity-50"
 						onClick={handleSave}
 						disabled={updateDoctorAccess.isPending || isBranchLimitUnset || isExceedingBranch}
 					>

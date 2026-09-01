@@ -104,14 +104,18 @@ export function GlobalTokenConfig() {
 					</div>
 					<div className="flex items-center gap-2">
 						<Switch
+							id="global-token-config-switch"
 							checked={isActive}
 							onCheckedChange={handleToggle}
 							disabled={updateConfig.isPending}
 							className="data-[state=checked]:bg-blue-500"
 						/>
-						<span className="text-sm text-black-300">
+						<label
+							htmlFor="global-token-config-switch"
+							className="text-sm text-black-300 cursor-pointer select-none"
+						>
 							{isActive ? "Deactivate the configuration" : "Activate the configuration"}
-						</span>
+						</label>
 					</div>
 				</div>
 
@@ -142,8 +146,9 @@ export function GlobalTokenConfig() {
 									{editingThreshold ? (
 										<div className="flex items-center gap-2">
 											<Button
-												variant="ghost"
-												className="text-black-400 hover:bg-zinc-100 px-3 rounded-lg font-medium h-10 text-sm"
+												type="button"
+												variant="outline"
+												className="border-gray-200 bg-white text-zinc-700 hover:bg-zinc-50 rounded-lg px-4 font-medium h-10 text-sm transition-colors cursor-pointer shadow-none"
 												onClick={() => {
 													setEditingThreshold(false);
 													setThresholdAmount(globalThreshold);
@@ -153,7 +158,8 @@ export function GlobalTokenConfig() {
 												Cancel
 											</Button>
 											<Button
-												className="bg-blue-500 hover:bg-blue-600 text-white shadow-none px-4 rounded-lg font-medium h-10 text-sm"
+												type="button"
+												className="bg-blue-600 hover:bg-blue-700 text-white rounded-lg px-4 font-medium h-10 text-sm transition-colors cursor-pointer shadow-none disabled:opacity-50"
 												onClick={() =>
 													handleSaveField(
 														"GLOBAL_TOKEN_THRESHOLD",
@@ -164,7 +170,7 @@ export function GlobalTokenConfig() {
 												disabled={savingKey === "GLOBAL_TOKEN_THRESHOLD"}
 											>
 												{savingKey === "GLOBAL_TOKEN_THRESHOLD" ? (
-													<RiLoader4Line className="size-4 animate-spin" />
+													<RiLoader4Line className="size-4 animate-spin mr-1" />
 												) : (
 													<RiCheckLine className="size-4 mr-1" />
 												)}
@@ -173,11 +179,12 @@ export function GlobalTokenConfig() {
 										</div>
 									) : (
 										<Button
+											type="button"
 											variant="outline"
-											className="border-white-600 bg-white text-black-400 hover:bg-zinc-50 shadow-none px-4 rounded-lg h-10 text-sm font-medium"
+											className="border-gray-200 bg-white text-zinc-700 hover:bg-zinc-50 rounded-lg px-4 h-10 text-sm font-medium transition-colors cursor-pointer shadow-none gap-1.5"
 											onClick={() => setEditingThreshold(true)}
 										>
-											<RiEdit2Line className="size-4 mr-1.5 text-black-400" />
+											<RiEdit2Line className="size-4 text-zinc-500" />
 											Edit
 										</Button>
 									)}
@@ -215,8 +222,9 @@ export function GlobalTokenConfig() {
 									{editingBranch ? (
 										<div className="flex items-center gap-2">
 											<Button
-												variant="ghost"
-												className="text-black-400 hover:bg-zinc-100 px-3 rounded-lg font-medium h-10 text-sm"
+												type="button"
+												variant="outline"
+												className="border-gray-200 bg-white text-zinc-700 hover:bg-zinc-50 rounded-lg px-4 font-medium h-10 text-sm transition-colors cursor-pointer shadow-none"
 												onClick={() => {
 													setEditingBranch(false);
 													setBranchAmount(branchTokenLimit);
@@ -226,7 +234,8 @@ export function GlobalTokenConfig() {
 												Cancel
 											</Button>
 											<Button
-												className="bg-blue-500 hover:bg-blue-600 text-white shadow-none px-4 rounded-lg font-medium h-10 text-sm"
+												type="button"
+												className="bg-blue-600 hover:bg-blue-700 text-white rounded-lg px-4 font-medium h-10 text-sm transition-colors cursor-pointer shadow-none disabled:opacity-50"
 												onClick={() =>
 													handleSaveField(
 														"GLOBAL_TOKEN_LIMIT",
@@ -237,7 +246,7 @@ export function GlobalTokenConfig() {
 												disabled={savingKey === "GLOBAL_TOKEN_LIMIT"}
 											>
 												{savingKey === "GLOBAL_TOKEN_LIMIT" ? (
-													<RiLoader4Line className="size-4 animate-spin" />
+													<RiLoader4Line className="size-4 animate-spin mr-1" />
 												) : (
 													<RiCheckLine className="size-4 mr-1" />
 												)}
@@ -246,11 +255,12 @@ export function GlobalTokenConfig() {
 										</div>
 									) : (
 										<Button
+											type="button"
 											variant="outline"
-											className="border-white-600 bg-white text-black-400 hover:bg-zinc-50 shadow-none px-4 rounded-lg h-10 text-sm font-medium"
+											className="border-gray-200 bg-white text-zinc-700 hover:bg-zinc-50 rounded-lg px-4 h-10 text-sm font-medium transition-colors cursor-pointer shadow-none gap-1.5"
 											onClick={() => setEditingBranch(true)}
 										>
-											<RiEdit2Line className="size-4 mr-1.5 text-black-400" />
+											<RiEdit2Line className="size-4 text-zinc-500" />
 											Edit
 										</Button>
 									)}
@@ -279,8 +289,9 @@ export function GlobalTokenConfig() {
 										{editingSpdve ? (
 											<div className="flex items-center gap-2">
 												<Button
-													variant="ghost"
-													className="text-black-400 hover:bg-zinc-100 px-3 rounded-lg font-medium h-10 text-sm"
+													type="button"
+													variant="outline"
+													className="border-gray-200 bg-white text-zinc-700 hover:bg-zinc-50 rounded-lg px-4 font-medium h-10 text-sm transition-colors cursor-pointer shadow-none"
 													onClick={() => {
 														setEditingSpdve(false);
 														setSpdveAmount(spdveLimit);
@@ -290,7 +301,8 @@ export function GlobalTokenConfig() {
 													Cancel
 												</Button>
 												<Button
-													className="bg-blue-500 hover:bg-blue-600 text-white shadow-none px-4 rounded-lg font-medium h-10 text-sm"
+													type="button"
+													className="bg-blue-600 hover:bg-blue-700 text-white rounded-lg px-4 font-medium h-10 text-sm transition-colors cursor-pointer shadow-none disabled:opacity-50"
 													onClick={() =>
 														handleSaveField(
 															"TOKEN_LIMIT_SPKK",
@@ -301,7 +313,7 @@ export function GlobalTokenConfig() {
 													disabled={savingKey === "TOKEN_LIMIT_SPKK"}
 												>
 													{savingKey === "TOKEN_LIMIT_SPKK" ? (
-														<RiLoader4Line className="size-4 animate-spin" />
+														<RiLoader4Line className="size-4 animate-spin mr-1" />
 													) : (
 														<RiCheckLine className="size-4 mr-1" />
 													)}
@@ -310,11 +322,12 @@ export function GlobalTokenConfig() {
 											</div>
 										) : (
 											<Button
+												type="button"
 												variant="outline"
-												className="border-white-600 bg-white text-black-400 hover:bg-zinc-50 shadow-none px-4 rounded-lg h-10 text-sm font-medium"
+												className="border-gray-200 bg-white text-zinc-700 hover:bg-zinc-50 rounded-lg px-4 h-10 text-sm font-medium transition-colors cursor-pointer shadow-none gap-1.5"
 												onClick={() => setEditingSpdve(true)}
 											>
-												<RiEdit2Line className="size-4 mr-1.5 text-black-400" />
+												<RiEdit2Line className="size-4 text-zinc-500" />
 												Edit
 											</Button>
 										)}
@@ -341,8 +354,9 @@ export function GlobalTokenConfig() {
 										{editingGpPlus ? (
 											<div className="flex items-center gap-2">
 												<Button
-													variant="ghost"
-													className="text-black-400 hover:bg-zinc-100 px-3 rounded-lg font-medium h-10 text-sm"
+													type="button"
+													variant="outline"
+													className="border-gray-200 bg-white text-zinc-700 hover:bg-zinc-50 rounded-lg px-4 font-medium h-10 text-sm transition-colors cursor-pointer shadow-none"
 													onClick={() => {
 														setEditingGpPlus(false);
 														setGpPlusAmount(gpPlusLimit);
@@ -352,7 +366,8 @@ export function GlobalTokenConfig() {
 													Cancel
 												</Button>
 												<Button
-													className="bg-blue-500 hover:bg-blue-600 text-white shadow-none px-4 rounded-lg font-medium h-10 text-sm"
+													type="button"
+													className="bg-blue-600 hover:bg-blue-700 text-white rounded-lg px-4 font-medium h-10 text-sm transition-colors cursor-pointer shadow-none disabled:opacity-50"
 													onClick={() =>
 														handleSaveField(
 															"TOKEN_LIMIT_GP",
@@ -363,7 +378,7 @@ export function GlobalTokenConfig() {
 													disabled={savingKey === "TOKEN_LIMIT_GP"}
 												>
 													{savingKey === "TOKEN_LIMIT_GP" ? (
-														<RiLoader4Line className="size-4 animate-spin" />
+														<RiLoader4Line className="size-4 animate-spin mr-1" />
 													) : (
 														<RiCheckLine className="size-4 mr-1" />
 													)}
@@ -372,11 +387,12 @@ export function GlobalTokenConfig() {
 											</div>
 										) : (
 											<Button
+												type="button"
 												variant="outline"
-												className="border-white-600 bg-white text-black-400 hover:bg-zinc-50 shadow-none px-4 rounded-lg h-10 text-sm font-medium"
+												className="border-gray-200 bg-white text-zinc-700 hover:bg-zinc-50 rounded-lg px-4 h-10 text-sm font-medium transition-colors cursor-pointer shadow-none gap-1.5"
 												onClick={() => setEditingGpPlus(true)}
 											>
-												<RiEdit2Line className="size-4 mr-1.5 text-black-400" />
+												<RiEdit2Line className="size-4 text-zinc-500" />
 												Edit
 											</Button>
 										)}
