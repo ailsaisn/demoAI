@@ -5,7 +5,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Badge } from "@/components/ui/badge";
 import { ConfirmationModal } from "@/components/shared/confirmation-modal";
-import { RiDeleteBinLine, RiEyeLine, RiEyeOffLine, RiLoader4Line, RiEdit2Line, RiCheckLine, RiCloseLine } from "@remixicon/react";
+import { RiDeleteBinLine, RiEyeLine, RiEyeOffLine, RiLoader4Line, RiEdit2Line, RiCheckLine } from "@remixicon/react";
 import { useEffect, useState } from "react";
 import { UserResponse } from "../api/types";
 import { useDeleteUser, useUpdateStaffDetails, useUpdateUserRoles } from "../hooks/use-users";
@@ -100,7 +100,7 @@ export function UserStaffProfileSheet({
 						<div className="flex-1 overflow-y-auto pb-6">
 							<div className="flex flex-col pb-4">
 								{/* Details Section */}
-								<div className="flex flex-col gap-6 px-6 py-4">
+								<div className="p-6 m-0 flex flex-col gap-6">
 									<Field>
 										<FieldLabel>
 											<FieldTitle>Name</FieldTitle>
@@ -247,7 +247,6 @@ export function UserStaffProfileSheet({
 										}
 									}}
 								>
-									<RiCloseLine className="mr-1.5 h-4 w-4 shrink-0" />
 									Cancel
 								</Button>
 								<Button

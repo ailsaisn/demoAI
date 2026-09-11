@@ -2,6 +2,7 @@ import React, { useState, useMemo } from "react";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
+import { useDebounce } from "@/hooks/use-debounce";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import {
 	Dialog,
@@ -24,13 +25,13 @@ import { useBranches } from "@/app/dashboard/branches/hooks/use-branches";
 import { useUsers } from "@/app/dashboard/users/hooks/use-users";
 import { VisibilitySettings as IVisibilitySettings } from "@/app/dashboard/knowledge/api/types";
 
-interface DropdownOption {
+export interface DropdownOption {
 	label: string;
 	value: string;
 	subtitle?: string;
 }
 
-interface SearchableDropdownProps {
+export interface SearchableDropdownProps {
 	title: string;
 	options: DropdownOption[];
 	selected: string[];
@@ -38,7 +39,7 @@ interface SearchableDropdownProps {
 	displayText: string;
 }
 
-function SearchableDropdown({
+export function SearchableDropdown({
 	title,
 	options,
 	selected,
@@ -46,19 +47,20 @@ function SearchableDropdown({
 	displayText,
 }: SearchableDropdownProps) {
 	const [searchQuery, setSearchQuery] = useState("");
+	const debouncedSearch = useDebounce(searchQuery, 200);
 	const [isOpen, setIsOpen] = useState(false);
 
 	const isAllSelected = selected.includes("all");
 
 	const filteredOptions = useMemo(() => {
-		if (!searchQuery.trim()) return options;
-		const q = searchQuery.toLowerCase();
+		if (!debouncedSearch.trim()) return options;
+		const q = debouncedSearch.toLowerCase();
 		return options.filter(
 			(opt) =>
 				opt.label.toLowerCase().includes(q) ||
 				(opt.subtitle && opt.subtitle.toLowerCase().includes(q)),
 		);
-	}, [options, searchQuery]);
+	}, [options, debouncedSearch]);
 
 	return (
 		<div className="flex flex-col gap-2 w-full">
@@ -68,7 +70,7 @@ function SearchableDropdown({
 						<Button
 							type="button"
 							variant="outline"
-							className="w-full justify-between font-normal text-sm bg-white border-gray-200 focus-visible:ring-blue-500 shadow-none h-10"
+							className="w-full justify-between font-normal text-sm bg-white border-gray-200 focus-visible:ring-blue-500 rounded-lg shadow-none h-10 cursor-pointer"
 						>
 							<span className="truncate">{displayText}</span>
 							<RiArrowDownSLine className="size-4 text-zinc-400 shrink-0" />
@@ -86,14 +88,14 @@ function SearchableDropdown({
 							placeholder={`Search ${title.toLowerCase()}...`}
 							value={searchQuery}
 							onChange={(e) => setSearchQuery(e.target.value)}
-							className="h-8.5 pl-8 pr-8 text-xs bg-zinc-50 border-gray-200 focus-visible:ring-blue-500"
+							className="h-8.5 pl-8 pr-8 text-xs bg-zinc-50 border-gray-200 focus-visible:ring-blue-500 rounded-lg shadow-none"
 							autoFocus
 						/>
 						{searchQuery && (
 							<button
 								type="button"
 								onClick={() => setSearchQuery("")}
-								className="absolute right-2.5 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-zinc-600"
+								className="absolute right-2.5 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-zinc-600 cursor-pointer"
 							>
 								<RiCloseLine className="size-3.5" />
 							</button>
@@ -106,7 +108,7 @@ function SearchableDropdown({
 						{!searchQuery && (
 							<>
 								<div
-									className="flex items-center gap-2.5 p-2 hover:bg-zinc-100/80 rounded-md cursor-pointer transition-colors"
+									className="flex items-center gap-2.5 p-2 hover:bg-zinc-100 rounded-lg cursor-pointer transition-colors"
 									onClick={() => onToggle("all")}
 								>
 									<Checkbox checked={isAllSelected} />
@@ -123,7 +125,7 @@ function SearchableDropdown({
 
 						{filteredOptions.length === 0 ? (
 							<div className="py-6 text-center text-xs text-zinc-500">
-								No {title.toLowerCase()} found matching &ldquo;{searchQuery}&rdquo;
+								No {title.toLowerCase()} found matching &ldquo;{debouncedSearch}&rdquo;
 							</div>
 						) : (
 							filteredOptions.map((opt) => {
@@ -131,7 +133,7 @@ function SearchableDropdown({
 								return (
 									<div
 										key={opt.value}
-										className="flex items-center gap-2.5 p-2 hover:bg-zinc-100/80 rounded-md cursor-pointer transition-colors"
+										className="flex items-center gap-2.5 p-2 hover:bg-zinc-100 rounded-lg cursor-pointer transition-colors"
 										onClick={() => onToggle(opt.value)}
 									>
 										<Checkbox checked={isChecked} />
@@ -170,15 +172,15 @@ function SearchableDropdown({
 						return (
 							<span
 								key={val}
-								className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-medium bg-blue-50 text-blue-700 border border-blue-200"
+								className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-medium bg-white text-zinc-800 border border-gray-200 shadow-none"
 							>
 								<span className="truncate max-w-40">{label}</span>
 								<button
 									type="button"
 									onClick={() => onToggle(val)}
-									className="hover:bg-blue-200/60 rounded-full p-0.5 transition-colors"
+									className="text-zinc-400 hover:text-zinc-700 transition-colors cursor-pointer"
 								>
-									<RiCloseLine className="size-3" />
+									<RiCloseLine className="size-3.5" />
 								</button>
 							</span>
 						);
@@ -194,16 +196,12 @@ interface VisibilitySettingsProps {
 	onChange: (settings: IVisibilitySettings) => void;
 	isEditMode?: boolean;
 	showSaveActions?: boolean;
-	onSave?: () => void;
-	onCancel?: () => void;
 }
 
 export function VisibilitySettings({
 	settings,
 	onChange,
 	isEditMode = false,
-	onSave,
-	onCancel,
 }: VisibilitySettingsProps) {
 	const { data: branches = [] } = useBranches();
 	const { data: doctors = [] } = useUsers("DOCTOR");
@@ -227,13 +225,11 @@ export function VisibilitySettings({
 	const handleSaveModal = () => {
 		onChange(tempSettings);
 		setIsModalOpen(false);
-		onSave?.();
 	};
 
 	const handleCancelModal = () => {
 		setTempSettings(settings);
 		setIsModalOpen(false);
-		onCancel?.();
 	};
 
 	// Multi-select helper handlers for modal
@@ -304,36 +300,36 @@ export function VisibilitySettings({
 	return (
 		<>
 			<div className="bg-zinc-100/50 rounded-lg p-4 w-full text-zinc-950">
-				<div className="flex items-center gap-2 text-blue-600 mb-2">
-					<RiEyeLine className="size-5" />
-					<h3 className="font-semibold text-sm">Visibility Settings</h3>
+				<div className="flex items-center gap-2 text-blue-700 mb-2">
+					<RiEyeLine className="size-5 text-blue-600 shrink-0" />
+					<h3 className="font-bold text-sm text-zinc-950">Visibility Settings</h3>
 				</div>
-				<p className="text-xs text-zinc-500 mb-4">
+				<p className="text-xs text-zinc-600 font-medium mb-4">
 					Limit access to your medical insights so only authorized doctors can view this knowledge.
 				</p>
 
 				<div className="flex flex-col gap-3">
 					<div>
-						<label className="text-xs text-zinc-600 font-medium">Clinic</label>
-						<p className="text-sm font-medium">{formatDisplay("clinics", "Clinic")}</p>
+						<label className="text-xs text-zinc-700 font-semibold block mb-0.5">Clinic</label>
+						<p className="text-sm font-semibold text-zinc-900">{formatDisplay("clinics", "Clinic")}</p>
 					</div>
 					<div>
-						<label className="text-xs text-zinc-600 font-medium">Doctor Type</label>
-						<p className="text-sm font-medium">{formatDisplay("doctor_types", "Doctor Type")}</p>
+						<label className="text-xs text-zinc-700 font-semibold block mb-0.5">Doctor Type</label>
+						<p className="text-sm font-semibold text-zinc-900">{formatDisplay("doctor_types", "Doctor Type")}</p>
 					</div>
 					<div>
-						<label className="text-xs text-zinc-600 font-medium">Doctor</label>
-						<p className="text-sm font-medium">{formatDisplay("doctors", "Doctor")}</p>
+						<label className="text-xs text-zinc-700 font-semibold block mb-0.5">Doctor</label>
+						<p className="text-sm font-semibold text-zinc-900">{formatDisplay("doctors", "Doctor")}</p>
 					</div>
 
 					{isEditMode && (
 						<Button
 							type="button"
 							variant="outline"
-							className="w-fit mt-2 bg-white gap-2 font-medium"
+							className="w-fit mt-2 border-zinc-300 bg-white text-zinc-800 hover:bg-zinc-100 font-semibold rounded-lg px-4 h-9 text-sm transition-colors cursor-pointer shadow-none gap-2"
 							onClick={handleOpenModal}
 						>
-							<RiEdit2Line className="size-4" />
+							<RiEdit2Line className="size-4 text-zinc-700" />
 							Edit Visibility
 						</Button>
 					)}

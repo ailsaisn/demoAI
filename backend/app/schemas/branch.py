@@ -19,6 +19,7 @@ class BranchDoctorResponse(BaseModel):
     name: str
     speciality: str = ""
     tokensLeft: int = 0
+    tokens_used: Optional[int] = 0
     status: str = "Active"
     maxTokens: int = 0
     employee_id: Optional[str] = None
@@ -38,6 +39,7 @@ class BranchResponse(BranchBase):
     
     used: int = 0
     remaining: int = 0
+    tokens_used: Optional[int] = 0
     
     doctors: Optional[List[BranchDoctorResponse]] = []
     

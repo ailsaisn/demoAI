@@ -40,6 +40,7 @@ class TextIngestRequest(BaseModel):
     text_content: str = Field(..., description="Raw text knowledge material to convert to structured .md document")
     title: Optional[str] = Field(None, description="Optional document title (auto-generated if not specified)")
     prompt: Optional[str] = Field(None, description="Optional custom AI processing instruction")
+    project_id: Optional[str] = Field(None, description="Optional target project ID to assign document to")
     replace_existing: bool = Field(False, description="Set to true to overwrite existing pending draft")
 
 
@@ -105,6 +106,7 @@ class EditApprovedDocumentRequest(BaseModel):
     document_type: Optional[str] = Field(None, description="Updated document type")
     valid_from: Optional[str] = Field(None, description="Updated valid from date (YYYY-MM-DD)")
     valid_until: Optional[str] = Field(None, description="Updated valid until / expiry date (YYYY-MM-DD)")
+    chunks: Optional[List[Dict[str, Any]]] = Field(None, description="Optional updated chunks list with per-section categories/metadata")
 
     model_config = {
         "json_schema_extra": {

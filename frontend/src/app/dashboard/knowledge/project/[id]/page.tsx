@@ -3,6 +3,7 @@
 import { use, useState, useMemo } from "react";
 import { toast } from "sonner";
 import { useRouter } from "next/navigation";
+import { useSafeBack } from "@/hooks/use-safe-back";
 import { useProjectDetail, useDeleteProject } from "@/app/dashboard/knowledge/hooks/use-projects";
 import { useDeleteKnowledge } from "@/app/dashboard/knowledge/hooks/use-knowledge";
 import { useCategories } from "@/app/dashboard/category/hooks/use-categories";
@@ -10,6 +11,9 @@ import { ProjectDialog } from "@/app/dashboard/knowledge/components/project-dial
 import { AttachProjectDialog } from "@/app/dashboard/knowledge/components/attach-project-dialog";
 import { ConfirmationModal } from "@/components/shared/confirmation-modal";
 import { SearchBar } from "@/components/shared/search-bar";
+import { useDebounce } from "@/hooks/use-debounce";
+import { usePagination } from "@/hooks/use-pagination";
+import { DataTablePagination } from "@/components/shared/data-table-pagination";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -29,6 +33,12 @@ import {
 	DropdownMenuRadioItem,
 } from "@/components/ui/dropdown-menu";
 import {
+	Popover,
+	PopoverContent,
+	PopoverTrigger,
+} from "@/components/ui/popover";
+import { Input } from "@/components/ui/input";
+import {
 	RiArrowLeftLine,
 	RiAddCircleLine,
 	RiBookOpenLine,
@@ -43,8 +53,12 @@ import {
 	RiDeleteBinLine,
 	RiEdit2Line,
 	RiRobot2Line,
+	RiCloseLine,
+	RiSearchLine,
+	RiCheckLine,
+	RiArrowDownSLine,
 } from "@remixicon/react";
-import type { KnowledgeResponse } from "@/app/dashboard/knowledge/api/types";
+import { extractKnowledgeCategories, type KnowledgeResponse } from "@/app/dashboard/knowledge/api/types";
 
 interface DisplayRowItem {
 	id: string;
@@ -63,6 +77,7 @@ interface DisplayRowItem {
 
 export default function ProjectDetailPage({ params }: { params: Promise<{ id: string }> }) {
 	const router = useRouter();
+	const handleBack = useSafeBack("/dashboard/knowledge");
 	const unwrappedParams = use(params);
 	const projectId = unwrappedParams.id;
 
@@ -72,9 +87,18 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
 	const deleteKnowledgeMutation = useDeleteKnowledge();
 
 	const [searchQuery, setSearchQuery] = useState("");
+	const debouncedSearch = useDebounce(searchQuery, 300);
 	const [statusFilter, setStatusFilter] = useState("ALL");
 	const [categoryFilter, setCategoryFilter] = useState("ALL");
+	const [isCategoryPopoverOpen, setIsCategoryPopoverOpen] = useState(false);
+	const [categorySearchQuery, setCategorySearchQuery] = useState("");
 	const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
+
+	const filteredAvailableCategories = useMemo(() => {
+		if (!categorySearchQuery.trim()) return availableCategories;
+		const q = categorySearchQuery.toLowerCase().trim();
+		return availableCategories.filter((c) => c.name.toLowerCase().includes(q));
+	}, [availableCategories, categorySearchQuery]);
 
 	// Delete Modals State
 	const [deleteProjectModalOpen, setDeleteProjectModalOpen] = useState(false);
@@ -153,34 +177,10 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
 
 		const rows: DisplayRowItem[] = [];
 
-		const extractCategories = (doc: KnowledgeResponse): string[] => {
-			const catSet = new Set<string>();
-			const rawList = (doc.metadata?.categories as string[]) || [];
-			const suggested =
-				(doc.metadata?.suggested_categories as Array<{ name: string } | string>) || [];
-			for (const c of rawList) {
-				if (typeof c === "string" && c.trim()) catSet.add(c.trim());
-			}
-			for (const s of suggested) {
-				if (typeof s === "string" && s.trim()) {
-					catSet.add(s.trim());
-				} else if (
-					s &&
-					typeof s === "object" &&
-					"name" in s &&
-					typeof (s as { name: unknown }).name === "string" &&
-					(s as { name: string }).name.trim()
-				) {
-					catSet.add((s as { name: string }).name.trim());
-				}
-			}
-			return Array.from(catSet);
-		};
-
 		// 1. Process Batch Groups
 		for (const [batchId, docs] of batchMap.entries()) {
 			const combinedCategories = Array.from(
-				new Set(docs.flatMap((d) => extractCategories(d))),
+				new Set(docs.flatMap((d) => extractKnowledgeCategories(d))),
 			);
 
 			if (docs.length === 1) {
@@ -258,7 +258,7 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
 				documentCount: 1,
 				rawItem: doc,
 				allFileNames: [doc.file_name],
-				categories: extractCategories(doc),
+				categories: extractKnowledgeCategories(doc),
 				allDocIds: [doc.id],
 			});
 		}
@@ -274,21 +274,35 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
 		);
 	};
 
-	const filteredList = displayRows
-		?.filter((item) => (statusFilter !== "ALL" ? item.status === statusFilter : true))
-		?.filter((item) => isCategoryMatch(item.categories, categoryFilter))
-		?.filter(
-			(item) =>
-				item.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-				item.allFileNames.some((f) => f.toLowerCase().includes(searchQuery.toLowerCase())) ||
-				item.description.toLowerCase().includes(searchQuery.toLowerCase()) ||
-				item.categories.some((c) => c.toLowerCase().includes(searchQuery.toLowerCase())),
-		)
-		.sort((a, b) => {
-			const timeA = a.created_at ? new Date(a.created_at).getTime() : 0;
-			const timeB = b.created_at ? new Date(b.created_at).getTime() : 0;
-			return timeB - timeA;
-		});
+	const filteredList = useMemo(() => {
+		return displayRows
+			?.filter((item) => (statusFilter !== "ALL" ? item.status === statusFilter : true))
+			?.filter((item) => isCategoryMatch(item.categories, categoryFilter))
+			?.filter(
+				(item) =>
+					item.title.toLowerCase().includes(debouncedSearch.toLowerCase()) ||
+					item.allFileNames.some((f) => f.toLowerCase().includes(debouncedSearch.toLowerCase())) ||
+					item.description.toLowerCase().includes(debouncedSearch.toLowerCase()) ||
+					item.categories.some((c) => c.toLowerCase().includes(debouncedSearch.toLowerCase())),
+			)
+			.sort((a, b) => {
+				const timeA = a.created_at ? new Date(a.created_at).getTime() : 0;
+				const timeB = b.created_at ? new Date(b.created_at).getTime() : 0;
+				return timeB - timeA;
+			});
+	}, [displayRows, statusFilter, categoryFilter, debouncedSearch]);
+
+	const {
+		page,
+		pageSize,
+		totalPages,
+		totalItems,
+		paginatedItems,
+		setPage,
+		setPageSize,
+		startIndex,
+		endIndex,
+	} = usePagination({ items: filteredList, initialPageSize: 10 });
 
 	const hasActiveFilters = searchQuery.trim() !== "" || statusFilter !== "ALL" || categoryFilter !== "ALL";
 
@@ -296,6 +310,7 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
 		setSearchQuery("");
 		setStatusFilter("ALL");
 		setCategoryFilter("ALL");
+		setPage(1);
 	};
 
 	const getStatusBadge = (status: string) => {
@@ -343,7 +358,7 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
 				<Button
 					variant="outline"
 					size="sm"
-					onClick={() => router.push("/dashboard/knowledge")}
+					onClick={handleBack}
 				>
 					<RiArrowLeftLine className="w-4 h-4 mr-1.5" />
 					Back to Knowledge Base
@@ -355,19 +370,20 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
 	return (
 		<div className="flex flex-col h-full bg-white">
 			{/* Header matching Knowledge Detail with Edit & Delete buttons on right */}
-			<div className="flex items-center gap-4 p-4 border-b border-gray-200 shrink-0 bg-white justify-between">
-				<div className="flex items-center gap-4 min-w-0">
+			<div className="flex items-center gap-4 px-4 py-3 border-b border-gray-200 shrink-0 bg-white justify-between">
+				<div className="flex items-center gap-3 min-w-0">
 					<Button
 						variant="ghost"
 						size="icon"
-						onClick={() => router.push("/dashboard/knowledge")}
-						className="text-zinc-600 hover:text-gray-900"
+						onClick={handleBack}
+						className="size-9 rounded-lg text-zinc-500 hover:text-zinc-900 hover:bg-zinc-100 shrink-0"
+						title="Back"
+						aria-label="Back"
 					>
 						<RiArrowLeftLine className="size-5" />
 					</Button>
 					<div className="min-w-0">
-						<h1 className="text-lg font-semibold text-gray-900 truncate">{project.name}</h1>
-						<p className="text-sm text-zinc-600">Project Workspace</p>
+						<h1 className="text-base font-semibold text-gray-900 truncate">{project.name}</h1>
 					</div>
 				</div>
 
@@ -421,22 +437,26 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
 					</div>
 				</div>
 
-				{/* Knowledge List Table Section */}
-				<div className="w-full">
-					<div className="mb-3">
-						<h3 className="text-base font-semibold text-gray-900">Knowledge</h3>
-					</div>
+				{/* Main Knowledge Base Table Content within Project */}
+				<div className="flex flex-col gap-4">
+					<div className="flex flex-col xl:flex-row xl:items-center justify-between gap-4">
+						<div>
+							<h2 className="text-base font-semibold text-gray-900">Knowledge List</h2>
+							<p className="text-xs text-gray-500 mt-0.5">
+								Documents and knowledge files categorized under this project.
+							</p>
+						</div>
 
 					{/* Search & Filters Bar */}
-					<div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+					<div className="flex flex-wrap items-center gap-3">
 						<SearchBar
-							containerClassName="max-w-md w-full sm:w-80"
+							containerClassName="w-72"
+							placeholder="Search documents..."
 							value={searchQuery}
 							onChange={(e) => setSearchQuery(e.target.value)}
-							placeholder="Search title, filename, or category..."
 						/>
 
-						<div className="flex flex-wrap items-center gap-2.5">
+						<div className="flex items-center gap-2">
 							{/* Reset Filters button */}
 							{hasActiveFilters && (
 								<Button
@@ -451,34 +471,112 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
 								</Button>
 							)}
 
-							{/* Category Filter */}
-							<DropdownMenu>
-								<DropdownMenuTrigger
+							{/* Category Filter with Search */}
+							<Popover open={isCategoryPopoverOpen} onOpenChange={setIsCategoryPopoverOpen}>
+								<PopoverTrigger
 									render={
 										<Button
 											variant="outline"
-											className="min-w-44 justify-start gap-2 bg-white font-normal text-gray-700 hover:bg-gray-50 border-gray-200 shadow-none cursor-pointer"
+											title={categoryFilter === "ALL" ? "All Categories" : categoryFilter}
+											className="min-w-44 justify-between gap-2 bg-white font-normal text-gray-700 hover:bg-gray-50 border-gray-200 shadow-none cursor-pointer rounded-lg text-sm h-10"
 										/>
 									}
 								>
-									<RiDatabase2Line className="size-4 shrink-0 text-gray-500" />
-									<span className="truncate">
-										{categoryFilter === "ALL" ? "All Categories" : categoryFilter}
-									</span>
-								</DropdownMenuTrigger>
-								<DropdownMenuContent className="w-56 max-h-80 overflow-y-auto rounded-lg border border-gray-200 shadow-none p-1 bg-white">
-									<DropdownMenuRadioGroup value={categoryFilter} onValueChange={setCategoryFilter}>
-										<DropdownMenuRadioItem closeOnClick value="ALL">
-											All Categories
-										</DropdownMenuRadioItem>
-										{availableCategories.map((cat) => (
-											<DropdownMenuRadioItem key={cat.id} closeOnClick value={cat.name}>
-												{cat.name}
-											</DropdownMenuRadioItem>
-										))}
-									</DropdownMenuRadioGroup>
-								</DropdownMenuContent>
-							</DropdownMenu>
+									<div className="flex items-center gap-2 min-w-0 flex-1">
+										<RiDatabase2Line className="size-4 shrink-0 text-gray-500" />
+										<span className="truncate text-left">
+											{categoryFilter === "ALL" ? "All Categories" : categoryFilter}
+										</span>
+									</div>
+									<RiArrowDownSLine className="size-4 shrink-0 text-zinc-400 ml-1" />
+								</PopoverTrigger>
+								<PopoverContent
+									align="start"
+									className="w-56 p-2 flex flex-col gap-2 z-50 bg-white border border-gray-200 shadow-none rounded-lg ring-0 outline-none"
+								>
+									{/* Search Bar inside Popover */}
+									<div className="relative w-full">
+										<RiSearchLine className="absolute left-2.5 top-1/2 -translate-y-1/2 size-3.5 text-zinc-400 pointer-events-none" />
+										<Input
+											placeholder="Search category..."
+											value={categorySearchQuery}
+											onChange={(e) => setCategorySearchQuery(e.target.value)}
+											className="h-8 pl-8 pr-7 text-xs bg-zinc-50 border-gray-200 focus-visible:ring-blue-500 rounded-md"
+											autoFocus
+										/>
+										{categorySearchQuery && (
+											<button
+												type="button"
+												onClick={() => setCategorySearchQuery("")}
+												className="absolute right-2 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-zinc-600 cursor-pointer"
+											>
+												<RiCloseLine className="size-3.5" />
+											</button>
+										)}
+									</div>
+
+									{/* Category List */}
+									<div className="flex flex-col gap-0.5 max-h-56 overflow-y-auto overscroll-contain pr-0.5">
+										{(!categorySearchQuery ||
+											"all categories".includes(categorySearchQuery.toLowerCase().trim())) && (
+											<button
+												type="button"
+												onClick={() => {
+													setCategoryFilter("ALL");
+													setIsCategoryPopoverOpen(false);
+													setCategorySearchQuery("");
+													setPage(1);
+												}}
+												className={`flex items-center justify-between w-full px-2.5 py-1.5 rounded-md text-xs font-medium text-left transition-colors cursor-pointer ${
+													categoryFilter === "ALL"
+														? "bg-blue-50 text-blue-700"
+														: "text-zinc-700 hover:bg-zinc-100"
+												}`}
+											>
+												<span className="truncate">All Categories</span>
+												{categoryFilter === "ALL" && (
+													<RiCheckLine className="size-3.5 text-blue-600 shrink-0 ml-1.5" />
+												)}
+											</button>
+										)}
+
+										{filteredAvailableCategories.map((cat) => {
+											const isSelected = categoryFilter === cat.name;
+											return (
+												<button
+													type="button"
+													key={cat.id}
+													title={cat.name}
+													onClick={() => {
+														setCategoryFilter(cat.name);
+														setIsCategoryPopoverOpen(false);
+														setCategorySearchQuery("");
+														setPage(1);
+													}}
+													className={`flex items-center justify-between w-full px-2.5 py-1.5 rounded-md text-xs font-medium text-left transition-colors cursor-pointer ${
+														isSelected
+															? "bg-blue-50 text-blue-700"
+															: "text-zinc-700 hover:bg-zinc-100"
+													}`}
+												>
+													<span className="truncate min-w-0 flex-1">{cat.name}</span>
+													{isSelected && (
+														<RiCheckLine className="size-3.5 text-blue-600 shrink-0 ml-1.5" />
+													)}
+												</button>
+											);
+										})}
+
+										{filteredAvailableCategories.length === 0 &&
+											categorySearchQuery &&
+											!"all categories".includes(categorySearchQuery.toLowerCase().trim()) && (
+												<div className="py-4 text-center text-xs text-zinc-400">
+													No categories found
+												</div>
+											)}
+									</div>
+								</PopoverContent>
+							</Popover>
 
 							{/* Status Filter */}
 							<DropdownMenu>
@@ -511,14 +609,12 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
 										<DropdownMenuRadioItem closeOnClick value="PROCESSING">
 											Processing
 										</DropdownMenuRadioItem>
-										<DropdownMenuRadioItem closeOnClick value="REJECTED">
-											Rejected
-										</DropdownMenuRadioItem>
 									</DropdownMenuRadioGroup>
 								</DropdownMenuContent>
 							</DropdownMenu>
 						</div>
 					</div>
+				</div>
 
 					{/* Table */}
 					<div className="border border-gray-200 rounded-lg bg-white overflow-hidden shadow-none">
@@ -558,7 +654,8 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
 										</TableCell>
 									</TableRow>
 								) : (
-									filteredList?.map((row) => (
+									!isLoading &&
+									paginatedItems?.map((row) => (
 										<TableRow
 											key={row.isBatch ? `batch-${row.batchId}` : `doc-${row.id}`}
 											className="hover:bg-gray-50/60 cursor-pointer"
@@ -690,6 +787,18 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
 							</TableBody>
 						</Table>
 					</div>
+
+					<DataTablePagination
+						page={page}
+						pageSize={pageSize}
+						totalPages={totalPages}
+						totalItems={totalItems}
+						startIndex={startIndex}
+						endIndex={endIndex}
+						onPageChange={setPage}
+						onPageSizeChange={setPageSize}
+						itemName="documents"
+					/>
 				</div>
 			</div>
 

@@ -19,7 +19,7 @@ export function RouteGuard({ children, allowedTypes, requiredAccess }: RouteGuar
 		if (isLoading) return;
 
 		if (isError || !user) {
-			router.replace(`/login?from=${encodeURIComponent(pathname)}`);
+			router.replace(`/login?reason=session_expired&from=${encodeURIComponent(pathname)}`);
 			return;
 		}
 

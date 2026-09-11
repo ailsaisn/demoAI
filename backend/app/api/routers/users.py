@@ -69,19 +69,27 @@ async def _hydrate_user(user: User, db: AsyncSession) -> dict:
         )
         result_branch = await db.execute(stmt_branch)
         branches = result_branch.scalars().all()
-        user_dict["branches"] = [
-            {
+        current_ym = datetime.now(timezone.utc).strftime("%Y-%m")
+        user_dict["branches"] = []
+        for b in branches:
+            b_usage_stmt = select(func.sum(UserTokenUsage.tokens_used)).where(
+                UserTokenUsage.user_id == user.id,
+                UserTokenUsage.branch_id == b.id,
+                UserTokenUsage.year_month == current_ym
+            )
+            b_used_res = await db.execute(b_usage_stmt)
+            doc_branch_used = b_used_res.scalar() or 0
+            user_dict["branches"].append({
                 "id": b.id,
                 "external_id": b.external_id,
                 "name": b.name,
                 "code": b.code,
                 "ecosystem": b.ecosystem,
                 "token_limit": b.token_limit,
+                "tokens_used": doc_branch_used,
                 "created_at": b.created_at,
                 "updated_at": b.updated_at
-            }
-            for b in branches
-        ]
+            })
         
         stmt_cat = select(Category).where(
             Category.deleted_at.is_(None),
@@ -133,16 +141,53 @@ async def read_users_me(
 ):
     return await _hydrate_user(current_user, db)
 
-@router.get("/", response_model=List[UserResponse])
+from app.schemas.pagination import PaginatedResponse
+from typing import List, Optional, Union
+from fastapi import Query
+import math
+
+@router.get("/", response_model=Union[PaginatedResponse[UserResponse], List[UserResponse]])
 async def list_users(
     type: Optional[UserType] = None,
+    search: Optional[str] = None,
+    page: Optional[int] = Query(None, ge=1, description="Page number"),
+    page_size: Optional[int] = Query(None, ge=1, le=100, description="Items per page"),
     db: AsyncSession = Depends(get_db),
     current_admin: User = Depends(RequireAccess("users:read"))
 ):
     stmt = select(User).where(User.deleted_at.is_(None))
     if type:
         stmt = stmt.where(User.type == type)
+    if search:
+        s_clean = f"%{search.strip()}%"
+        stmt = stmt.where(
+            (User.name.ilike(s_clean)) |
+            (User.email.ilike(s_clean)) |
+            (User.employee_id.ilike(s_clean))
+        )
     stmt = stmt.order_by(User.created_at.desc())
+
+    if page is not None:
+        p_size = page_size or 10
+        # Calculate total
+        count_stmt = select(func.count()).select_from(stmt.subquery())
+        count_res = await db.execute(count_stmt)
+        total = count_res.scalar() or 0
+        total_pages = max(1, math.ceil(total / p_size))
+
+        paginated_stmt = stmt.offset((page - 1) * p_size).limit(p_size)
+        result = await db.execute(paginated_stmt)
+        users = result.scalars().all()
+        hydrated_items = [await _hydrate_user(u, db) for u in users]
+
+        return PaginatedResponse[UserResponse](
+            items=hydrated_items,
+            total=total,
+            page=page,
+            page_size=p_size,
+            total_pages=total_pages
+        )
+
     result = await db.execute(stmt)
     users = result.scalars().all()
     return [await _hydrate_user(u, db) for u in users]
@@ -235,7 +280,7 @@ async def update_user(
                 gl_stmt = select(AppConfig.value).where(AppConfig.key == "GLOBAL_TOKEN_LIMIT")
                 gl_res = await db.execute(gl_stmt)
                 gl_val = gl_res.scalar_one_or_none()
-                max_branch_limit = int(gl_val) if (gl_val and gl_val.isdigit() and int(gl_val) > 0) else max([b.token_limit for b in user_branches if b.token_limit] or [0])
+                max_branch_limit = int(gl_val) if (gl_val and gl_val.isdigit() and int(gl_val) > 0) else 3000000
             else:
                 max_branch_limit = max([b.token_limit for b in user_branches if b.token_limit] or [0])
 

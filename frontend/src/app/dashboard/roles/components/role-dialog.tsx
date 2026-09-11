@@ -459,7 +459,7 @@ export function RoleDialog({ isOpen, onOpenChange, role, mode }: RoleDialogProps
 						<div className="flex items-center gap-3">
 							<Button
 								variant="outline"
-								className="border-gray-200 bg-white text-zinc-700 hover:bg-zinc-50 px-4 h-10 rounded-lg font-medium text-sm transition-colors cursor-pointer shadow-none"
+								className="border-gray-200 bg-white text-zinc-700 hover:bg-zinc-50 rounded-lg px-4 h-10 font-medium text-sm transition-colors cursor-pointer shadow-none"
 								onClick={() => onOpenChange(false)}
 							>
 								Cancel

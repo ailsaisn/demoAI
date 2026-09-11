@@ -1,9 +1,54 @@
+import { chatHistoryKeys } from "@/app/dashboard/chat-history/api/keys";
 import { api } from "@/lib/axios";
 import { getErrorMessage } from "@/lib/utils";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
+import { categoryKeys } from "@/app/dashboard/category/api/keys";
 import { knowledgeKeys, projectKeys } from "../api/keys";
-import type { KnowledgeResponse, KnowledgeStatus, VisibilitySettings } from "../api/types";
+import type {
+	KnowledgeResponse,
+	KnowledgeStatus,
+	KnowledgeTextIngestRequest,
+	KnowledgeTextIngestResponse,
+	KnowledgeEditRequest,
+	VisibilitySettings,
+} from "../api/types";
+
+export const invalidateAllKnowledgeQueries = (
+	queryClient: ReturnType<typeof useQueryClient>,
+	options?: {
+		knowledgeId?: string | null;
+		knowledgeIds?: string[] | null;
+		batchId?: string | null;
+		sessionId?: string | null;
+	},
+) => {
+	queryClient.invalidateQueries({ queryKey: knowledgeKeys.all, refetchType: "all" });
+	queryClient.invalidateQueries({ queryKey: projectKeys.all, refetchType: "all" });
+	queryClient.invalidateQueries({ queryKey: categoryKeys.all, refetchType: "all" });
+	queryClient.invalidateQueries({ queryKey: ["knowledge-batch"], refetchType: "all" });
+	queryClient.invalidateQueries({ queryKey: ["knowledge-ingestion-quota"], refetchType: "all" });
+
+	if (options?.knowledgeId) {
+		queryClient.invalidateQueries({ queryKey: knowledgeKeys.detail(options.knowledgeId), refetchType: "all" });
+	}
+	if (Array.isArray(options?.knowledgeIds)) {
+		options.knowledgeIds.forEach((kid) => {
+			if (kid) {
+				queryClient.invalidateQueries({ queryKey: knowledgeKeys.detail(kid), refetchType: "all" });
+			}
+		});
+	}
+	if (options?.batchId) {
+		queryClient.invalidateQueries({ queryKey: ["knowledge-batch", options.batchId], refetchType: "all" });
+	}
+	if (options?.sessionId) {
+		queryClient.invalidateQueries({ queryKey: ["general-session", options.sessionId], refetchType: "all" });
+		queryClient.invalidateQueries({ queryKey: chatHistoryKeys.detail(options.sessionId), refetchType: "all" });
+		queryClient.invalidateQueries({ queryKey: ["chat-messages", options.sessionId], refetchType: "all" });
+		queryClient.invalidateQueries({ queryKey: chatHistoryKeys.all, refetchType: "all" });
+	}
+};
 
 export const useKnowledgeBaseList = () => {
 	return useQuery({
@@ -50,9 +95,34 @@ export const useKnowledgeBatch = (batchId: string) => {
 		enabled: !!batchId,
 		refetchInterval: (query) => {
 			const data = query.state.data;
-			if (data?.some((item) => item.status === "PROCESSING")) {
-				return 2000;
+			// 1. If data is not yet loaded or empty, poll rapidly
+			if (!data || data.length === 0) {
+				return 1500;
 			}
+
+			// 2. If any document is still PROCESSING or in PARSING state
+			const isAnyProcessing = data.some(
+				(item) => item.status === "PROCESSING" || (item.metadata as Record<string, unknown>)?.status === "PARSING",
+			);
+			if (isAnyProcessing) {
+				return 1500;
+			}
+
+			// 3. If batch only has 1 document so far, continue polling because
+			// subsequent documents in the multi-file batch might still be extracting in the background
+			if (data.length === 1) {
+				return 1500;
+			}
+
+			// 4. If multi-document batch (>= 2) and any non-rejected doc is missing batch_summary,
+			// continue polling to allow the background/coordinator summary synthesis to complete and update
+			const hasMissingSummary = data.some(
+				(item) => item.status !== "REJECTED" && !(item.metadata as Record<string, unknown>)?.batch_summary,
+			);
+			if (data.length >= 2 && hasMissingSummary) {
+				return 1500;
+			}
+
 			return false;
 		},
 	});
@@ -62,19 +132,86 @@ export const useUploadKnowledge = () => {
 	const queryClient = useQueryClient();
 
 	return useMutation({
-		mutationFn: async (formData: FormData) => {
-			const response = await api.post("/knowledge/upload", formData);
+		mutationFn: async (
+			params:
+				| FormData
+				| {
+						formData: FormData;
+						onProgress?: (percent: number) => void;
+				  },
+		) => {
+			const data = params instanceof FormData ? params : params.formData;
+			const progressCb = params instanceof FormData ? undefined : params.onProgress;
+
+			const response = await api.post("/knowledge/upload", data, {
+				onUploadProgress: (progressEvent) => {
+					if (progressEvent.total && progressCb) {
+						const percent = Math.round((progressEvent.loaded * 100) / progressEvent.total);
+						progressCb(percent);
+					}
+				},
+			});
 			return response.data;
 		},
 		onSuccess: () => {
 			toast.success("Files uploaded successfully!");
-			queryClient.invalidateQueries({ queryKey: knowledgeKeys.all });
-			queryClient.invalidateQueries({ queryKey: projectKeys.all });
-			queryClient.invalidateQueries({ queryKey: ["knowledge-batch"] });
-			queryClient.invalidateQueries({ queryKey: ["knowledge-ingestion-quota"] });
+			invalidateAllKnowledgeQueries(queryClient);
 		},
 		onError: (error: unknown) => {
 			toast.error(getErrorMessage(error, "Failed to upload knowledge files."));
+		},
+	});
+};
+
+export const useReplaceKnowledgeFile = () => {
+	const queryClient = useQueryClient();
+
+	return useMutation({
+		mutationFn: async ({
+			knowledgeId,
+			formData,
+			onProgress,
+		}: {
+			knowledgeId: string;
+			formData: FormData;
+			onProgress?: (percent: number) => void;
+		}) => {
+			const response = await api.post(`/knowledge/${knowledgeId}/replace-file`, formData, {
+				onUploadProgress: (progressEvent) => {
+					if (progressEvent.total && onProgress) {
+						const percent = Math.round((progressEvent.loaded * 100) / progressEvent.total);
+						onProgress(percent);
+					}
+				},
+			});
+			return response.data;
+		},
+		onSuccess: (_, variables) => {
+			toast.success("File replaced! Ingestion re-processing in background.");
+			invalidateAllKnowledgeQueries(queryClient, { knowledgeId: variables.knowledgeId });
+		},
+		onError: (error: unknown) => {
+			toast.error(getErrorMessage(error, "Failed to replace file."));
+		},
+	});
+};
+
+export const useIngestTextKnowledge = () => {
+	const queryClient = useQueryClient();
+
+	return useMutation({
+		mutationFn: async (
+			payload: KnowledgeTextIngestRequest,
+		): Promise<KnowledgeTextIngestResponse> => {
+			const response = await api.post("/knowledge/text", payload);
+			return response.data;
+		},
+		onSuccess: () => {
+			toast.success("Knowledge text ingestion initiated!");
+			invalidateAllKnowledgeQueries(queryClient);
+		},
+		onError: (error: unknown) => {
+			toast.error(getErrorMessage(error, "Failed to ingest knowledge text."));
 		},
 	});
 };
@@ -89,13 +226,7 @@ export const useUpdateKnowledgeStatus = () => {
 		},
 		onSuccess: (_, variables) => {
 			toast.success("Status updated successfully!");
-			queryClient.invalidateQueries({ queryKey: knowledgeKeys.all });
-			queryClient.invalidateQueries({ queryKey: projectKeys.all });
-			if (variables?.id) {
-				queryClient.invalidateQueries({ queryKey: knowledgeKeys.detail(variables.id) });
-			}
-			queryClient.invalidateQueries({ queryKey: ["knowledge-batch"] });
-			queryClient.invalidateQueries({ queryKey: ["knowledge-ingestion-quota"] });
+			invalidateAllKnowledgeQueries(queryClient, { knowledgeId: variables?.id });
 		},
 		onError: (error: unknown) => {
 			toast.error(getErrorMessage(error, "Failed to update status."));
@@ -113,11 +244,7 @@ export const useApproveKnowledge = () => {
 		},
 		onSuccess: (_, id) => {
 			toast.success("Document approved and indexed into AI Knowledge Base!");
-			queryClient.invalidateQueries({ queryKey: knowledgeKeys.all });
-			queryClient.invalidateQueries({ queryKey: projectKeys.all });
-			queryClient.invalidateQueries({ queryKey: knowledgeKeys.detail(id) });
-			queryClient.invalidateQueries({ queryKey: ["knowledge-batch"] });
-			queryClient.invalidateQueries({ queryKey: ["knowledge-ingestion-quota"] });
+			invalidateAllKnowledgeQueries(queryClient, { knowledgeId: id });
 		},
 		onError: (error: unknown) => {
 			toast.error(getErrorMessage(error, "Failed to approve and index document."));
@@ -133,15 +260,38 @@ export const useApproveBatchKnowledge = () => {
 			const response = await api.post(`/knowledge/batch/${batchId}/approve`);
 			return response.data;
 		},
-		onSuccess: () => {
+		onSuccess: (_, batchId) => {
 			toast.success("All documents approved and indexed into AI Knowledge Base!");
-			queryClient.invalidateQueries({ queryKey: knowledgeKeys.all });
-			queryClient.invalidateQueries({ queryKey: projectKeys.all });
-			queryClient.invalidateQueries({ queryKey: ["knowledge-batch"] });
-			queryClient.invalidateQueries({ queryKey: ["knowledge-ingestion-quota"] });
+			invalidateAllKnowledgeQueries(queryClient, { batchId });
 		},
 		onError: (error: unknown) => {
 			toast.error(getErrorMessage(error, "Failed to approve batch documents."));
+		},
+	});
+};
+
+export const useUpdateBatchVisibility = () => {
+	const queryClient = useQueryClient();
+
+	return useMutation({
+		mutationFn: async ({
+			batchId,
+			visibilitySettings,
+		}: {
+			batchId: string;
+			visibilitySettings: VisibilitySettings;
+		}) => {
+			const response = await api.put(`/knowledge/batch/${batchId}/visibility`, {
+				visibility_settings: visibilitySettings,
+			});
+			return response.data;
+		},
+		onSuccess: (_, variables) => {
+			toast.success("Batch visibility settings updated successfully!");
+			invalidateAllKnowledgeQueries(queryClient, { batchId: variables.batchId });
+		},
+		onError: (error: unknown) => {
+			toast.error(getErrorMessage(error, "Failed to update batch visibility settings."));
 		},
 	});
 };
@@ -160,14 +310,8 @@ export const useDeleteKnowledge = () => {
 			if (!result?.hideToast) {
 				toast.success("Knowledge deleted successfully!");
 			}
-			queryClient.invalidateQueries({ queryKey: knowledgeKeys.all });
-			queryClient.invalidateQueries({ queryKey: projectKeys.all });
-			queryClient.invalidateQueries({ queryKey: ["knowledge-batch"] });
-			queryClient.invalidateQueries({ queryKey: ["knowledge-ingestion-quota"] });
 			const id = typeof variables === "string" ? variables : variables.id;
-			if (id) {
-				queryClient.invalidateQueries({ queryKey: knowledgeKeys.detail(id) });
-			}
+			invalidateAllKnowledgeQueries(queryClient, { knowledgeId: id });
 		},
 		onError: (error: unknown) => {
 			toast.error(getErrorMessage(error, "Failed to delete knowledge document."));
@@ -179,7 +323,15 @@ export const useEditKnowledge = () => {
 	const queryClient = useQueryClient();
 
 	return useMutation({
-		mutationFn: async ({ id, data, hideToast }: { id: string; data: { summary: string; categories: string[]; visibility_settings?: VisibilitySettings; title?: string }; hideToast?: boolean }) => {
+		mutationFn: async ({
+			id,
+			data,
+			hideToast,
+		}: {
+			id: string;
+			data: KnowledgeEditRequest;
+			hideToast?: boolean;
+		}) => {
 			const response = await api.put(`/knowledge/${id}`, data);
 			return { data: response.data, hideToast, id };
 		},
@@ -187,16 +339,14 @@ export const useEditKnowledge = () => {
 			if (!result.hideToast) {
 				toast.success("Document updated successfully!");
 			}
-			queryClient.invalidateQueries({ queryKey: knowledgeKeys.all });
-			queryClient.invalidateQueries({ queryKey: projectKeys.all });
-			queryClient.invalidateQueries({ queryKey: knowledgeKeys.detail(variables.id) });
-			queryClient.invalidateQueries({ queryKey: ["knowledge-batch"] });
+			invalidateAllKnowledgeQueries(queryClient, { knowledgeId: variables.id });
 		},
 		onError: (error: unknown) => {
 			toast.error(getErrorMessage(error, "Failed to update document."));
 		},
 	});
 };
+
 
 export const useIngestionQuota = () => {
 	return useQuery({
@@ -240,12 +390,7 @@ export const useUpdateKnowledgeProject = () => {
 			if (!result?.hideToast) {
 				toast.success("Knowledge project updated successfully!");
 			}
-			queryClient.invalidateQueries({ queryKey: knowledgeKeys.all });
-			queryClient.invalidateQueries({ queryKey: projectKeys.all });
-			queryClient.invalidateQueries({ queryKey: ["knowledge-batch"] });
-			if (variables?.knowledgeId) {
-				queryClient.invalidateQueries({ queryKey: knowledgeKeys.detail(variables.knowledgeId) });
-			}
+			invalidateAllKnowledgeQueries(queryClient, { knowledgeId: variables?.knowledgeId });
 		},
 		onError: (error: unknown) => {
 			toast.error(getErrorMessage(error, "Failed to update project assignment."));
@@ -259,13 +404,90 @@ export interface QueryGeneralPayload {
 }
 
 export interface QueryGeneralResult {
+	type?: "answer" | "confirmation" | "success" | "cancelled" | "error" | string;
+	message?: string;
+	operation_id?: string | null;
 	prompt: string;
 	answer: string;
-	action: "read" | "edit_applied" | "delete_applied" | string;
+	action: "read" | "edit_preview" | "delete_preview" | "edit_applied" | "delete_applied" | string;
 	target_knowledge_id?: string | null;
 	total_found: number;
 	results: Array<Record<string, unknown>>;
 }
+
+export interface OperationResult {
+	type: "success" | "cancelled" | "info" | "error" | string;
+	action: string;
+	operation_id?: string;
+	target_knowledge_id?: string;
+	affected_knowledge_ids?: string[];
+	batch_id?: string;
+	message: string;
+}
+
+export const useConfirmOperation = () => {
+	const queryClient = useQueryClient();
+
+	return useMutation({
+		mutationFn: async ({
+			operationId,
+			sessionId,
+		}: {
+			operationId: string;
+			sessionId?: string | null;
+		}): Promise<OperationResult> => {
+			const url = sessionId
+				? `/knowledge/operations/${operationId}/confirm?session_id=${sessionId}`
+				: `/knowledge/operations/${operationId}/confirm`;
+			const response = await api.post(url);
+			return response.data;
+		},
+		onSuccess: (data, variables) => {
+			invalidateAllKnowledgeQueries(queryClient, {
+				knowledgeId: data.target_knowledge_id,
+				knowledgeIds: data.affected_knowledge_ids,
+				batchId: data.batch_id,
+				sessionId: variables.sessionId,
+			});
+			toast.success(data.message || "Operasi berhasil diterapkan!");
+		},
+		onError: (error: unknown) => {
+			toast.error(getErrorMessage(error, "Gagal mengonfirmasi operasi."));
+		},
+	});
+};
+
+export const useCancelOperation = () => {
+	const queryClient = useQueryClient();
+
+	return useMutation({
+		mutationFn: async ({
+			operationId,
+			sessionId,
+		}: {
+			operationId: string;
+			sessionId?: string | null;
+		}): Promise<OperationResult> => {
+			const url = sessionId
+				? `/knowledge/operations/${operationId}/cancel?session_id=${sessionId}`
+				: `/knowledge/operations/${operationId}/cancel`;
+			const response = await api.post(url);
+			return response.data;
+		},
+		onSuccess: (data, variables) => {
+			if (variables.sessionId) {
+				queryClient.invalidateQueries({ queryKey: ["general-session", variables.sessionId], refetchType: "all" });
+				queryClient.invalidateQueries({ queryKey: chatHistoryKeys.detail(variables.sessionId), refetchType: "all" });
+				queryClient.invalidateQueries({ queryKey: ["chat-messages", variables.sessionId], refetchType: "all" });
+				queryClient.invalidateQueries({ queryKey: chatHistoryKeys.all, refetchType: "all" });
+			}
+			toast.info(data.message || "Operasi dibatalkan.");
+		},
+		onError: (error: unknown) => {
+			toast.error(getErrorMessage(error, "Gagal membatalkan operasi."));
+		},
+	});
+};
 
 export const useQueryGeneral = () => {
 	const queryClient = useQueryClient();
@@ -277,12 +499,9 @@ export const useQueryGeneral = () => {
 		},
 		onSuccess: (data) => {
 			if (data.action === "edit_applied" || data.action === "delete_applied") {
-				queryClient.invalidateQueries({ queryKey: knowledgeKeys.all });
-				queryClient.invalidateQueries({ queryKey: projectKeys.all });
-				queryClient.invalidateQueries({ queryKey: ["knowledge-batch"] });
-				if (data.target_knowledge_id) {
-					queryClient.invalidateQueries({ queryKey: knowledgeKeys.detail(data.target_knowledge_id) });
-				}
+				invalidateAllKnowledgeQueries(queryClient, {
+					knowledgeId: data.target_knowledge_id,
+				});
 			}
 		},
 		onError: (error: unknown) => {
@@ -296,6 +515,8 @@ export interface GeneralChatMessageItem {
 	role: string;
 	content: string;
 	action?: string | null;
+	type?: string | null;
+	operation_id?: string | null;
 	target_knowledge_id?: string | null;
 	total_found?: number | null;
 	attachments?: Record<string, unknown> | null;
@@ -324,10 +545,14 @@ export const useGeneralChatSession = (sessionId?: string | null) => {
 };
 
 export const useCreateGeneralChatSession = () => {
+	const queryClient = useQueryClient();
 	return useMutation({
 		mutationFn: async (): Promise<GeneralChatSessionResponse> => {
 			const response = await api.post("/knowledge/general-session");
 			return response.data;
+		},
+		onSuccess: () => {
+			queryClient.invalidateQueries({ queryKey: chatHistoryKeys.all, refetchType: "all" });
 		},
 	});
 };
@@ -336,24 +561,51 @@ export const useSendGeneralChatMessage = (sessionId?: string | null) => {
 	const queryClient = useQueryClient();
 
 	return useMutation({
-		mutationFn: async (payload: { prompt: string; attachments?: Record<string, unknown> }): Promise<GeneralChatSessionResponse> => {
-			const response = await api.post(`/knowledge/general-session/${sessionId}/messages`, payload);
+		mutationFn: async (payload: {
+			prompt: string;
+			attachments?: Record<string, unknown>;
+			signal?: AbortSignal;
+		}): Promise<GeneralChatSessionResponse> => {
+			const { signal, ...body } = payload;
+			const response = await api.post(`/knowledge/general-session/${sessionId}/messages`, body, {
+				signal,
+			});
 			return response.data;
 		},
 		onSuccess: (data) => {
 			queryClient.setQueryData(["general-session", sessionId], data);
+			queryClient.invalidateQueries({ queryKey: chatHistoryKeys.all, refetchType: "all" });
+			if (sessionId) {
+				queryClient.invalidateQueries({ queryKey: chatHistoryKeys.detail(sessionId), refetchType: "all" });
+				queryClient.invalidateQueries({ queryKey: ["chat-messages", sessionId], refetchType: "all" });
+			}
 			const latestMsg = data.messages[data.messages.length - 1];
-			if (latestMsg?.action === "edit_applied" || latestMsg?.action === "delete_applied") {
-				queryClient.invalidateQueries({ queryKey: knowledgeKeys.all });
-				queryClient.invalidateQueries({ queryKey: projectKeys.all });
-				queryClient.invalidateQueries({ queryKey: ["knowledge-batch"] });
-				if (latestMsg.target_knowledge_id) {
-					queryClient.invalidateQueries({ queryKey: knowledgeKeys.detail(latestMsg.target_knowledge_id) });
-				}
+			const isEditOrDeleteApplied =
+				latestMsg?.action === "edit_applied" ||
+				latestMsg?.action === "delete_applied" ||
+				(latestMsg?.attachments as Record<string, unknown>)?.action === "edit_applied" ||
+				(latestMsg?.attachments as Record<string, unknown>)?.action === "delete_applied";
+
+			if (isEditOrDeleteApplied) {
+				const targetKid =
+					latestMsg.target_knowledge_id ||
+					((latestMsg.attachments as Record<string, unknown>)?.target_knowledge_id as string);
+				const affectedKids = (latestMsg.attachments as Record<string, unknown>)
+					?.affected_knowledge_ids as string[] | undefined;
+
+				invalidateAllKnowledgeQueries(queryClient, {
+					knowledgeId: targetKid,
+					knowledgeIds: affectedKids,
+				});
 			}
 		},
 		onError: (error: unknown) => {
-			toast.error(getErrorMessage(error, "Failed to send message."));
+			const isCanceled =
+				(error as { name?: string; code?: string })?.name === "CanceledError" ||
+				(error as { name?: string; code?: string })?.code === "ERR_CANCELED";
+			if (!isCanceled) {
+				toast.error(getErrorMessage(error, "Failed to send message."));
+			}
 		},
 	});
 };

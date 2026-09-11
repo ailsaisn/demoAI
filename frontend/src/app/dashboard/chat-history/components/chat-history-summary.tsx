@@ -13,22 +13,30 @@ export function ChatHistorySummary({ doctorId, items }: ChatHistorySummaryProps)
 
 	const stats = useMemo(() => {
 		if (items !== undefined) {
-			const uniqueUsers = new Set(
-				items
+			const doctorItems = items.filter(
+				(item) =>
+					item.user_type === "DOCTOR" ||
+					(item.user_type !== "STAFF" &&
+						item.user_type !== "ADMIN" &&
+						item.session_type !== "GENERAL_ASSISTANT")
+			);
+
+			const uniqueDoctors = new Set(
+				doctorItems
 					.map((item) => item.user_name || item.doctor || item.user_id)
 					.filter((doc): doc is string => Boolean(doc && doc !== "Unknown"))
 			);
 
 			return {
-				doctors_reached: uniqueUsers.size,
-				total_sessions: items.length,
-				positive_ratings: items.filter(
+				doctors_reached: uniqueDoctors.size,
+				total_sessions: doctorItems.length,
+				positive_ratings: doctorItems.filter(
 					(item) => item.rating === "GOOD" || item.rating === "4" || item.rating === "5"
 				).length,
-				negative_ratings: items.filter(
+				negative_ratings: doctorItems.filter(
 					(item) => item.rating === "BAD" || item.rating === "1" || item.rating === "2"
 				).length,
-				missing_knowledge: items.filter((item) => Boolean(item.has_data_issue)).length,
+				missing_knowledge: doctorItems.filter((item) => Boolean(item.has_data_issue)).length,
 			};
 		}
 		return serverStats;

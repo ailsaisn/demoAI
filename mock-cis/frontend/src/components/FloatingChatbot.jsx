@@ -15,6 +15,137 @@ import "./FloatingChatbot.css";
  * @param {string} [props.branchId] - The CIS external ID of the branch (e.g. "838").
  * @param {string} [props.apiBaseUrl] - The base URL of the Chatbot API (e.g., https://api.arya-noble.com).
  */
+function isValidImageUrl(src) {
+	if (!src) return false;
+	const clean = src.trim().toLowerCase();
+	if (
+		!clean ||
+		clean === "image_url" ||
+		clean === "url" ||
+		clean === "null" ||
+		clean === "none" ||
+		clean === "#" ||
+		/new_image|placeholder|dummy|undefined|test_image|url_gambar|gambar_terlampir|url_/i.test(clean) ||
+		clean.endsWith("/image_url") ||
+		clean.endsWith("/url")
+	) {
+		return false;
+	}
+	return true;
+}
+
+function resolveImageUrl(src, apiBaseUrl) {
+	if (!src) return "";
+	let trimmed = src.trim();
+
+	// Normalize hallucinated `https://api/` or `http://api/` prefixes
+	if (/^https?:\/\/api\//i.test(trimmed)) {
+		trimmed = trimmed.replace(/^https?:\/\/api\//i, "/api/");
+	}
+
+	if (
+		trimmed.startsWith("http://") ||
+		trimmed.startsWith("https://") ||
+		trimmed.startsWith("data:") ||
+		trimmed.startsWith("blob:")
+	) {
+		return encodeURI(decodeURI(trimmed));
+	}
+
+	const base = (apiBaseUrl || "http://localhost:8000").replace(/\/api\/?$/, "").replace(/\/+$/, "");
+	const fullUrl = trimmed.startsWith("/") ? `${base}${trimmed}` : `${base}/${trimmed}`;
+	return encodeURI(decodeURI(fullUrl));
+}
+
+function stripInternalMetadata(text) {
+	if (!text) return "";
+	let cleaned = text;
+
+	// Strip supplementary attached file content blocks
+	cleaned = cleaned.replace(
+		/\[SUPPLEMENTARY ATTACHED FILE CONTENT:\s*['"]?[^'"\n]+['"]?\][\s\S]*?\[END OF ATTACHED FILE CONTENT\]/gi,
+		"",
+	);
+	cleaned = cleaned.replace(
+		/---\s*NEWLY ATTACHED SUPPLEMENTARY FILE:\s*['"]?[^'"\n]+['"]?\s*---[\s\S]*?---\s*END OF ATTACHED FILE CONTENT\s*---/gi,
+		"",
+	);
+
+	// Normalize unencoded spaces in markdown image links ![alt](url) -> ![alt](encodedUrl)
+	cleaned = cleaned.replace(/!\[([^\]]*)\]\(([^)]+)\)/g, (match, alt, rawUrl) => {
+		const trimmedUrl = rawUrl.trim();
+		if (trimmedUrl.includes(" ")) {
+			const encoded = trimmedUrl.replace(/ /g, "%20");
+			return `![${alt}](${encoded})`;
+		}
+		return match;
+	});
+
+	// Normalize unicode bullet symbols (•, ●, ◦) to standard markdown list syntax
+	cleaned = cleaned.replace(/^[ \t]*[•●◦][ \t]*/gm, "- ");
+
+	return cleaned.trim();
+}
+
+function MarkdownImage({ src, alt, onPreview, apiBaseUrl, ...props }) {
+	const [hasError, setHasError] = useState(false);
+	const strSrc = typeof src === "string" ? src.trim() : "";
+
+	if (!isValidImageUrl(strSrc)) {
+		return null;
+	}
+
+	const resolvedSrc = resolveImageUrl(strSrc, apiBaseUrl);
+	const altText = typeof alt === "string" && alt.trim() ? alt.trim() : "Document Image";
+
+	if (hasError) {
+		return (
+			<span className="fc-img-fallback">
+				<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+					<rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
+					<circle cx="8.5" cy="8.5" r="1.5" />
+					<polyline points="21 15 16 10 5 21" />
+				</svg>
+				<span>Gambar Tidak Tersedia</span>
+			</span>
+		);
+	}
+
+	return (
+		<span className="fc-img-card" onClick={() => onPreview({ src: resolvedSrc, alt: altText })}>
+			<span className="fc-img-container">
+				<img
+					src={resolvedSrc}
+					alt={altText}
+					className="fc-img-preview"
+					loading="lazy"
+					onError={() => setHasError(true)}
+					{...props}
+				/>
+				<button
+					type="button"
+					className="fc-img-zoom-btn"
+					title="Perbesar Gambar"
+					onClick={(e) => {
+						e.stopPropagation();
+						onPreview({ src: resolvedSrc, alt: altText });
+					}}
+				>
+					<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+						<circle cx="11" cy="11" r="8" />
+						<line x1="21" y1="21" x2="16.65" y2="16.65" />
+						<line x1="11" y1="8" x2="11" y2="14" />
+						<line x1="8" y1="11" x2="14" y2="11" />
+					</svg>
+				</button>
+			</span>
+			{altText && altText !== "Document Image" && (
+				<span className="fc-img-caption">{altText}</span>
+			)}
+		</span>
+	);
+}
+
 function getFileIcon(filename) {
 	const ext = filename?.split(".").pop()?.toLowerCase();
 	if (ext === "pdf") {
@@ -79,6 +210,7 @@ export default function FloatingChatbot({
 	const [allowFileAttachments, setAllowFileAttachments] = useState(false);
 	const [selectedFiles, setSelectedFiles] = useState([]);
 	const [isLoading, setIsLoading] = useState(false);
+	const [previewImage, setPreviewImage] = useState(null);
 
 	// Feedback states
 	const [rating, setRating] = useState(null);
@@ -89,6 +221,15 @@ export default function FloatingChatbot({
 
 	const chatEndRef = useRef(null);
 	const fileInputRef = useRef(null);
+	const abortControllerRef = useRef(null);
+
+	const stopGeneration = () => {
+		if (abortControllerRef.current) {
+			abortControllerRef.current.abort();
+			abortControllerRef.current = null;
+		}
+		setIsLoading(false);
+	};
 
 	useEffect(() => {
 		chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -216,6 +357,9 @@ export default function FloatingChatbot({
 		setSelectedFiles([]);
 		setIsLoading(true);
 
+		const controller = new AbortController();
+		abortControllerRef.current = controller;
+
 		try {
 			let res;
 			if (currentFiles.length > 0) {
@@ -232,6 +376,7 @@ export default function FloatingChatbot({
 						Authorization: `Bearer ${token}`,
 					},
 					body: formData,
+					signal: controller.signal,
 				});
 			} else {
 				const payload = JSON.stringify({
@@ -246,6 +391,7 @@ export default function FloatingChatbot({
 						Authorization: `Bearer ${token}`,
 					},
 					body: payload,
+					signal: controller.signal,
 				});
 			}
 
@@ -316,8 +462,12 @@ export default function FloatingChatbot({
 				}
 			}
 		} catch (err) {
-			console.error("Message send error:", err);
 			setIsLoading(false);
+			if (err.name === "AbortError") {
+				console.log("Chat stream aborted by user");
+				return;
+			}
+			console.error("Message send error:", err);
 			
 			if (err.message.toLowerCase().includes("closed") || err.message.toLowerCase().includes("expired") || err.message.includes("403")) {
 				setSessionStatus("CLOSED");
@@ -332,6 +482,8 @@ export default function FloatingChatbot({
 					},
 				]);
 			}
+		} finally {
+			abortControllerRef.current = null;
 		}
 	};
 
@@ -581,8 +733,19 @@ export default function FloatingChatbot({
 											<div className={`fc-bubble ${msg.role === "user" ? "fc-user" : "fc-assistant"}`}>
 												{msg.role === "assistant" ? (
 													<div className="fc-markdown-content">
-														<ReactMarkdown remarkPlugins={[remarkGfm]}>
-															{msg.content}
+														<ReactMarkdown
+															remarkPlugins={[remarkGfm]}
+															components={{
+																img: (imgProps) => (
+																	<MarkdownImage
+																		{...imgProps}
+																		apiBaseUrl={apiBaseUrl}
+																		onPreview={setPreviewImage}
+																	/>
+																),
+															}}
+														>
+															{stripInternalMetadata(msg.content)}
 														</ReactMarkdown>
 													</div>
 												) : (
@@ -686,17 +849,36 @@ export default function FloatingChatbot({
 									placeholder="Describe what your concern is..."
 									disabled={isLoading || !sessionId}
 								/>
-								<button type="submit" disabled={isLoading || (!input.trim() && selectedFiles.length === 0) || !sessionId}>
-									<svg
-										xmlns="http://www.w3.org/2000/svg"
-										viewBox="0 0 24 24"
-										fill="currentColor"
-										width="20"
-										height="20"
+								{isLoading ? (
+									<button
+										type="button"
+										onClick={stopGeneration}
+										style={{ backgroundColor: "#ef4444", color: "#ffffff", border: "none", cursor: "pointer" }}
+										title="Stop Generation"
 									>
-										<path d="M1.946 9.315c-.522-.174-.527-.455.01-.634l19.087-6.362c.529-.176.832.12.684.638l-5.454 19.086c-.15.529-.455.547-.679.045L12 14l6-8-8 6-8.054-2.685z" />
-									</svg>
-								</button>
+										<svg
+											xmlns="http://www.w3.org/2000/svg"
+											viewBox="0 0 24 24"
+											fill="currentColor"
+											width="18"
+											height="18"
+										>
+											<rect x="6" y="6" width="12" height="12" rx="2" />
+										</svg>
+									</button>
+								) : (
+									<button type="submit" disabled={(!input.trim() && selectedFiles.length === 0) || !sessionId}>
+										<svg
+											xmlns="http://www.w3.org/2000/svg"
+											viewBox="0 0 24 24"
+											fill="currentColor"
+											width="20"
+											height="20"
+										>
+											<path d="M1.946 9.315c-.522-.174-.527-.455.01-.634l19.087-6.362c.529-.176.832.12.684.638l-5.454 19.086c-.15.529-.455.547-.679.045L12 14l6-8-8 6-8.054-2.685z" />
+										</svg>
+									</button>
+								)}
 							</form>
 						</div>
 					</>
@@ -716,6 +898,38 @@ export default function FloatingChatbot({
 						<path d="M13.5 2C13.5 2.44425 13.3069 2.84339 13 3.11805V5H18C19.6569 5 21 6.34315 21 8V18C21 19.6569 19.6569 21 18 21H6C4.34315 21 3 19.6569 3 18V8C3 6.34315 4.34315 5 6 5H11V3.11805C10.6931 2.84339 10.5 2.44425 10.5 2C10.5 1.17157 11.1716 0.5 12 0.5C12.8284 0.5 13.5 1.17157 13.5 2ZM6 7C5.44772 7 5 7.44772 5 8V18C5 18.5523 5.44772 19 6 19H18C18.5523 19 19 18.5523 19 18V8C19 7.44772 18.5523 7 18 7H13H11H6ZM2 10H0V16H2V10ZM22 10H24V16H22V10ZM9 14.5C9.82843 14.5 10.5 13.8284 10.5 13C10.5 12.1716 9.82843 11.5 9 11.5C8.17157 11.5 7.5 12.1716 7.5 13C7.5 13.8284 8.17157 14.5 9 14.5ZM15 14.5C15.8284 14.5 16.5 13.8284 16.5 13C16.5 12.1716 15.8284 11.5 15 11.5C14.1716 11.5 13.5 12.1716 13.5 13C13.5 13.8284 14.1716 14.5 15 14.5Z" />
 					</svg>
 				</button>
+			)}
+
+			{/* Lightbox Preview Modal */}
+			{previewImage && (
+				<div
+					className="fc-lightbox-backdrop"
+					onClick={() => setPreviewImage(null)}
+				>
+					<div
+						className="fc-lightbox-card"
+						onClick={(e) => e.stopPropagation()}
+					>
+						<div className="fc-lightbox-header">
+							<span className="fc-lightbox-title">{previewImage.alt || "Image Preview"}</span>
+							<button
+								type="button"
+								className="fc-lightbox-close"
+								onClick={() => setPreviewImage(null)}
+								title="Tutup"
+							>
+								×
+							</button>
+						</div>
+						<div className="fc-lightbox-body">
+							<img
+								src={previewImage.src}
+								alt={previewImage.alt || "Preview"}
+								className="fc-lightbox-img"
+							/>
+						</div>
+					</div>
+				</div>
 			)}
 		</div>
 	);

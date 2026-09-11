@@ -47,6 +47,13 @@ api.interceptors.response.use(
 
 		// Check if error is 401 Unauthorized and not already retried
 		if (error.response && error.response.status === 401 && originalRequest) {
+			const isLoggingOut =
+				typeof window !== "undefined" && sessionStorage.getItem("is_logging_out") === "true";
+
+			if (isLoggingOut) {
+				return Promise.reject(error);
+			}
+
 			const url = originalRequest.url || "";
 			const isAuthEndpoint =
 				url.includes("/auth/login") ||

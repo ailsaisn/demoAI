@@ -5,9 +5,11 @@ import { KnowledgeSummary } from "./components/knowledge-summary";
 import { ProjectsTable } from "./components/projects-table";
 import { KnowledgeTable } from "./components/knowledge-table";
 import { SearchBar } from "@/components/shared/search-bar";
+import { useDebounce } from "@/hooks/use-debounce";
 
 export default function KnowledgePage() {
 	const [searchQuery, setSearchQuery] = useState("");
+	const debouncedSearch = useDebounce(searchQuery, 300);
 
 	return (
 		<div className="flex flex-col h-full gap-6 p-6">
@@ -25,10 +27,10 @@ export default function KnowledgePage() {
 			</div>
 
 			{/* Section 1: Projects Table */}
-			<ProjectsTable searchQuery={searchQuery} />
+			<ProjectsTable searchQuery={debouncedSearch} />
 
 			{/* Section 2: All Knowledge Base Table */}
-			<KnowledgeTable searchQuery={searchQuery} />
+			<KnowledgeTable searchQuery={debouncedSearch} />
 		</div>
 	);
 }

@@ -59,23 +59,28 @@ async def handle_cis_webhook(
     Receive RSA-signed data pushes from CIS.
     """
     try:
+        summary: Dict[str, Any] = {}
         if payload.event == "branch.upsert":
-            await upsert_branch_payload(db, payload.data)
-            await broadcaster.publish("sync_completed")
+            res = await upsert_branch_payload(db, payload.data)
+            count = len(res) if isinstance(res, list) else 1
+            summary = {"branches_upserted": count}
         elif payload.event == "user.upsert":
-            await upsert_doctor_payload(db, payload.data)
-            await broadcaster.publish("sync_completed")
+            res = await upsert_doctor_payload(db, payload.data)
+            count = len(res) if isinstance(res, list) else 1
+            summary = {"doctors_upserted": count}
         elif payload.event == "user_branch.upsert":
-            await upsert_user_branch_payload(db, payload.data)
-            await broadcaster.publish("sync_completed")
+            data_list = payload.data if isinstance(payload.data, list) else [payload.data]
+            await upsert_user_branch_payload(db, data_list)
+            summary = {"mappings_upserted": len(data_list)}
         elif payload.event == "bulk.sync":
-            await bulk_sync_payload(db, payload.data)
-            await broadcaster.publish("sync_completed")
+            summary = await bulk_sync_payload(db, payload.data)
         else:
             raise HTTPException(status_code=400, detail=f"Unsupported event type: {payload.event}")
 
         await db.commit()
-        return {"status": "success", "event": payload.event}
+        await broadcaster.publish("sync_completed")
+        logger.info(f"Successfully processed CIS webhook event '{payload.event}': {summary}")
+        return {"status": "success", "event": payload.event, "summary": summary}
     except Exception as e:
         await db.rollback()
         logger.error(f"Failed processing CIS webhook event '{payload.event}': {e}")

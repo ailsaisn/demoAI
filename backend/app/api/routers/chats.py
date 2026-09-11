@@ -244,8 +244,15 @@ async def _hydrate_chat_session(session: ChatSession, db: AsyncSession) -> dict:
     
     return session_dict
 
-@router.get("/feedback", response_model=List[ChatHistoryResponse])
+from app.schemas.pagination import PaginatedResponse
+from typing import List, Optional, Union
+from fastapi import Query
+import math
+
+@router.get("/feedback", response_model=Union[PaginatedResponse[ChatHistoryResponse], List[ChatHistoryResponse]])
 async def list_chat_feedbacks(
+    page: Optional[int] = Query(None, ge=1, description="Page number"),
+    page_size: Optional[int] = Query(None, ge=1, le=100, description="Items per page"),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user_flexible)
 ):
@@ -258,6 +265,26 @@ async def list_chat_feedbacks(
         .where(ChatSession.has_data_issue == True, ChatSession.session_type == "DOCTOR")
         .order_by(ChatSession.updated_at.desc())
     )
+
+    if page is not None:
+        p_size = page_size or 10
+        count_stmt = select(func.count()).select_from(stmt.subquery())
+        count_res = await db.execute(count_stmt)
+        total = count_res.scalar() or 0
+        total_pages = max(1, math.ceil(total / p_size))
+
+        paginated_stmt = stmt.offset((page - 1) * p_size).limit(p_size)
+        result = await db.execute(paginated_stmt)
+        sessions = result.scalars().all()
+        hydrated = [await _hydrate_chat_session(s, db) for s in sessions]
+
+        return PaginatedResponse[ChatHistoryResponse](
+            items=hydrated,
+            total=total,
+            page=page,
+            page_size=p_size,
+            total_pages=total_pages
+        )
     
     result = await db.execute(stmt)
     sessions = result.scalars().all()
@@ -298,20 +325,26 @@ async def get_chat_stats(
 ):
     """Return overview counts of users reached, sessions, ratings, and missing knowledge."""
     has_messages = select(ChatMessage.id).where(ChatMessage.session_id == ChatSession.id).exists()
-    base_where = [has_messages]
+    base_where = [has_messages, User.type == UserType.DOCTOR]
     if session_type:
         base_where.append(ChatSession.session_type == session_type)
+    else:
+        base_where.append(ChatSession.session_type == "DOCTOR")
+
     if not await has_chats_read_access(current_user, db):
         base_where.append(ChatSession.user_id == current_user.id)
     elif doctor_id:
         base_where.append(ChatSession.user_id == doctor_id)
 
-    stmt = select(
-        func.count(func.distinct(ChatSession.user_id)).label("doctors_reached"),
-        func.count(ChatSession.id).label("total_sessions"),
-        func.count(ChatSession.id).filter(ChatSession.rating == ChatRating.GOOD).label("positive_ratings"),
-        func.count(ChatSession.id).filter(ChatSession.rating == ChatRating.BAD).label("negative_ratings"),
-        func.count(ChatSession.id).filter(ChatSession.has_data_issue.is_(True)).label("missing_knowledge"),
+    stmt = (
+        select(
+            func.count(func.distinct(ChatSession.user_id)).label("doctors_reached"),
+            func.count(ChatSession.id).label("total_sessions"),
+            func.count(ChatSession.id).filter(ChatSession.rating == ChatRating.GOOD).label("positive_ratings"),
+            func.count(ChatSession.id).filter(ChatSession.rating == ChatRating.BAD).label("negative_ratings"),
+            func.count(ChatSession.id).filter(ChatSession.has_data_issue.is_(True)).label("missing_knowledge"),
+        )
+        .join(User, ChatSession.user_id == User.id)
     )
     if base_where:
         stmt = stmt.where(*base_where)
@@ -326,11 +359,13 @@ async def get_chat_stats(
         missing_knowledge=result.missing_knowledge or 0,
     )
 
-@router.get("/", response_model=List[ChatHistoryResponse])
+@router.get("/", response_model=Union[PaginatedResponse[ChatHistoryResponse], List[ChatHistoryResponse]])
 async def list_chat_sessions(
     search: Optional[str] = None,
     doctor_id: Optional[uuid.UUID] = None,
     session_type: Optional[str] = None,
+    page: Optional[int] = Query(None, ge=1, description="Page number"),
+    page_size: Optional[int] = Query(None, ge=1, le=100, description="Items per page"),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user_flexible)
 ):
@@ -363,6 +398,21 @@ async def list_chat_sessions(
             or s_clean in (h.get("branch") or "").lower()
             or s_clean in (h.get("session_type") or "").lower()
         ]
+
+    if page is not None:
+        p_size = page_size or 10
+        total = len(hydrated)
+        total_pages = max(1, math.ceil(total / p_size))
+        start_idx = (page - 1) * p_size
+        items = hydrated[start_idx : start_idx + p_size]
+
+        return PaginatedResponse[ChatHistoryResponse](
+            items=items,
+            total=total,
+            page=page,
+            page_size=p_size,
+            total_pages=total_pages
+        )
 
     return hydrated
 
@@ -470,9 +520,10 @@ async def update_chat_session(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user_flexible)
 ):
-    stmt = select(ChatSession).where(ChatSession.id == session_id)
-    if not await has_chats_read_access(current_user, db):
-        stmt = stmt.where(ChatSession.user_id == current_user.id)
+    stmt = select(ChatSession).where(
+        ChatSession.id == session_id,
+        ChatSession.user_id == current_user.id
+    )
         
     result = await db.execute(stmt)
     session = result.scalar_one_or_none()
@@ -501,6 +552,23 @@ async def update_chat_session(
         
     setattr(session, "allow_file_attachments", await _is_file_attachments_allowed(db))
     return session
+
+@router.get("/{session_id}", response_model=ChatHistoryResponse)
+async def get_chat_session(
+    session_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user_flexible)
+):
+    stmt = select(ChatSession).where(ChatSession.id == session_id)
+    if not await has_chats_read_access(current_user, db):
+        stmt = stmt.where(ChatSession.user_id == current_user.id)
+    
+    result = await db.execute(stmt)
+    session = result.scalar_one_or_none()
+    if not session:
+        raise HTTPException(status_code=404, detail="Chat session not found")
+        
+    return await _hydrate_chat_session(session, db)
 
 @router.get("/{session_id}/messages", response_model=List[ChatMessageResponse])
 async def list_chat_messages(
@@ -551,10 +619,11 @@ async def create_chat_message(
     content: str = Form(...),
     files: Optional[List[UploadFile]] = File(None)
 ):
-    # Verify access to session
-    stmt_session = select(ChatSession).where(ChatSession.id == session_id)
-    if not await has_chats_read_access(current_user, db):
-        stmt_session = stmt_session.where(ChatSession.user_id == current_user.id)
+    # Verify access to session - message creation is only allowed for the session owner
+    stmt_session = select(ChatSession).where(
+        ChatSession.id == session_id,
+        ChatSession.user_id == current_user.id
+    )
     
     result_session = await db.execute(stmt_session)
     chat_session = result_session.scalar_one_or_none()
@@ -688,6 +757,10 @@ async def create_chat_message(
                     history=history,
                     filter_metadata=doctor_filter or None
                 ):
+                    if await request.is_disconnected():
+                        logger.info(f"Client disconnected from chat session {session_id}")
+                        break
+
                     # check if the chunk is the initial JSON context string
                     if chunk.startswith('{"type": "context"'):
                         yield f"data: {chunk}\n\n"
@@ -779,10 +852,11 @@ async def stream_chat_message(
     
     role = role.lower()
 
-    # Verify access to session
-    stmt_session = select(ChatSession).where(ChatSession.id == session_id)
-    if not await has_chats_read_access(current_user, db):
-        stmt_session = stmt_session.where(ChatSession.user_id == current_user.id)
+    # Verify access to session - stream chat is only allowed for the session owner
+    stmt_session = select(ChatSession).where(
+        ChatSession.id == session_id,
+        ChatSession.user_id == current_user.id
+    )
     
     result_session = await db.execute(stmt_session)
     chat_session = result_session.scalar_one_or_none()

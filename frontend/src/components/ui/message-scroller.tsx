@@ -34,15 +34,24 @@ function MessageScroller({
   )
 }
 
+interface MessageScrollerViewportProps
+  extends React.ComponentProps<typeof MessageScrollerPrimitive.Viewport> {
+  hideScrollbar?: boolean;
+}
+
 function MessageScrollerViewport({
   className,
+  hideScrollbar = false,
   ...props
-}: React.ComponentProps<typeof MessageScrollerPrimitive.Viewport>) {
+}: MessageScrollerViewportProps) {
   return (
     <MessageScrollerPrimitive.Viewport
       data-slot="message-scroller-viewport"
       className={cn(
-        "size-full min-h-0 min-w-0 scroll-fade-b overflow-y-auto overscroll-contain contain-content scrollbar-none [&::-webkit-scrollbar]:hidden",
+        "size-full min-h-0 min-w-0 scroll-fade-b overflow-y-auto overflow-x-hidden overscroll-contain",
+        hideScrollbar
+          ? "scrollbar-none [&::-webkit-scrollbar]:hidden"
+          : "custom-scrollbar",
         className
       )}
       {...props}
@@ -72,10 +81,7 @@ function MessageScrollerItem({
     <MessageScrollerPrimitive.Item
       data-slot="message-scroller-item"
       scrollAnchor={scrollAnchor}
-      className={cn(
-        "min-w-0 shrink-0 [contain-intrinsic-size:auto_10rem] [content-visibility:auto]",
-        className
-      )}
+      className={cn("min-w-0 shrink-0", className)}
       {...props}
     />
   )

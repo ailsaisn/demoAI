@@ -4,11 +4,11 @@ import { useState, useRef, useEffect } from "react";
 interface TitleSettingsProps {
 	title: string;
 	onChangeTitle: (newTitle: string) => void;
-	onSave?: (newTitle?: string) => void;
+	isEditMode?: boolean;
 	onCancel?: () => void;
 }
 
-export function TitleSettings({ title, onChangeTitle, onSave }: TitleSettingsProps) {
+export function TitleSettings({ title, onChangeTitle, isEditMode = false }: TitleSettingsProps) {
 	const [localTitle, setLocalTitle] = useState(title);
 	const [isLocalEditing, setIsLocalEditing] = useState(false);
 	const [prevTitle, setPrevTitle] = useState(title);
@@ -28,9 +28,6 @@ export function TitleSettings({ title, onChangeTitle, onSave }: TitleSettingsPro
 	const handleSave = () => {
 		setIsLocalEditing(false);
 		onChangeTitle(localTitle);
-		if (onSave) {
-			onSave(localTitle);
-		}
 	};
 
 	const handleCancel = () => {
@@ -90,15 +87,17 @@ export function TitleSettings({ title, onChangeTitle, onSave }: TitleSettingsPro
 				<RiBookReadLine className="size-4 text-zinc-900 shrink-0" />
 				<span className="text-xs font-medium text-zinc-950 truncate min-w-0">{localTitle}</span>
 			</div>
-			<button 
-				type="button"
-				onClick={() => setIsLocalEditing(true)} 
-				className="size-9 flex items-center justify-center border border-zinc-200 rounded-lg bg-white hover:bg-zinc-50 transition-colors text-zinc-700 shrink-0 cursor-pointer shadow-none"
-				title="Edit title"
-				aria-label="Edit title"
-			>
-				<RiEdit2Line className="size-4" />
-			</button>
+			{isEditMode && (
+				<button 
+					type="button"
+					onClick={() => setIsLocalEditing(true)} 
+					className="size-9 flex items-center justify-center border border-zinc-200 rounded-lg bg-white hover:bg-zinc-50 transition-colors text-zinc-700 shrink-0 cursor-pointer shadow-none"
+					title="Edit title"
+					aria-label="Edit title"
+				>
+					<RiEdit2Line className="size-4" />
+				</button>
+			)}
 		</div>
 	);
 }

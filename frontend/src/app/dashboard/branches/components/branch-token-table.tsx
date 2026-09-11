@@ -2,6 +2,7 @@
 
 import { useState, useMemo } from "react";
 import { SearchBar } from "@/components/shared/search-bar";
+import { useDebounce } from "@/hooks/use-debounce";
 import {
 	Table,
 	TableBody,
@@ -13,9 +14,12 @@ import {
 import { useBranches } from "../hooks/use-branches";
 import { useConfigs } from "../../configuration/hooks/use-config";
 import { ViewBranchSheet } from "./view-branch-sheet";
+import { usePagination } from "@/hooks/use-pagination";
+import { DataTablePagination } from "@/components/shared/data-table-pagination";
 
 export function BranchTokenTable() {
 	const [searchQuery, setSearchQuery] = useState("");
+	const debouncedSearch = useDebounce(searchQuery, 300);
 	const { data: branches, isLoading } = useBranches();
 	const { data: configs } = useConfigs();
 
@@ -25,15 +29,27 @@ export function BranchTokenTable() {
 
 	const filteredBranches = useMemo(() => {
 		if (!branches) return [];
-		if (!searchQuery.trim()) return branches;
-		const q = searchQuery.toLowerCase();
+		if (!debouncedSearch.trim()) return branches;
+		const q = debouncedSearch.toLowerCase();
 		return branches.filter(
 			(branch) =>
 				branch.name?.toLowerCase().includes(q) ||
 				branch.code?.toLowerCase().includes(q) ||
 				branch.ecosystem?.toLowerCase().includes(q),
 		);
-	}, [branches, searchQuery]);
+	}, [branches, debouncedSearch]);
+
+	const {
+		page,
+		pageSize,
+		totalPages,
+		totalItems,
+		paginatedItems,
+		setPage,
+		setPageSize,
+		startIndex,
+		endIndex,
+	} = usePagination({ items: filteredBranches, initialPageSize: 10 });
 
 	return (
 		<div className="flex flex-col gap-4 w-full">
@@ -81,7 +97,7 @@ export function BranchTokenTable() {
 								</TableCell>
 							</TableRow>
 						) : (
-							filteredBranches.map((branch) => {
+							paginatedItems.map((branch) => {
 								const limit = isGlobalLimitActive
 									? Number(globalBranchLimit)
 									: (branch.token_limit ?? branch.tokensMonth ?? 0);
@@ -120,6 +136,18 @@ export function BranchTokenTable() {
 					</TableBody>
 				</Table>
 			</div>
+
+			<DataTablePagination
+				page={page}
+				pageSize={pageSize}
+				totalPages={totalPages}
+				totalItems={totalItems}
+				startIndex={startIndex}
+				endIndex={endIndex}
+				onPageChange={setPage}
+				onPageSizeChange={setPageSize}
+				itemName="branches"
+			/>
 		</div>
 	);
 }

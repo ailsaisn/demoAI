@@ -21,7 +21,7 @@ import {
 } from "@remixicon/react";
 import { useForm } from "@tanstack/react-form";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { loginSchema, type LoginValues } from "./login-schema";
 
@@ -31,6 +31,12 @@ export function LoginForm({ className, ...props }: React.ComponentProps<"form">)
 	const [loginError, setLoginError] = useState<string | null>(null);
 	const [showPassword, setShowPassword] = useState(false);
 	const { mutate: login, isPending } = useLogin();
+
+	useEffect(() => {
+		if (typeof window !== "undefined") {
+			sessionStorage.removeItem("is_logging_out");
+		}
+	}, []);
 
 	const form = useForm({
 		defaultValues: {
@@ -79,6 +85,12 @@ export function LoginForm({ className, ...props }: React.ComponentProps<"form">)
 			: reason === "session_expired"
 				? "Your session has expired. Please log in again."
 				: null;
+
+	useEffect(() => {
+		if (reasonMessage) {
+			toast.warning(reasonMessage);
+		}
+	}, [reasonMessage]);
 
 	return (
 		<form
@@ -135,7 +147,7 @@ export function LoginForm({ className, ...props }: React.ComponentProps<"form">)
 											onBlur={field.handleBlur}
 											disabled={isPending}
 											aria-invalid={isInvalid}
-											autoComplete="off"
+											autoComplete="username"
 											className="border-gray-200 bg-white focus-visible:ring-blue-500"
 										/>
 									</div>
@@ -168,7 +180,7 @@ export function LoginForm({ className, ...props }: React.ComponentProps<"form">)
 											onBlur={field.handleBlur}
 											disabled={isPending}
 											aria-invalid={isInvalid}
-											autoComplete="new-password"
+											autoComplete="current-password"
 											className="border-gray-200 bg-white focus-visible:ring-blue-500 pr-10"
 										/>
 										<Button

@@ -1,7 +1,5 @@
 "use client";
 
-import { useMemo, useState } from "react";
-import { format } from "date-fns";
 import {
 	RiAlertLine,
 	RiArrowDownSLine,
@@ -14,8 +12,10 @@ import {
 	RiNotification3Line,
 	RiUserLine,
 } from "@remixicon/react";
-import Link from "next/link";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { format } from "date-fns";
+import Link from "next/link";
+import { useMemo, useState } from "react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -30,6 +30,9 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { api } from "@/lib/axios";
 import { cn } from "@/lib/utils";
 
+import { DataTablePagination } from "@/components/shared/data-table-pagination";
+import { usePagination } from "@/hooks/use-pagination";
+import { chatHistoryKeys } from "../chat-history/api/keys";
 import { NOTIFICATION_KEYS } from "./api/keys";
 import { FeedbackNotification } from "./api/types";
 
@@ -54,7 +57,8 @@ export default function NotificationsPage() {
 			await api.put("/chats/feedback/read", { session_ids: sessionIds });
 		},
 		onSuccess: () => {
-			queryClient.invalidateQueries({ queryKey: NOTIFICATION_KEYS.lists() });
+			queryClient.invalidateQueries({ queryKey: NOTIFICATION_KEYS.all });
+			queryClient.invalidateQueries({ queryKey: chatHistoryKeys.all });
 		},
 	});
 
@@ -84,10 +88,7 @@ export default function NotificationsPage() {
 		[feedbacks],
 	);
 
-	const readCount = useMemo(
-		() => feedbacks.filter((f) => f.is_feedback_read).length,
-		[feedbacks],
-	);
+	const readCount = useMemo(() => feedbacks.filter((f) => f.is_feedback_read).length, [feedbacks]);
 
 	const filteredFeedbacks = useMemo(() => {
 		return feedbacks.filter((item) => {
@@ -105,11 +106,24 @@ export default function NotificationsPage() {
 		});
 	}, [feedbacks, activeTab, doctorFilter, doctorTypeFilter]);
 
+	const {
+		page,
+		pageSize,
+		totalPages,
+		totalItems,
+		paginatedItems,
+		setPage,
+		setPageSize,
+		startIndex,
+		endIndex,
+	} = usePagination({ items: filteredFeedbacks, initialPageSize: 10 });
+
 	const hasActiveFilters = doctorFilter !== "ALL" || doctorTypeFilter !== "ALL";
 
 	const handleResetDropdownFilters = () => {
 		setDoctorFilter("ALL");
 		setDoctorTypeFilter("ALL");
+		setPage(1);
 	};
 
 	const handleMarkAllAsRead = () => {
@@ -238,7 +252,10 @@ export default function NotificationsPage() {
 							</div>
 							<RiArrowDownSLine className="size-3.5 shrink-0 text-zinc-400" />
 						</DropdownMenuTrigger>
-						<DropdownMenuContent align="end" className="w-52 max-h-56 overflow-y-auto bg-white border border-gray-200 text-xs rounded-lg shadow-none">
+						<DropdownMenuContent
+							align="end"
+							className="w-52 max-h-56 overflow-y-auto bg-white border border-gray-200 text-xs rounded-lg shadow-none"
+						>
 							<DropdownMenuRadioGroup value={doctorFilter} onValueChange={setDoctorFilter}>
 								<DropdownMenuRadioItem closeOnClick value="ALL">
 									All Doctors
@@ -270,7 +287,10 @@ export default function NotificationsPage() {
 							</div>
 							<RiArrowDownSLine className="size-3.5 shrink-0 text-zinc-400" />
 						</DropdownMenuTrigger>
-						<DropdownMenuContent align="end" className="w-52 max-h-56 overflow-y-auto bg-white border border-gray-200 text-xs rounded-lg shadow-none">
+						<DropdownMenuContent
+							align="end"
+							className="w-52 max-h-56 overflow-y-auto bg-white border border-gray-200 text-xs rounded-lg shadow-none"
+						>
 							<DropdownMenuRadioGroup value={doctorTypeFilter} onValueChange={setDoctorTypeFilter}>
 								<DropdownMenuRadioItem closeOnClick value="ALL">
 									All Doctor Types
@@ -332,7 +352,7 @@ export default function NotificationsPage() {
 					</div>
 				) : (
 					<div className="flex flex-col gap-2.5">
-						{filteredFeedbacks.map((item: FeedbackNotification) => {
+						{paginatedItems.map((item: FeedbackNotification) => {
 							const isUnread = !item.is_feedback_read;
 
 							return (
@@ -392,7 +412,11 @@ export default function NotificationsPage() {
 									{/* Middle Row: Feedback Message */}
 									<div className="text-xs leading-relaxed">
 										{item.feedback ? (
-											<p className={isUnread ? "text-amber-950 font-normal" : "text-gray-700 font-normal"}>
+											<p
+												className={
+													isUnread ? "text-amber-950 font-normal" : "text-gray-700 font-normal"
+												}
+											>
 												{item.feedback}
 											</p>
 										) : (
@@ -424,6 +448,18 @@ export default function NotificationsPage() {
 								</div>
 							);
 						})}
+
+						<DataTablePagination
+							page={page}
+							pageSize={pageSize}
+							totalPages={totalPages}
+							totalItems={totalItems}
+							startIndex={startIndex}
+							endIndex={endIndex}
+							onPageChange={setPage}
+							onPageSizeChange={setPageSize}
+							itemName="notifications"
+						/>
 					</div>
 				)}
 			</div>

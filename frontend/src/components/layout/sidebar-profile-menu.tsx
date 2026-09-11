@@ -73,7 +73,7 @@ export function SidebarProfileMenu() {
 					</div>
 					<span className="font-medium group-data-[collapsible=icon]:hidden">Notifications</span>
 					{unreadCount > 0 && (
-						<span className="ml-auto inline-grid place-items-center size-5 rounded-full bg-red-500 text-white font-bold text-[10px] leading-none tabular-nums select-none shrink-0 group-data-[collapsible=icon]:hidden">
+						<span className="ml-auto inline-flex items-center justify-center min-w-5 h-5 px-1 rounded-sm bg-red-50 text-red-600 border border-red-200 font-semibold text-[10.5px] leading-none tabular-nums select-none shrink-0 group-data-[collapsible=icon]:hidden">
 							{unreadCount > 99 ? "99+" : unreadCount}
 						</span>
 					)}

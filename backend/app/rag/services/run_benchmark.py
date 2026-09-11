@@ -152,7 +152,7 @@ def run_benchmark():
                 answer=answer, context=context, llm_adapter=llm_adapter
             )
             rel_score = GenerationEvaluator.evaluate_answer_relevance(
-                query=query, answer=answer, llm_adapter=llm_adapter
+                query=query, answer=answer, llm_adapter=llm_adapter, expected_answer=item.get("expected_answer")
             )
 
             faithfulness_scores.append(faith_score)

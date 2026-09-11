@@ -41,6 +41,7 @@ export interface BranchResponse {
   latitude?: string;
   longitude?: string;
   token_limit?: number;
+  tokens_used?: number;
   created_at?: string;
   updated_at?: string;
 }

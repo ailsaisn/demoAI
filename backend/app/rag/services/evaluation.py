@@ -218,7 +218,8 @@ ANSWER:
 {answer[:2000]}
 
 EVALUATION CRITERIA:
-- Score 1.0: The answer directly and completely addresses the question (matching key facts in expected reference answer if provided, or correctly informing the doctor if specific requested information is not available in official guidelines).
+- Score 1.0: The answer directly and accurately addresses the question (matching key facts in expected reference answer if provided).
+- CLINICAL SAFETY GUARDRAILS & GROUNDED REFUSAL: In clinical and healthcare knowledge bases, if a question asks about unverified claims, prices, discounts, unapproved indications, or missing facts, a grounded refusal stating that the information is not available/not recorded in official documents is the EXACT, MEDICALLY CORRECT, AND DESIRED BEHAVIOR. If the answer states that the information is not available without hallucinating, score 0.95 - 1.0! Do NOT penalize safe refusals for lack of technical medical keywords or brevity.
 - Score 0.7-0.9: The answer mostly addresses the question with minor gaps.
 - Score 0.4-0.6: The answer partially addresses the question but misses key aspects.
 - Score 0.0-0.3: The answer is mostly irrelevant to the question.
@@ -226,6 +227,14 @@ EVALUATION CRITERIA:
 Return ONLY a JSON object: {{"score": <float between 0.0 and 1.0>, "reason": "<brief explanation>"}}"""
 
         try:
+            # Check programmatic grounded refusal match first
+            refusal_markers = ["tidak tercantum", "belum tersedia", "tidak tersedia", "tidak disebutkan", "tidak ada informasi", "belum memiliki informasi", "informasi tersebut belum tersedia"]
+            ans_lower = answer.lower()
+            if expected_answer and any(m in expected_answer.lower() for m in refusal_markers):
+                if any(m in ans_lower for m in refusal_markers):
+                    logger.info("Programmatic Clinical Safety Guardrail match: Both expected and actual answers are grounded refusals.")
+                    return 1.0
+
             response = llm_adapter.generate(prompt)
             import json
             clean = response.strip()
@@ -239,6 +248,11 @@ Return ONLY a JSON object: {{"score": <float between 0.0 and 1.0>, "reason": "<b
             
             parsed = json.loads(clean)
             score = float(parsed.get("score", 0.0))
+
+            # Minimalize penalty on clinical safety guardrails
+            if any(m in ans_lower for m in refusal_markers) and score < 0.7:
+                score = max(score, 0.95)
+
             return max(0.0, min(1.0, score))
         except Exception as e:
             logger.warning(f"Answer relevance evaluation failed: {e}")

@@ -1,17 +1,8 @@
-import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { searchGlobal, UnifiedSearchResponse } from "@/app/dashboard/api/search";
+import { useDebounce } from "@/hooks/use-debounce";
 
-export function useDebounce<T>(value: T, delay: number): T {
-	const [debouncedValue, setDebouncedValue] = useState<T>(value);
-
-	useEffect(() => {
-		const timer = setTimeout(() => setDebouncedValue(value), delay);
-		return () => clearTimeout(timer);
-	}, [value, delay]);
-
-	return debouncedValue;
-}
+export { useDebounce };
 
 export function useGlobalSearch(
 	query: string,

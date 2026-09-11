@@ -1,10 +1,9 @@
-import { KnowledgeResponse, VisibilitySettings } from "@/app/dashboard/knowledge/api/types";
+import { KnowledgeResponse, VisibilitySettings, KnowledgeChunkItem } from "@/app/dashboard/knowledge/api/types";
 import {
 	useApproveKnowledge,
 	useEditKnowledge,
 } from "@/app/dashboard/knowledge/hooks/use-knowledge";
 import { Button } from "@/components/ui/button";
-import { Progress } from "@/components/ui/progress";
 import { RiCheckLine, RiLoader4Line } from "@remixicon/react";
 import { useSession } from "@/hooks/use-session";
 import { ConfirmationModal } from "@/components/shared/confirmation-modal";
@@ -12,19 +11,23 @@ import { IngestSuccessModal } from "./ingest-success-modal";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 
-interface ClassificationSidebarProps {
+interface ApprovalActionsProps {
 	knowledge?: KnowledgeResponse;
 	pendingCategories?: string[];
 	pendingVisibilitySettings?: VisibilitySettings;
 	pendingTitle?: string;
+	pendingSummary?: string;
+	pendingChunks?: KnowledgeChunkItem[];
 }
 
-export function ClassificationSidebar({
+export function ApprovalActions({
 	knowledge,
 	pendingCategories,
 	pendingVisibilitySettings,
 	pendingTitle,
-}: ClassificationSidebarProps) {
+	pendingSummary,
+	pendingChunks,
+}: ApprovalActionsProps) {
 	const router = useRouter();
 	const approveKnowledge = useApproveKnowledge();
 	const editKnowledge = useEditKnowledge();
@@ -39,15 +42,18 @@ export function ClassificationSidebar({
 		if (
 			(pendingCategories && pendingCategories.length > 0) ||
 			pendingVisibilitySettings ||
-			pendingTitle
+			pendingTitle ||
+			(pendingChunks && pendingChunks.length > 0) ||
+			(pendingSummary && pendingSummary !== knowledge.ai_summary)
 		) {
 			await editKnowledge.mutateAsync({
 				id: knowledge.id,
 				data: {
-					summary: knowledge.ai_summary || "",
+					summary: pendingSummary || knowledge.ai_summary || "",
 					categories: pendingCategories || [],
 					visibility_settings: pendingVisibilitySettings,
 					title: pendingTitle,
+					chunks: pendingChunks && pendingChunks.length > 0 ? pendingChunks : undefined,
 				},
 				hideToast: true,
 			});
@@ -61,52 +67,30 @@ export function ClassificationSidebar({
 
 	return (
 		<>
-			<div className="flex flex-wrap sm:flex-nowrap items-center justify-between gap-6 w-full">
-				{/* AI Confidence Score */}
-				<div className="flex flex-col gap-2 w-full max-w-50">
-					<div className="flex items-center gap-1.5 text-sm font-medium text-zinc-700">
-						<span>AI Confidence Score:</span>
-						<span className="text-blue-600">
-							{knowledge.ai_confidence !== null && knowledge.ai_confidence !== undefined
-								? `${Number(knowledge.ai_confidence)}%`
-								: knowledge.status === "PROCESSING"
-									? "Calculating..."
-									: "—"}
-						</span>
-					</div>
-					<Progress
-						value={
-							knowledge.ai_confidence !== null && knowledge.ai_confidence !== undefined
-								? Number(knowledge.ai_confidence)
-								: 0
-						}
-						className="h-2 w-full bg-blue-100"
-					/>
+			{/* Manual Approval Action Card when status is PENDING */}
+			{knowledge.status === "PENDING" && hasWriteAccess && (
+				<div className="flex items-center justify-end gap-2 shrink-0 w-full pt-1">
+					<Button
+						type="button"
+						size="default"
+						onClick={() => setIsConfirmModalOpen(true)}
+						disabled={approveKnowledge.isPending || editKnowledge.isPending}
+						className="bg-blue-600 hover:bg-blue-700 text-white gap-2 cursor-pointer shadow-none rounded-lg px-4 h-10 font-medium text-sm ml-auto transition-colors"
+					>
+						{approveKnowledge.isPending || editKnowledge.isPending ? (
+							<>
+								<RiLoader4Line className="size-4 animate-spin" />
+								Indexing...
+							</>
+						) : (
+							<>
+								<RiCheckLine className="size-4" />
+								Approve Knowledge
+							</>
+						)}
+					</Button>
 				</div>
-
-				{/* Manual Approval Action Card when status is PENDING */}
-				{knowledge.status === "PENDING" && hasWriteAccess && (
-					<div className="flex items-center gap-2 shrink-0">
-						<Button
-							onClick={() => setIsConfirmModalOpen(true)}
-							disabled={approveKnowledge.isPending || editKnowledge.isPending}
-							className="bg-blue-600 hover:bg-blue-700 text-white gap-2 cursor-pointer shadow-none rounded-lg"
-						>
-							{approveKnowledge.isPending || editKnowledge.isPending ? (
-								<>
-									<RiLoader4Line className="size-4 animate-spin" />
-									Indexing...
-								</>
-							) : (
-								<>
-									<RiCheckLine className="size-4" />
-									Approve
-								</>
-							)}
-						</Button>
-					</div>
-				)}
-			</div>
+			)}
 
 			{/* Save Knowledge / Approve Confirmation Modal */}
 			<ConfirmationModal

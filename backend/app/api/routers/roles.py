@@ -52,12 +52,44 @@ async def list_available_accesses(
     result = await db.execute(stmt)
     return result.scalars().all()
 
-@router.get("/", response_model=List[RoleResponse])
+from app.schemas.pagination import PaginatedResponse
+from typing import List, Optional, Union
+from fastapi import Query
+import math
+
+@router.get("/", response_model=Union[PaginatedResponse[RoleResponse], List[RoleResponse]])
 async def list_roles(
+    search: Optional[str] = None,
+    page: Optional[int] = Query(None, ge=1, description="Page number"),
+    page_size: Optional[int] = Query(None, ge=1, le=100, description="Items per page"),
     db: AsyncSession = Depends(get_db),
     current_admin: User = Depends(RequireAccess(["roles:read", "users:read"]))
 ):
     stmt = select(Role).order_by(Role.name)
+    if search:
+        s_clean = f"%{search.strip()}%"
+        stmt = stmt.where(Role.name.ilike(s_clean))
+
+    if page is not None:
+        p_size = page_size or 10
+        count_stmt = select(func.count()).select_from(stmt.subquery())
+        count_res = await db.execute(count_stmt)
+        total = count_res.scalar() or 0
+        total_pages = max(1, math.ceil(total / p_size))
+
+        paginated_stmt = stmt.offset((page - 1) * p_size).limit(p_size)
+        result = await db.execute(paginated_stmt)
+        roles = result.scalars().all()
+        hydrated = [await _hydrate_role(role, db) for role in roles]
+
+        return PaginatedResponse[RoleResponse](
+            items=hydrated,
+            total=total,
+            page=page,
+            page_size=p_size,
+            total_pages=total_pages
+        )
+
     result = await db.execute(stmt)
     roles = result.scalars().all()
     return [await _hydrate_role(role, db) for role in roles]

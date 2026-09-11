@@ -1,5 +1,6 @@
 "use client";
 
+import { ConfirmationModal } from "@/components/shared/confirmation-modal";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
@@ -7,6 +8,14 @@ import { RiCheckLine, RiEdit2Line, RiLoader4Line, RiInformationFill } from "@rem
 import * as React from "react";
 import { toast } from "sonner";
 import { useConfigs, useUpdateConfig } from "../hooks/use-config";
+
+interface PendingSaveState {
+	key: "GLOBAL_TOKEN_THRESHOLD" | "GLOBAL_TOKEN_LIMIT" | "TOKEN_LIMIT_SPKK" | "TOKEN_LIMIT_GP";
+	title: string;
+	description: string;
+	value: string;
+	setter: (val: boolean) => void;
+}
 
 export function GlobalTokenConfig() {
 	const { data: configs, isLoading } = useConfigs();
@@ -37,6 +46,14 @@ export function GlobalTokenConfig() {
 	const [showWarning, setShowWarning] = React.useState(false);
 	const warningTimeoutRef = React.useRef<NodeJS.Timeout | undefined>(undefined);
 
+	// Toggle Confirmation State
+	const [toggleModalOpen, setToggleModalOpen] = React.useState(false);
+	const [pendingToggleActive, setPendingToggleActive] = React.useState<boolean | null>(null);
+
+	// Save Confirmation State
+	const [saveModalOpen, setSaveModalOpen] = React.useState(false);
+	const [pendingSave, setPendingSave] = React.useState<PendingSaveState | null>(null);
+
 	// Sync state when configs load
 	React.useEffect(() => {
 		if (configs) {
@@ -50,24 +67,46 @@ export function GlobalTokenConfig() {
 		}
 	}, [configs, isGlobalLimitActive, globalThreshold, branchTokenLimit, spdveLimit, gpPlusLimit]);
 
-	const handleSaveField = async (
+	const handleInitiateSave = (
 		key: "GLOBAL_TOKEN_THRESHOLD" | "GLOBAL_TOKEN_LIMIT" | "TOKEN_LIMIT_SPKK" | "TOKEN_LIMIT_GP",
+		title: string,
+		description: string,
 		value: string,
-		setEditing: (val: boolean) => void
+		setter: (val: boolean) => void
 	) => {
+		setPendingSave({ key, title, description, value, setter });
+		setSaveModalOpen(true);
+	};
+
+	const handleConfirmSave = async () => {
+		if (!pendingSave) return;
+		const { key, value, setter } = pendingSave;
 		try {
 			setSavingKey(key);
 			await updateConfig.mutateAsync({ key, data: { value } });
-			setEditing(false);
+			setter(false);
+			setShowWarning(true);
+			if (warningTimeoutRef.current) clearTimeout(warningTimeoutRef.current);
+			warningTimeoutRef.current = setTimeout(() => {
+				setShowWarning(false);
+			}, 5000);
 			toast.success("Token configuration updated successfully!");
 		} catch {
 			toast.error("Failed to update token configuration.");
 		} finally {
 			setSavingKey(null);
+			setPendingSave(null);
 		}
 	};
 
-	const handleToggle = (checked: boolean) => {
+	const handleInitiateToggle = (checked: boolean) => {
+		setPendingToggleActive(checked);
+		setToggleModalOpen(true);
+	};
+
+	const handleConfirmToggle = () => {
+		if (pendingToggleActive === null) return;
+		const checked = pendingToggleActive;
 		setIsActive(checked);
 
 		setShowWarning(true);
@@ -80,7 +119,12 @@ export function GlobalTokenConfig() {
 			{ key: "GLOBAL_TOKEN_LIMIT_ACTIVE", data: { value: checked.toString() } },
 			{
 				onSuccess: () => {
+					setPendingToggleActive(null);
 					toast.success(`Global token configuration ${checked ? "activated" : "deactivated"}!`);
+				},
+				onError: () => {
+					setIsActive(!checked);
+					setPendingToggleActive(null);
 				},
 			}
 		);
@@ -106,9 +150,9 @@ export function GlobalTokenConfig() {
 						<Switch
 							id="global-token-config-switch"
 							checked={isActive}
-							onCheckedChange={handleToggle}
+							onCheckedChange={handleInitiateToggle}
 							disabled={updateConfig.isPending}
-							className="data-[state=checked]:bg-blue-500"
+							className="data-[state=checked]:bg-blue-500 cursor-pointer"
 						/>
 						<label
 							htmlFor="global-token-config-switch"
@@ -161,13 +205,15 @@ export function GlobalTokenConfig() {
 												type="button"
 												className="bg-blue-600 hover:bg-blue-700 text-white rounded-lg px-4 font-medium h-10 text-sm transition-colors cursor-pointer shadow-none disabled:opacity-50"
 												onClick={() =>
-													handleSaveField(
+													handleInitiateSave(
 														"GLOBAL_TOKEN_THRESHOLD",
+														"Save Global Token Threshold",
+														`Are you sure you want to update the global token threshold to ${Number(thresholdAmount || 0).toLocaleString()} tokens per month?`,
 														thresholdAmount,
 														setEditingThreshold
 													)
 												}
-												disabled={savingKey === "GLOBAL_TOKEN_THRESHOLD"}
+												disabled={savingKey === "GLOBAL_TOKEN_THRESHOLD" || !thresholdAmount}
 											>
 												{savingKey === "GLOBAL_TOKEN_THRESHOLD" ? (
 													<RiLoader4Line className="size-4 animate-spin mr-1" />
@@ -237,13 +283,15 @@ export function GlobalTokenConfig() {
 												type="button"
 												className="bg-blue-600 hover:bg-blue-700 text-white rounded-lg px-4 font-medium h-10 text-sm transition-colors cursor-pointer shadow-none disabled:opacity-50"
 												onClick={() =>
-													handleSaveField(
+													handleInitiateSave(
 														"GLOBAL_TOKEN_LIMIT",
+														"Save Branch Token Limit",
+														`Are you sure you want to update the token amount per branch to ${Number(branchAmount || 0).toLocaleString()} tokens per month?`,
 														branchAmount,
 														setEditingBranch
 													)
 												}
-												disabled={savingKey === "GLOBAL_TOKEN_LIMIT"}
+												disabled={savingKey === "GLOBAL_TOKEN_LIMIT" || !branchAmount}
 											>
 												{savingKey === "GLOBAL_TOKEN_LIMIT" ? (
 													<RiLoader4Line className="size-4 animate-spin mr-1" />
@@ -304,13 +352,15 @@ export function GlobalTokenConfig() {
 													type="button"
 													className="bg-blue-600 hover:bg-blue-700 text-white rounded-lg px-4 font-medium h-10 text-sm transition-colors cursor-pointer shadow-none disabled:opacity-50"
 													onClick={() =>
-														handleSaveField(
+														handleInitiateSave(
 															"TOKEN_LIMIT_SPKK",
+															"Save SpDVE Token Limit",
+															`Are you sure you want to update the token amount for SpDVE to ${Number(spdveAmount || 0).toLocaleString()} tokens per month?`,
 															spdveAmount,
 															setEditingSpdve
 														)
 													}
-													disabled={savingKey === "TOKEN_LIMIT_SPKK"}
+													disabled={savingKey === "TOKEN_LIMIT_SPKK" || !spdveAmount}
 												>
 													{savingKey === "TOKEN_LIMIT_SPKK" ? (
 														<RiLoader4Line className="size-4 animate-spin mr-1" />
@@ -369,13 +419,15 @@ export function GlobalTokenConfig() {
 													type="button"
 													className="bg-blue-600 hover:bg-blue-700 text-white rounded-lg px-4 font-medium h-10 text-sm transition-colors cursor-pointer shadow-none disabled:opacity-50"
 													onClick={() =>
-														handleSaveField(
+														handleInitiateSave(
 															"TOKEN_LIMIT_GP",
+															"Save GP Plus Token Limit",
+															`Are you sure you want to update the token amount for GP Plus to ${Number(gpPlusAmount || 0).toLocaleString()} tokens per month?`,
 															gpPlusAmount,
 															setEditingGpPlus
 														)
 													}
-													disabled={savingKey === "TOKEN_LIMIT_GP"}
+													disabled={savingKey === "TOKEN_LIMIT_GP" || !gpPlusAmount}
 												>
 													{savingKey === "TOKEN_LIMIT_GP" ? (
 														<RiLoader4Line className="size-4 animate-spin mr-1" />
@@ -417,6 +469,39 @@ export function GlobalTokenConfig() {
 					</p>
 				</div>
 			</div>
+
+			{/* Toggle Confirmation Modal */}
+			<ConfirmationModal
+				isOpen={toggleModalOpen}
+				onOpenChange={(open) => {
+					setToggleModalOpen(open);
+					if (!open) setPendingToggleActive(null);
+				}}
+				title={pendingToggleActive ? "Activate Global Token Configuration" : "Deactivate Global Token Configuration"}
+				description={
+					pendingToggleActive
+						? "Are you sure you want to activate the global token limit configuration for all branches?"
+						: "Are you sure you want to deactivate the global token limit configuration?"
+				}
+				confirmText={pendingToggleActive ? "Activate" : "Deactivate"}
+				variant={pendingToggleActive ? "primary" : "destructive"}
+				isLoading={updateConfig.isPending}
+				onConfirm={handleConfirmToggle}
+			/>
+
+			{/* Save Field Confirmation Modal */}
+			<ConfirmationModal
+				isOpen={saveModalOpen}
+				onOpenChange={(open) => {
+					setSaveModalOpen(open);
+					if (!open) setPendingSave(null);
+				}}
+				title={pendingSave?.title || "Save Configuration"}
+				description={pendingSave?.description || "Are you sure you want to save these changes?"}
+				confirmText="Save and Apply"
+				isLoading={updateConfig.isPending && savingKey !== null}
+				onConfirm={handleConfirmSave}
+			/>
 		</div>
 	);
 }

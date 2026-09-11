@@ -14,7 +14,7 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet"
-import { RiEyeLine, RiEyeOffLine, RiImageAddLine, RiCloseLine, RiAddLine, RiLoader4Line } from "@remixicon/react"
+import { RiEyeLine, RiEyeOffLine, RiImageAddLine, RiAddLine, RiLoader4Line } from "@remixicon/react"
 import { useState, useEffect } from "react"
 import { useCreateStaff } from "../hooks/use-users"
 import { useRoles } from "../hooks/use-roles"
@@ -188,7 +188,6 @@ export function UserAddSheet({
             className="border-gray-200 bg-white text-zinc-700 hover:bg-zinc-50 rounded-lg px-4 h-10 font-medium text-sm transition-colors cursor-pointer shadow-none"
             onClick={() => onOpenChange(false)}
           >
-            <RiCloseLine className="mr-1.5 h-4 w-4 shrink-0" />
             Cancel
           </Button>
           <Button

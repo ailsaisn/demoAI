@@ -30,14 +30,6 @@ export function DoctorAdjustLimitDialog({
 	const isGP = drTypeUpper.includes("GP") || drTypeUpper.includes("UMUM");
 	const effectiveGlobalLimit = isSpDVE ? Number(spdveLimit) : isGP ? Number(gpPlusLimit) : 0;
 
-	const hasCustomLimit = doctor?.token_limit !== null && doctor?.token_limit !== undefined && doctor.token_limit > 0;
-	const currentEffectiveLimit = hasCustomLimit
-		? doctor.token_limit!
-		: (isGlobalLimitActive ? effectiveGlobalLimit : (doctor?.token_limit ?? 0));
-
-	const tokensUsed = doctor?.tokens_used ?? 0;
-	const tokensLeft = Math.max(0, currentEffectiveLimit - tokensUsed);
-
 	// Determine branch token limit bounds
 	const branches = doctor?.branches || [];
 	const rawMaxBranchLimit =
@@ -48,6 +40,14 @@ export function DoctorAdjustLimitDialog({
 	const maxBranchLimit = isGlobalLimitActive
 		? Number(globalBranchLimit)
 		: rawMaxBranchLimit;
+
+	const hasCustomLimit = doctor?.token_limit !== null && doctor?.token_limit !== undefined && doctor.token_limit > 0;
+	const currentEffectiveLimit = hasCustomLimit
+		? doctor.token_limit!
+		: (isGlobalLimitActive ? effectiveGlobalLimit : (doctor?.token_limit ?? maxBranchLimit));
+
+	const tokensUsed = doctor?.tokens_used ?? 0;
+	const tokensLeft = Math.max(0, currentEffectiveLimit - tokensUsed);
 
 	const isNoBranchAssigned = branches.length === 0;
 	const isBranchLimitUnset = isNoBranchAssigned || (!isGlobalLimitActive && maxBranchLimit === 0);

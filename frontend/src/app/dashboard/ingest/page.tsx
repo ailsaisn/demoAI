@@ -8,17 +8,17 @@ import {
 	RiGitRepositoryLine,
 	RiGitMergeLine,
 } from "@remixicon/react";
-import {
-	Select,
-	SelectContent,
-	SelectItem,
-	SelectTrigger,
-	SelectValue,
-} from "@/components/ui/select";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
+import { cn } from "@/lib/utils";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useState, useEffect, useMemo, Suspense } from "react";
-import { useUploadKnowledge, useIngestionQuota, useCreateGeneralChatSession } from "../knowledge/hooks/use-knowledge";
+import {
+	useUploadKnowledge,
+	useIngestTextKnowledge,
+	useIngestionQuota,
+	useCreateGeneralChatSession,
+} from "../knowledge/hooks/use-knowledge";
 import { useProjects } from "../knowledge/hooks/use-projects";
 
 function IngestContent() {
@@ -28,7 +28,11 @@ function IngestContent() {
 
 	const { data: projects = [] } = useProjects();
 	const uploadMutation = useUploadKnowledge();
+	const textIngestMutation = useIngestTextKnowledge();
 	const { data: quota } = useIngestionQuota();
+
+	const [uploadProgress, setUploadProgress] = useState<number>(0);
+	const isProcessing = uploadMutation.isPending || textIngestMutation.isPending;
 
 	const [mode, setMode] = useState<"ingest" | "general">("ingest");
 	const [selectedProjectId, setSelectedProjectId] = useState<string>(projectId || "none");
@@ -77,41 +81,74 @@ function IngestContent() {
 			return;
 		}
 
-		// Normal Ingestion Flow
-		if (files.length === 0) {
-			setErrorMsg("Please attach at least one file to ingest.");
+		const isValidProject = selectedProjectId !== "none" && projects.some((p) => p.id === selectedProjectId);
+		const targetProject = isValidProject ? selectedProjectId : null;
+
+		// 1. Files attached -> Standard Multipart Ingestion Flow
+		if (files.length > 0) {
+			const formData = new FormData();
+			if (value && value.trim()) {
+				formData.append("prompt", value.trim());
+			}
+
+			if (targetProject) {
+				formData.append("project_id", targetProject);
+			}
+
+			files.forEach((file) => {
+				formData.append("file", file);
+			});
+
+			setUploadProgress(0);
+			uploadMutation.mutate(
+				{
+					formData,
+					onProgress: (percent) => setUploadProgress(percent),
+				},
+				{
+					onSuccess: (data: { batch_id?: string; upload_batch_id?: string; documents?: { knowledge_id: string }[] }) => {
+						const batchId = data.batch_id || data.upload_batch_id;
+						if (batchId) {
+							router.push(`/dashboard/knowledge/batch/${batchId}`);
+						} else if (data.documents && data.documents.length > 0) {
+							router.push(`/dashboard/knowledge/${data.documents[0].knowledge_id}`);
+						} else if (targetProject) {
+							router.push(`/dashboard/knowledge/project/${targetProject}`);
+						} else {
+							router.push("/dashboard/knowledge");
+						}
+					},
+					onError: () => {
+						setUploadProgress(0);
+					},
+				}
+			);
+			return;
+		}
+
+		// 2. No files attached -> Text-Only Ingestion Flow
+		if (!value || !value.trim()) {
+			setErrorMsg("Please provide knowledge text or attach files to ingest.");
 			return false;
 		}
 
-		const formData = new FormData();
-		if (value && value.trim()) {
-			formData.append("prompt", value.trim());
-		}
-
-		const isValidProject = selectedProjectId !== "none" && projects.some((p) => p.id === selectedProjectId);
-		const targetProject = isValidProject ? selectedProjectId : null;
-		if (targetProject) {
-			formData.append("project_id", targetProject);
-		}
-
-		files.forEach((file) => {
-			formData.append("file", file);
-		});
-
-		uploadMutation.mutate(formData, {
-			onSuccess: (data: { batch_id?: string; upload_batch_id?: string; documents?: { knowledge_id: string }[] }) => {
-				const batchId = data.batch_id || data.upload_batch_id;
-				if (batchId) {
-					router.push(`/dashboard/knowledge/batch/${batchId}`);
-				} else if (data.documents && data.documents.length > 0) {
-					router.push(`/dashboard/knowledge/${data.documents[0].knowledge_id}`);
-				} else if (targetProject) {
-					router.push(`/dashboard/knowledge/project/${targetProject}`);
-				} else {
-					router.push("/dashboard/knowledge");
-				}
+		textIngestMutation.mutate(
+			{
+				text_content: value.trim(),
+				project_id: targetProject,
 			},
-		});
+			{
+				onSuccess: (data) => {
+					if (data.knowledge_id) {
+						router.push(`/dashboard/knowledge/${data.knowledge_id}`);
+					} else if (targetProject) {
+						router.push(`/dashboard/knowledge/project/${targetProject}`);
+					} else {
+						router.push("/dashboard/knowledge");
+					}
+				},
+			}
+		);
 	};
 
 	return (
@@ -140,7 +177,9 @@ function IngestContent() {
 						<div className="flex items-start gap-3 p-3.5 rounded-lg border border-amber-300 bg-white text-xs">
 							<RiAlertLine className="size-4 text-amber-600 shrink-0 mt-0.5" />
 							<div className="flex flex-col gap-0.5">
-								<span className="font-semibold text-zinc-900">Monthly Ingestion Limit Reached ({quota.percentage}%)</span>
+								<span className="font-semibold text-zinc-900">
+									Monthly Ingestion Limit Reached ({quota.percentage}%)
+								</span>
 								<span className="text-zinc-600">
 									Used {quota.tokens_used.toLocaleString()} of {quota.token_limit.toLocaleString()} tokens. Ingestion will proceed, but threshold can be adjusted in Configuration.
 								</span>
@@ -170,7 +209,7 @@ function IngestContent() {
 								"Analyze all uploaded documents and treat them as a unified knowledge base. Identify key information and cross-document relationships while ensuring that all findings remain strictly grounded in the provided sources. If the source knowledge is primarily in Indonesian, generate the response in Indonesian."
 							)
 						}
-						className="flex flex-col items-start p-3 text-left rounded-xl border border-zinc-200/70 bg-white hover:border-zinc-300 hover:bg-zinc-50/60 transition-all cursor-pointer shadow-none"
+						className="flex flex-col items-start p-3 text-left rounded-lg border border-zinc-200/70 bg-white hover:border-zinc-300 hover:bg-zinc-50/60 transition-all cursor-pointer shadow-none"
 					>
 						<RiGitRepositoryLine className="size-4 text-zinc-950 mb-1.5" />
 						<h3 className="font-semibold text-xs text-zinc-950 mb-0.5">Unified Knowledge Analysis</h3>
@@ -185,7 +224,7 @@ function IngestContent() {
 								"Review all uploaded files and map key entities, topics, and relationships across documents. Clearly distinguish between available information and information that is not provided in the knowledge base. If the source knowledge is primarily in Indonesian, generate the response in Indonesian."
 							)
 						}
-						className="flex flex-col items-start p-3 text-left rounded-xl border border-zinc-200/70 bg-white hover:border-zinc-300 hover:bg-zinc-50/60 transition-all cursor-pointer shadow-none"
+						className="flex flex-col items-start p-3 text-left rounded-lg border border-zinc-200/70 bg-white hover:border-zinc-300 hover:bg-zinc-50/60 transition-all cursor-pointer shadow-none"
 					>
 						<RiGitMergeLine className="size-4 text-zinc-950 mb-1.5" />
 						<h3 className="font-semibold text-xs text-zinc-950 mb-0.5">Entity & Topic Mapping</h3>
@@ -214,8 +253,9 @@ function IngestContent() {
 								? "Ask about the knowledge..."
 								: undefined
 						}
-						disabled={uploadMutation.isPending}
-						isLoading={uploadMutation.isPending}
+						disabled={isProcessing}
+						isLoading={isProcessing}
+						uploadProgress={uploadProgress}
 					/>
 				</div>
 
@@ -228,23 +268,48 @@ function IngestContent() {
 
 				{/* Mode Switch & Controls below prompt input */}
 				<div className="w-full flex flex-wrap items-center justify-between gap-3 mt-3 px-0.5">
-					{/* Toggle Switch */}
-					<div className="flex items-center gap-2">
+					{/* Toggle Switch: Ingest [Switch] Prompting */}
+					<div className="flex items-center gap-2.5">
+						<button
+							type="button"
+							onClick={() => {
+								if (!isProcessing) {
+									setMode("ingest");
+									setErrorMsg(null);
+								}
+							}}
+							className={cn(
+								"text-sm cursor-pointer select-none transition-colors",
+								!isGeneralMode ? "font-medium text-zinc-900" : "text-zinc-500 hover:text-zinc-800"
+							)}
+						>
+							Ingest
+						</button>
 						<Switch
-							id="general-mode-toggle"
+							id="ingest-mode-toggle"
 							checked={isGeneralMode}
 							onCheckedChange={(checked) => {
 								setMode(checked ? "general" : "ingest");
 								setErrorMsg(null);
 							}}
-							disabled={uploadMutation.isPending}
+							disabled={isProcessing}
+							className="data-checked:bg-blue-500 data-[state=checked]:bg-blue-500 cursor-pointer"
 						/>
-						<label
-							htmlFor="general-mode-toggle"
-							className="text-xs font-medium text-zinc-700 cursor-pointer select-none"
+						<button
+							type="button"
+							onClick={() => {
+								if (!isProcessing) {
+									setMode("general");
+									setErrorMsg(null);
+								}
+							}}
+							className={cn(
+								"text-sm cursor-pointer select-none transition-colors",
+								isGeneralMode ? "font-medium text-zinc-900" : "text-zinc-500 hover:text-zinc-800"
+							)}
 						>
-							{isGeneralMode ? "General Assistant Mode" : "File Ingestion Mode"}
-						</label>
+							Prompting
+						</button>
 					</div>
 
 					{/* Right Side: Project selector only when navigated from Project detail page, or helper for General */}
@@ -254,14 +319,14 @@ function IngestContent() {
 							<Select
 								value={selectedProjectId}
 								onValueChange={(val) => setSelectedProjectId(val ?? "none")}
-								disabled={uploadMutation.isPending}
+								disabled={isProcessing}
 							>
 								<SelectTrigger className="h-7.5 text-xs border border-zinc-200 bg-white text-zinc-700 rounded-md px-2.5 min-w-36 max-w-56 sm:max-w-72 shadow-none hover:border-zinc-300 transition-colors">
 									<SelectValue placeholder="Select Project" className="truncate">
 										{selectedProjectName}
 									</SelectValue>
 								</SelectTrigger>
-								<SelectContent align="end" alignItemWithTrigger={false} sideOffset={4} className="bg-white max-w-xs">
+								<SelectContent align="end" alignItemWithTrigger={false} sideOffset={4} className="bg-white max-w-xs shadow-none">
 									<SelectItem value="none">
 										<span className="truncate">No Project</span>
 									</SelectItem>
@@ -280,17 +345,10 @@ function IngestContent() {
 					) : null}
 				</div>
 
-				{/* Loading Overlays */}
-				{uploadMutation.isPending && (
-					<div className="absolute inset-0 bg-white/50 flex items-center justify-center rounded-xl z-10 backdrop-blur-sm">
-						<span className="text-sm font-medium text-blue-600">Uploading documents...</span>
-					</div>
-				)}
-
 				{!isGeneralMode && (
 					<div className="mt-4 px-3.5 py-1.5 w-fit mx-auto border border-zinc-200/60 rounded-full flex items-center justify-center text-[11px] text-zinc-600 bg-zinc-50/50">
 						<RiFileTextLine className="size-3 mr-1.5 text-zinc-600" />
-						Supports PDF, DOCX, XLSX, TXT, JPG, and PNG
+						Supports Text or PDF, DOCX, XLSX, TXT, JPG, PNG files
 					</div>
 				)}
 			</div>

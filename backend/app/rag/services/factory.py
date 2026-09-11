@@ -85,8 +85,13 @@ class AdapterFactory:
         provider = settings.llm_provider.lower()
         api_key = settings.openai_api_key or os.getenv("OPENAI_API_KEY") or "dummy-key"
         base_url = AdapterFactory._resolve_provider_base_url(provider)
+        model_name = getattr(settings, "openai_model_name", None) or "gpt-5.4-mini"
 
-        return OpenAIAdapter(api_key=api_key, base_url=base_url)
+        return OpenAIAdapter(api_key=api_key, model_name=model_name, base_url=base_url)
+
+    @staticmethod
+    def get_llm_adapter() -> BaseLLMAdapter:
+        return AdapterFactory.get_llm()
 
     @staticmethod
     def get_vector_store() -> BaseVectorStoreAdapter:

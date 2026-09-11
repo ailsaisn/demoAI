@@ -1,5 +1,6 @@
 "use client";
 
+import { ConfirmationModal } from "@/components/shared/confirmation-modal";
 import { Switch } from "@/components/ui/switch";
 import * as React from "react";
 import { toast } from "sonner";
@@ -16,6 +17,8 @@ export function GlobalFileAttachmentConfig() {
 
 	const [isUpdating, setIsUpdating] = React.useState(false);
 	const [localChecked, setLocalChecked] = React.useState(false);
+	const [confirmModalOpen, setConfirmModalOpen] = React.useState(false);
+	const [pendingChecked, setPendingChecked] = React.useState<boolean | null>(null);
 
 	React.useEffect(() => {
 		if (configs) {
@@ -25,23 +28,32 @@ export function GlobalFileAttachmentConfig() {
 		}
 	}, [configs, isChecked]);
 
-	const handleToggle = (checked: boolean) => {
-		setLocalChecked(checked);
+	const handleInitiateToggle = (checked: boolean) => {
+		setPendingChecked(checked);
+		setConfirmModalOpen(true);
+	};
+
+	const handleConfirmToggle = () => {
+		if (pendingChecked === null) return;
+		const targetVal = pendingChecked;
 		setIsUpdating(true);
-		
+		setLocalChecked(targetVal);
+
 		updateConfig.mutate(
-			{ key: "AI_PROMPT_FILE_ATTACHMENTS", data: { value: checked.toString() } },
+			{ key: "AI_PROMPT_FILE_ATTACHMENTS", data: { value: targetVal.toString() } },
 			{
 				onSuccess: () => {
 					setIsUpdating(false);
+					setPendingChecked(null);
 					toast.success("AI Prompt File Attachments setting updated successfully!");
 				},
 				onError: () => {
 					// Revert on error
-					setLocalChecked(!checked);
+					setLocalChecked(!targetVal);
+					setPendingChecked(null);
 					setIsUpdating(false);
-				}
-			}
+				},
+			},
 		);
 	};
 
@@ -67,7 +79,7 @@ export function GlobalFileAttachmentConfig() {
 						<Switch
 							id="global-file-attachment-switch"
 							checked={localChecked}
-							onCheckedChange={handleToggle}
+							onCheckedChange={handleInitiateToggle}
 							disabled={updateConfig.isPending || isUpdating}
 						/>
 						<label
@@ -79,6 +91,24 @@ export function GlobalFileAttachmentConfig() {
 					</div>
 				</div>
 			</div>
+
+			<ConfirmationModal
+				isOpen={confirmModalOpen}
+				onOpenChange={(open) => {
+					setConfirmModalOpen(open);
+					if (!open) setPendingChecked(null);
+				}}
+				title={pendingChecked ? "Allow File Attachments" : "Disallow File Attachments"}
+				description={
+					pendingChecked
+						? "Are you sure you want to allow doctors to attach files when asking questions to the AI assistant?"
+						: "Are you sure you want to disallow doctors from attaching files when asking questions to the AI assistant?"
+				}
+				confirmText={pendingChecked ? "Allow" : "Disallow"}
+				variant={pendingChecked ? "primary" : "destructive"}
+				isLoading={isUpdating || updateConfig.isPending}
+				onConfirm={handleConfirmToggle}
+			/>
 		</div>
 	);
 }

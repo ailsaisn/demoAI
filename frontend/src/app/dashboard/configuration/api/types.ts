@@ -30,6 +30,7 @@ export interface BranchDoctorResponse {
 	name: string;
 	speciality: string;
 	tokensLeft: number;
+	tokens_used?: number;
 	status: string;
 	maxTokens: number;
 	employee_id?: string;

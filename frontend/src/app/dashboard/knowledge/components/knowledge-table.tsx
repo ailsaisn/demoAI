@@ -19,6 +19,12 @@ import {
 	DropdownMenuRadioItem,
 } from "@/components/ui/dropdown-menu";
 import {
+	Popover,
+	PopoverContent,
+	PopoverTrigger,
+} from "@/components/ui/popover";
+import { Input } from "@/components/ui/input";
+import {
 	RiBookOpenLine,
 	RiBookletLine,
 	RiDatabase2Line,
@@ -29,15 +35,20 @@ import {
 	RiCloseLine,
 	RiMore2Line,
 	RiDeleteBinLine,
+	RiSearchLine,
+	RiCheckLine,
+	RiArrowDownSLine,
 } from "@remixicon/react";
 import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
 import { useKnowledgeBaseList, useDeleteKnowledge } from "@/app/dashboard/knowledge/hooks/use-knowledge";
 import { useCategories } from "@/app/dashboard/category/hooks/use-categories";
-import { KnowledgeResponse } from "@/app/dashboard/knowledge/api/types";
+import { KnowledgeResponse, extractKnowledgeCategories } from "@/app/dashboard/knowledge/api/types";
 import { AttachProjectDialog } from "./attach-project-dialog";
 import { ConfirmationModal } from "@/components/shared/confirmation-modal";
+import { usePagination } from "@/hooks/use-pagination";
+import { DataTablePagination } from "@/components/shared/data-table-pagination";
 
 interface DisplayRowItem {
 	id: string;
@@ -69,9 +80,17 @@ export function KnowledgeTable({
 	const router = useRouter();
 	const [statusFilter, setStatusFilter] = useState("ALL");
 	const [categoryFilter, setCategoryFilter] = useState("ALL");
+	const [isCategoryPopoverOpen, setIsCategoryPopoverOpen] = useState(false);
+	const [categorySearchQuery, setCategorySearchQuery] = useState("");
 	const { data: knowledgeList, isLoading, isError } = useKnowledgeBaseList();
 	const { data: availableCategories = [] } = useCategories();
 	const deleteMutation = useDeleteKnowledge();
+
+	const filteredAvailableCategories = useMemo(() => {
+		if (!categorySearchQuery.trim()) return availableCategories;
+		const q = categorySearchQuery.toLowerCase().trim();
+		return availableCategories.filter((c) => c.name.toLowerCase().includes(q));
+	}, [availableCategories, categorySearchQuery]);
 
 	// Delete Confirmation Modal State
 	const [deleteModalOpen, setDeleteModalOpen] = useState(false);
@@ -152,34 +171,10 @@ export function KnowledgeTable({
 
 		const rows: DisplayRowItem[] = [];
 
-		const extractCategories = (doc: KnowledgeResponse): string[] => {
-			const catSet = new Set<string>();
-			const rawList = (doc.metadata?.categories as string[]) || [];
-			const suggested =
-				(doc.metadata?.suggested_categories as Array<{ name: string } | string>) || [];
-			for (const c of rawList) {
-				if (typeof c === "string" && c.trim()) catSet.add(c.trim());
-			}
-			for (const s of suggested) {
-				if (typeof s === "string" && s.trim()) {
-					catSet.add(s.trim());
-				} else if (
-					s &&
-					typeof s === "object" &&
-					"name" in s &&
-					typeof (s as { name: unknown }).name === "string" &&
-					(s as { name: string }).name.trim()
-				) {
-					catSet.add((s as { name: string }).name.trim());
-				}
-			}
-			return Array.from(catSet);
-		};
-
 		// 1. Process Batch Groups
 		for (const [batchId, docs] of batchMap.entries()) {
 			const combinedCategories = Array.from(
-				new Set(docs.flatMap((d) => extractCategories(d))),
+				new Set(docs.flatMap((d) => extractKnowledgeCategories(d))),
 			);
 
 			if (docs.length === 1) {
@@ -229,6 +224,9 @@ export function KnowledgeTable({
 					return new Date(d.created_at) > new Date(latest) ? d.created_at : latest;
 				}, docs[0].created_at);
 
+				// Determine batch projectId: if any doc in batch has projectId
+				const batchProjectId = docs.find((d) => Boolean(d.project_id))?.project_id || null;
+
 				rows.push({
 					id: docs[0].id,
 					isBatch: true,
@@ -241,7 +239,7 @@ export function KnowledgeTable({
 					rawItem: docs[0],
 					allFileNames: allNames,
 					categories: combinedCategories,
-					projectId: docs[0].project_id,
+					projectId: batchProjectId,
 					allDocIds: docs.map((d) => d.id),
 				});
 			}
@@ -259,7 +257,7 @@ export function KnowledgeTable({
 				documentCount: 1,
 				rawItem: doc,
 				allFileNames: [doc.file_name],
-				categories: extractCategories(doc),
+				categories: extractKnowledgeCategories(doc),
 				projectId: doc.project_id,
 				allDocIds: [doc.id],
 			});
@@ -268,30 +266,46 @@ export function KnowledgeTable({
 		return rows;
 	}, [knowledgeList]);
 
+	const filteredList = useMemo(() => {
+		return displayRows
+			?.filter((item) => (selectedProjectId ? item.projectId === selectedProjectId : true))
+			?.filter((item) => (statusFilter !== "ALL" ? item.status === statusFilter : true))
+			?.filter((item) => isCategoryMatch(item.categories, categoryFilter))
+			?.filter(
+				(item) =>
+					item.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
+					item.allFileNames.some((f) => f.toLowerCase().includes(searchQuery.toLowerCase())) ||
+					item.description.toLowerCase().includes(searchQuery.toLowerCase()) ||
+					item.categories.some((c) => c.toLowerCase().includes(searchQuery.toLowerCase())),
+			)
+			.sort((a, b) => {
+				const timeA = a.created_at ? new Date(a.created_at).getTime() : 0;
+				const timeB = b.created_at ? new Date(b.created_at).getTime() : 0;
+				return timeB - timeA;
+			});
+	}, [displayRows, selectedProjectId, statusFilter, categoryFilter, searchQuery]);
+
+	const {
+		page,
+		pageSize,
+		totalPages,
+		totalItems,
+		paginatedItems,
+		setPage,
+		setPageSize,
+		startIndex,
+		endIndex,
+	} = usePagination({ items: filteredList, initialPageSize: 10 });
+
 	const hasActiveFilters = statusFilter !== "ALL" || categoryFilter !== "ALL" || !!selectedProjectId;
 
 	const handleResetFilters = () => {
 		setStatusFilter("ALL");
 		setCategoryFilter("ALL");
+		setCategorySearchQuery("");
+		setPage(1);
 		if (onClearProjectFilter) onClearProjectFilter();
 	};
-
-	const filteredList = displayRows
-		?.filter((item) => (selectedProjectId ? item.projectId === selectedProjectId : true))
-		?.filter((item) => (statusFilter !== "ALL" ? item.status === statusFilter : true))
-		?.filter((item) => isCategoryMatch(item.categories, categoryFilter))
-		?.filter(
-			(item) =>
-				item.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-				item.allFileNames.some((f) => f.toLowerCase().includes(searchQuery.toLowerCase())) ||
-				item.description.toLowerCase().includes(searchQuery.toLowerCase()) ||
-				item.categories.some((c) => c.toLowerCase().includes(searchQuery.toLowerCase())),
-		)
-		.sort((a, b) => {
-			const timeA = a.created_at ? new Date(a.created_at).getTime() : 0;
-			const timeB = b.created_at ? new Date(b.created_at).getTime() : 0;
-			return timeB - timeA;
-		});
 
 	const getStatusBadge = (status: string) => {
 		switch (status) {
@@ -357,34 +371,112 @@ export function KnowledgeTable({
 						</Button>
 					)}
 
-					{/* Category Filter */}
-					<DropdownMenu>
-						<DropdownMenuTrigger
+					{/* Category Filter with Search */}
+					<Popover open={isCategoryPopoverOpen} onOpenChange={setIsCategoryPopoverOpen}>
+						<PopoverTrigger
 							render={
 								<Button
 									variant="outline"
-									className="min-w-44 h-10 justify-start gap-2 bg-white font-normal text-zinc-700 hover:bg-zinc-50 border-gray-200 rounded-lg text-sm shadow-none cursor-pointer"
+									title={categoryFilter === "ALL" ? "All Categories" : categoryFilter}
+									className="min-w-44 h-10 justify-between gap-2 bg-white font-normal text-zinc-700 hover:bg-zinc-50 border-gray-200 rounded-lg text-sm shadow-none cursor-pointer"
 								/>
 							}
 						>
-							<RiDatabase2Line className="size-4 shrink-0 text-gray-500" />
-							<span className="truncate">
-								{categoryFilter === "ALL" ? "All Categories" : categoryFilter}
-							</span>
-						</DropdownMenuTrigger>
-						<DropdownMenuContent className="w-56 max-h-80 overflow-y-auto rounded-lg border border-gray-200 shadow-none p-1 bg-white">
-							<DropdownMenuRadioGroup value={categoryFilter} onValueChange={setCategoryFilter}>
-								<DropdownMenuRadioItem closeOnClick value="ALL">
-									All Categories
-								</DropdownMenuRadioItem>
-								{availableCategories.map((cat) => (
-									<DropdownMenuRadioItem key={cat.id} closeOnClick value={cat.name}>
-										{cat.name}
-									</DropdownMenuRadioItem>
-								))}
-							</DropdownMenuRadioGroup>
-						</DropdownMenuContent>
-					</DropdownMenu>
+							<div className="flex items-center gap-2 min-w-0 flex-1">
+								<RiDatabase2Line className="size-4 shrink-0 text-gray-500" />
+								<span className="truncate text-left">
+									{categoryFilter === "ALL" ? "All Categories" : categoryFilter}
+								</span>
+							</div>
+							<RiArrowDownSLine className="size-4 shrink-0 text-zinc-400 ml-1" />
+						</PopoverTrigger>
+						<PopoverContent
+							align="start"
+							className="w-56 p-2 flex flex-col gap-2 z-50 bg-white border border-gray-200 shadow-none rounded-lg ring-0 outline-none"
+						>
+							{/* Search Bar inside Popover */}
+							<div className="relative w-full">
+								<RiSearchLine className="absolute left-2.5 top-1/2 -translate-y-1/2 size-3.5 text-zinc-400 pointer-events-none" />
+								<Input
+									placeholder="Search category..."
+									value={categorySearchQuery}
+									onChange={(e) => setCategorySearchQuery(e.target.value)}
+									className="h-8 pl-8 pr-7 text-xs bg-zinc-50 border-gray-200 focus-visible:ring-blue-500 rounded-md"
+									autoFocus
+								/>
+								{categorySearchQuery && (
+									<button
+										type="button"
+										onClick={() => setCategorySearchQuery("")}
+										className="absolute right-2 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-zinc-600 cursor-pointer"
+									>
+										<RiCloseLine className="size-3.5" />
+									</button>
+								)}
+							</div>
+
+							{/* Category List */}
+							<div className="flex flex-col gap-0.5 max-h-56 overflow-y-auto overscroll-contain pr-0.5">
+								{(!categorySearchQuery ||
+									"all categories".includes(categorySearchQuery.toLowerCase().trim())) && (
+									<button
+										type="button"
+										onClick={() => {
+											setCategoryFilter("ALL");
+											setIsCategoryPopoverOpen(false);
+											setCategorySearchQuery("");
+											setPage(1);
+										}}
+										className={`flex items-center justify-between w-full px-2.5 py-1.5 rounded-md text-xs font-medium text-left transition-colors cursor-pointer ${
+											categoryFilter === "ALL"
+												? "bg-blue-50 text-blue-700"
+												: "text-zinc-700 hover:bg-zinc-100"
+										}`}
+									>
+										<span className="truncate">All Categories</span>
+										{categoryFilter === "ALL" && (
+											<RiCheckLine className="size-3.5 text-blue-600 shrink-0 ml-1.5" />
+										)}
+									</button>
+								)}
+
+								{filteredAvailableCategories.map((cat) => {
+									const isSelected = categoryFilter === cat.name;
+									return (
+										<button
+											type="button"
+											key={cat.id}
+											title={cat.name}
+											onClick={() => {
+												setCategoryFilter(cat.name);
+												setIsCategoryPopoverOpen(false);
+												setCategorySearchQuery("");
+												setPage(1);
+											}}
+											className={`flex items-center justify-between w-full px-2.5 py-1.5 rounded-md text-xs font-medium text-left transition-colors cursor-pointer ${
+												isSelected
+													? "bg-blue-50 text-blue-700"
+													: "text-zinc-700 hover:bg-zinc-100"
+											}`}
+										>
+											<span className="truncate min-w-0 flex-1">{cat.name}</span>
+											{isSelected && (
+												<RiCheckLine className="size-3.5 text-blue-600 shrink-0 ml-1.5" />
+											)}
+										</button>
+									);
+								})}
+
+								{filteredAvailableCategories.length === 0 &&
+									categorySearchQuery &&
+									!"all categories".includes(categorySearchQuery.toLowerCase().trim()) && (
+										<div className="py-4 text-center text-xs text-zinc-400">
+											No categories found
+										</div>
+									)}
+							</div>
+						</PopoverContent>
+					</Popover>
 
 					{/* Status Filter */}
 					<DropdownMenu>
@@ -416,9 +508,6 @@ export function KnowledgeTable({
 								</DropdownMenuRadioItem>
 								<DropdownMenuRadioItem closeOnClick value="PROCESSING">
 									Processing
-								</DropdownMenuRadioItem>
-								<DropdownMenuRadioItem closeOnClick value="REJECTED">
-									Rejected
 								</DropdownMenuRadioItem>
 							</DropdownMenuRadioGroup>
 						</DropdownMenuContent>
@@ -481,7 +570,7 @@ export function KnowledgeTable({
 						)}
 
 						{!isLoading &&
-							filteredList?.map((row) => (
+							paginatedItems?.map((row) => (
 								<TableRow
 									key={row.isBatch ? `batch-${row.batchId}` : `doc-${row.id}`}
 									className="hover:bg-gray-50/60 cursor-pointer"
@@ -607,6 +696,18 @@ export function KnowledgeTable({
 					</TableBody>
 				</Table>
 			</div>
+
+			<DataTablePagination
+				page={page}
+				pageSize={pageSize}
+				totalPages={totalPages}
+				totalItems={totalItems}
+				startIndex={startIndex}
+				endIndex={endIndex}
+				onPageChange={setPage}
+				onPageSizeChange={setPageSize}
+				itemName="documents"
+			/>
 
 			<AttachProjectDialog
 				isOpen={isAttachModalOpen}

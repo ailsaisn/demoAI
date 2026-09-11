@@ -1,5 +1,6 @@
 "use client";
 
+import { ConfirmationModal } from "@/components/shared/confirmation-modal";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { RiCheckLine, RiEdit2Line, RiLoader4Line, RiInformationFill } from "@remixicon/react";
@@ -15,6 +16,7 @@ export function GlobalTimeLimitConfig() {
 
 	const [isEditing, setIsEditing] = React.useState(false);
 	const [timeAmount, setTimeAmount] = React.useState("5");
+	const [isConfirmOpen, setIsConfirmOpen] = React.useState(false);
 
 	// Sync state when configs load, keeping it simple
 	React.useEffect(() => {
@@ -26,7 +28,7 @@ export function GlobalTimeLimitConfig() {
 		}
 	}, [configs, timeLimit]);
 
-	const handleSave = () => {
+	const handleConfirmSave = () => {
 		updateConfig.mutate(
 			{ key: "TIME_LIMIT_PER_SESSION", data: { value: timeAmount } },
 			{
@@ -87,15 +89,15 @@ export function GlobalTimeLimitConfig() {
 									<Button
 										type="button"
 										className="bg-blue-600 hover:bg-blue-700 text-white rounded-lg px-4 h-10 font-medium text-sm transition-colors cursor-pointer shadow-none gap-1.5 disabled:opacity-50"
-										onClick={handleSave}
-										disabled={updateConfig.isPending}
+										onClick={() => setIsConfirmOpen(true)}
+										disabled={updateConfig.isPending || !timeAmount}
 									>
 										{updateConfig.isPending ? (
 											<RiLoader4Line className="size-4 animate-spin mr-1" />
 										) : (
 											<RiCheckLine className="size-4 mr-1" />
 										)}
-										Save and Apply
+										Save
 									</Button>
 								</div>
 							) : (
@@ -126,6 +128,16 @@ export function GlobalTimeLimitConfig() {
 					</p>
 				</div>
 			</div>
+
+			<ConfirmationModal
+				isOpen={isConfirmOpen}
+				onOpenChange={setIsConfirmOpen}
+				title="Save Time Limit Per Session"
+				description={`Are you sure you want to update the session time limit to ${timeAmount} minutes per session?`}
+				confirmText="Save and Apply"
+				isLoading={updateConfig.isPending}
+				onConfirm={handleConfirmSave}
+			/>
 		</div>
 	);
 }

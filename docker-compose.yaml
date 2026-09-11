@@ -12,7 +12,7 @@ services:
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: [ "CMD-SHELL", "pg_isready -U postgres -d arya_noble" ]
+      test: ["CMD-SHELL", "pg_isready -U postgres -d arya_noble"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -31,7 +31,7 @@ services:
     volumes:
       - minio_data:/data
     healthcheck:
-      test: [ "CMD", "mc", "ready", "local" ]
+      test: ["CMD", "mc", "ready", "local"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -48,13 +48,21 @@ services:
       - ./backend/.env
     environment:
       - DATABASE_URL=postgresql+asyncpg://postgres:postgres@db:5432/arya_noble
+      - PG_HOST=db
+      - PG_PORT=5432
+      - POSTGRES_HOST=db
+      - POSTGRES_PORT=5432
     depends_on:
       db:
         condition: service_healthy
       minio:
         condition: service_healthy
     healthcheck:
-      test: [ "CMD-SHELL", 'python -c "import urllib.request; urllib.request.urlopen(''http://localhost:8000/health'')"' ]
+      test:
+        [
+          "CMD-SHELL",
+          'python -c "import urllib.request; urllib.request.urlopen(''http://localhost:8000/health'')"',
+        ]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -81,25 +89,6 @@ services:
       - /app/node_modules
       - /app/.next
 
-  mock-cis:
-    build:
-      context: ./mock-cis
-    container_name: skin_clinic_mock_cis
-    restart: always
-    ports:
-      - "8001:8001"
-    environment:
-      - BACKEND_URL=http://backend:8000
-      - BACKEND_WEBHOOK_URL=http://backend:8000/api/webhooks/cis
-    depends_on:
-      backend:
-        condition: service_healthy
-    volumes:
-      - ./mock-cis/main.py:/app/main.py
-      - ./mock-cis/keys:/app/keys
-      - ./mock-cis/frontend/dist:/app/frontend/dist
-
 volumes:
   pgdata:
   minio_data:
-

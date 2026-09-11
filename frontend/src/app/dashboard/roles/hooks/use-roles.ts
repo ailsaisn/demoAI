@@ -40,8 +40,8 @@ export const useCreateRole = () => {
 		},
 		onSuccess: () => {
 			toast.success("Role created successfully!");
-			queryClient.invalidateQueries({ queryKey: roleKeys.all });
-			queryClient.invalidateQueries({ queryKey: userKeys.all });
+			queryClient.invalidateQueries({ queryKey: roleKeys.all, refetchType: "all" });
+			queryClient.invalidateQueries({ queryKey: userKeys.all, refetchType: "all" });
 		},
 		onError: (error: unknown) => {
 			toast.error(getErrorMessage(error, "Failed to create role."));
@@ -59,8 +59,8 @@ export const useUpdateRole = () => {
 		},
 		onSuccess: () => {
 			toast.success("Role updated successfully!");
-			queryClient.invalidateQueries({ queryKey: roleKeys.all });
-			queryClient.invalidateQueries({ queryKey: userKeys.all });
+			queryClient.invalidateQueries({ queryKey: roleKeys.all, refetchType: "all" });
+			queryClient.invalidateQueries({ queryKey: userKeys.all, refetchType: "all" });
 		},
 		onError: (error: unknown) => {
 			toast.error(getErrorMessage(error, "Failed to update role."));
@@ -78,8 +78,8 @@ export const useDeleteRole = () => {
 		},
 		onSuccess: () => {
 			toast.success("Role deleted successfully!");
-			queryClient.invalidateQueries({ queryKey: roleKeys.all });
-			queryClient.invalidateQueries({ queryKey: userKeys.all });
+			queryClient.invalidateQueries({ queryKey: roleKeys.all, refetchType: "all" });
+			queryClient.invalidateQueries({ queryKey: userKeys.all, refetchType: "all" });
 		},
 		onError: (error: unknown) => {
 			toast.error(getErrorMessage(error, "Failed to delete role."));

@@ -17,4 +17,6 @@ backend/data/bm25_index.pkl
 !backend/data/pending/.gitkeep
 !backend/data/output/.gitkeep
 backend/tests/
+backend/scripts/
+scripts/
 data/

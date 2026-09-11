@@ -3,7 +3,6 @@
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import Image from "next/image";
 import { RiEyeLine } from "@remixicon/react";
 import * as React from "react";
 import { BranchResponse } from "../../configuration/api/types";
@@ -56,13 +55,13 @@ export function ViewBranchSheet({ branch }: ViewBranchSheetProps) {
 								>
 									<TabsTrigger
 										value="information"
-										className="font-medium text-sm text-zinc-600 hover:text-blue-700 data-active:text-blue-700 data-active:after:bg-blue-700 px-0 pb-2"
+										className="font-medium text-sm text-zinc-600 hover:text-blue-700 data-active:text-blue-700 data-active:after:bg-blue-700 px-0 pb-2 cursor-pointer"
 									>
 										Branch Information
 									</TabsTrigger>
 									<TabsTrigger
 										value="doctors"
-										className="font-medium text-sm text-zinc-600 hover:text-blue-700 data-active:text-blue-700 data-active:after:bg-blue-700 px-0 pb-2"
+										className="font-medium text-sm text-zinc-600 hover:text-blue-700 data-active:text-blue-700 data-active:after:bg-blue-700 px-0 pb-2 cursor-pointer"
 									>
 										Doctor List
 									</TabsTrigger>
@@ -156,26 +155,32 @@ export function ViewBranchSheet({ branch }: ViewBranchSheetProps) {
 									<div className="flex flex-col divide-y divide-black-50">
 										{branch.doctors?.map((doc) => (
 											<div key={doc.id} className="flex items-center gap-3 py-3 first:pt-0 last:pb-0">
-												<div className="size-10 rounded-md bg-zinc-200 shrink-0 overflow-hidden">
-													<Image
-														src="/mini-placeholder.svg"
-														alt={doc.name}
-														width={40}
-														height={40}
-														className="object-cover h-full w-full"
-													/>
+												<div className="size-10 rounded-md bg-zinc-100 border border-gray-200 flex items-center justify-center shrink-0 text-zinc-700 font-semibold text-xs select-none">
+													{doc.name
+														? doc.name
+																.split(" ")
+																.map((n: string) => n[0])
+																.slice(0, 2)
+																.join("")
+																.toUpperCase()
+														: "DR"}
 												</div>
 												<div className="flex flex-col gap-1 flex-1">
 													<div className="flex items-center justify-between">
 														<span className="text-sm font-medium text-black-500">{doc.name}</span>
 														<span className="text-xs text-zinc-600">{doc.dr_type || doc.speciality}</span>
 													</div>
-													<span className="text-xs text-black-300">
-														<span className="text-blue-600 font-medium">
-															{doc.tokensLeft?.toLocaleString() || 0} / {doc.maxTokens?.toLocaleString() || 0}
-														</span>{" "}
-														tokens remaining
-													</span>
+													<div className="flex items-center justify-between text-xs text-black-300">
+														<span>
+															Used: <span className="text-zinc-700 font-medium">{(doc.tokens_used ?? 0).toLocaleString()}</span> tokens
+														</span>
+														<span>
+															<span className="text-blue-600 font-medium">
+																{doc.tokensLeft?.toLocaleString() || 0} / {doc.maxTokens?.toLocaleString() || 0}
+															</span>{" "}
+															tokens left
+														</span>
+													</div>
 												</div>
 											</div>
 										))}

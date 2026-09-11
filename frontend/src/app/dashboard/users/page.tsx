@@ -1,12 +1,22 @@
 "use client";
 
-import { RiEyeLine, RiAddLine } from "@remixicon/react";
-import { useState, useMemo } from "react";
+import {
+	RiAddLine,
+	RiArrowDownSLine,
+	RiCloseLine,
+	RiEyeLine,
+	RiSearchLine,
+} from "@remixicon/react";
+import { useMemo, useState } from "react";
 
+import { SearchBar } from "@/components/shared/search-bar";
+import { useDebounce } from "@/hooks/use-debounce";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { SearchBar } from "@/components/shared/search-bar";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Input } from "@/components/ui/input";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import {
 	Select,
 	SelectContent,
@@ -24,18 +34,24 @@ import {
 } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
+import { useBranches } from "../branches/hooks/use-branches";
+import { UserResponse } from "./api/types";
 import { DoctorDetailsSheet } from "./components/doctor-details-sheet";
 import { UserAddSheet } from "./components/user-add-sheet";
 import { UserStaffProfileSheet } from "./components/user-staff-profile-sheet";
 import { useUsers } from "./hooks/use-users";
-import { useBranches } from "../branches/hooks/use-branches";
-import { UserResponse } from "./api/types";
+import { usePagination } from "@/hooks/use-pagination";
+import { DataTablePagination } from "@/components/shared/data-table-pagination";
 
 export default function UsersPage() {
 	const [activeTab, setActiveTab] = useState<string>("staff");
 	const [searchQuery, setSearchQuery] = useState("");
+	const debouncedSearch = useDebounce(searchQuery, 300);
 	const [selectedDrType, setSelectedDrType] = useState<string>("all");
-	const [selectedBranch, setSelectedBranch] = useState<string>("all");
+	const [selectedBranches, setSelectedBranches] = useState<string[]>([]);
+	const [isBranchPopoverOpen, setIsBranchPopoverOpen] = useState(false);
+	const [branchSearchQuery, setBranchSearchQuery] = useState("");
+	const debouncedBranchSearch = useDebounce(branchSearchQuery, 200);
 
 	const { data: staffData = [] } = useUsers("STAFF");
 	const { data: doctorData = [] } = useUsers("DOCTOR");
@@ -72,21 +88,23 @@ export default function UsersPage() {
 
 	// Filtered items based on search query
 	const filteredStaff = useMemo(() => {
-		if (!searchQuery.trim()) return staffData;
-		const q = searchQuery.toLowerCase();
+		if (!debouncedSearch.trim()) return staffData;
+		const q = debouncedSearch.toLowerCase();
 		return staffData.filter(
 			(s) =>
 				s.name?.toLowerCase().includes(q) ||
 				s.email?.toLowerCase().includes(q) ||
 				s.roles?.some((r) => r.name.toLowerCase().includes(q)),
 		);
-	}, [staffData, searchQuery]);
+	}, [staffData, debouncedSearch]);
+
+	const isAllBranchesSelected = branches.length > 0 && selectedBranches.length === branches.length;
 
 	const filteredDoctors = useMemo(() => {
 		return doctorData.filter((d) => {
 			// Search query match
-			if (searchQuery.trim()) {
-				const q = searchQuery.toLowerCase();
+			if (debouncedSearch.trim()) {
+				const q = debouncedSearch.toLowerCase();
 				const matchesQuery =
 					d.name?.toLowerCase().includes(q) ||
 					d.email?.toLowerCase().includes(q) ||
@@ -101,24 +119,50 @@ export default function UsersPage() {
 				if (d.dr_type !== selectedDrType) return false;
 			}
 
-			// Branch filter
-			if (selectedBranch !== "all") {
+			// Multi-Branch filter
+			if (selectedBranches.length > 0 && selectedBranches.length < branches.length) {
 				const hasBranch = d.branches?.some(
-					(b) => b.id === selectedBranch || b.name === selectedBranch,
+					(b) => selectedBranches.includes(b.id) || selectedBranches.includes(b.name),
 				);
 				if (!hasBranch) return false;
 			}
 
 			return true;
 		});
-	}, [doctorData, searchQuery, selectedDrType, selectedBranch]);
+	}, [doctorData, debouncedSearch, selectedDrType, selectedBranches, branches.length]);
+
+	const staffPagination = usePagination({ items: filteredStaff, initialPageSize: 10 });
+	const doctorPagination = usePagination({ items: filteredDoctors, initialPageSize: 10 });
+
+	const handleToggleBranch = (id: string) => {
+		setSelectedBranches((prev) =>
+			prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id],
+		);
+	};
+
+	const handleToggleAllBranches = () => {
+		if (isAllBranchesSelected) {
+			setSelectedBranches([]);
+		} else {
+			setSelectedBranches(branches.map((b) => b.id));
+		}
+	};
+
+	const filteredBranchOptions = useMemo(() => {
+		const q = debouncedBranchSearch.toLowerCase().trim();
+		if (!q) return branches;
+		return branches.filter((b) => b.name.toLowerCase().includes(q));
+	}, [branches, debouncedBranchSearch]);
 
 	// Selected filter labels
-	const selectedBranchName = useMemo(() => {
-		if (selectedBranch === "all") return "Select branch";
-		const branch = branches.find((b) => b.id === selectedBranch);
-		return branch ? branch.name : "Select branch";
-	}, [selectedBranch, branches]);
+	const selectedBranchLabel = useMemo(() => {
+		if (selectedBranches.length === 0 || isAllBranchesSelected) return "All branches";
+		if (selectedBranches.length === 1) {
+			const b = branches.find((item) => item.id === selectedBranches[0]);
+			return b ? b.name : "1 branch selected";
+		}
+		return `${selectedBranches.length} branches selected`;
+	}, [selectedBranches, branches, isAllBranchesSelected]);
 
 	const selectedDrTypeName = useMemo(() => {
 		if (selectedDrType === "all") return "Select doctor type";
@@ -140,7 +184,7 @@ export default function UsersPage() {
 						value="staff"
 						className="font-medium text-sm text-zinc-600 hover:text-blue-700 data-active:text-blue-700 data-active:after:bg-blue-700"
 					>
-						Staff Management
+						Staff
 					</TabsTrigger>
 					<TabsTrigger
 						value="doctors"
@@ -154,17 +198,22 @@ export default function UsersPage() {
 					<div className="flex items-center gap-3 flex-1 flex-wrap">
 						<SearchBar
 							containerClassName="max-w-md w-full"
-							placeholder={activeTab === "doctors" ? "Search for doctor's name" : "Search for user, staff, or doctor..."}
+							placeholder={
+								activeTab === "doctors"
+									? "Search for doctor's name"
+									: "Search for user, staff, or doctor..."
+							}
 							value={searchQuery}
 							onChange={(e) => setSearchQuery(e.target.value)}
 						/>
 						{activeTab === "doctors" && (
 							<>
-								<Select value={selectedDrType} onValueChange={(val) => setSelectedDrType(val ?? "all")}>
+								<Select
+									value={selectedDrType}
+									onValueChange={(val) => setSelectedDrType(val ?? "all")}
+								>
 									<SelectTrigger className="w-60 bg-white border-gray-200 text-gray-700 h-10 rounded-md">
-										<SelectValue placeholder="Select doctor type">
-											{selectedDrTypeName}
-										</SelectValue>
+										<SelectValue placeholder="Select doctor type">{selectedDrTypeName}</SelectValue>
 									</SelectTrigger>
 									<SelectContent alignItemWithTrigger={false} sideOffset={4} className="bg-white">
 										<SelectItem value="all">Select doctor type</SelectItem>
@@ -176,21 +225,110 @@ export default function UsersPage() {
 									</SelectContent>
 								</Select>
 
-								<Select value={selectedBranch} onValueChange={(val) => setSelectedBranch(val ?? "all")}>
-									<SelectTrigger className="w-60 bg-white border-gray-200 text-gray-700 h-10 rounded-md">
-										<SelectValue placeholder="Select branch">
-											{selectedBranchName}
-										</SelectValue>
-									</SelectTrigger>
-									<SelectContent alignItemWithTrigger={false} sideOffset={4} className="bg-white">
-										<SelectItem value="all">Select branch</SelectItem>
-										{branches.map((b) => (
-											<SelectItem key={b.id} value={b.id}>
-												{b.name}
-											</SelectItem>
-										))}
-									</SelectContent>
-								</Select>
+								<Popover open={isBranchPopoverOpen} onOpenChange={setIsBranchPopoverOpen}>
+									<PopoverTrigger
+										render={
+											<Button
+												type="button"
+												variant="outline"
+												className="min-w-64 w-auto justify-between font-normal text-sm bg-white border-gray-200 focus-visible:ring-blue-500 shadow-none h-10 rounded-md text-gray-700 hover:bg-zinc-50 cursor-pointer gap-2"
+											>
+												<span className="truncate">{selectedBranchLabel}</span>
+												<RiArrowDownSLine className="size-4 text-zinc-400 shrink-0 ml-auto" />
+											</Button>
+										}
+									/>
+									<PopoverContent
+										align="start"
+										className="min-w-(--anchor-width) w-max max-w-sm p-2.5 flex flex-col gap-2 z-60 bg-white border border-gray-200 shadow-none rounded-lg"
+									>
+										{/* Search Bar inside Combobox */}
+										<div className="relative w-full">
+											<RiSearchLine className="absolute left-2.5 top-1/2 -translate-y-1/2 size-3.5 text-zinc-400 pointer-events-none" />
+											<Input
+												placeholder="Search branch..."
+												value={branchSearchQuery}
+												onChange={(e) => setBranchSearchQuery(e.target.value)}
+												className="h-8 pl-8 pr-7 text-xs bg-zinc-50 border-gray-200 focus-visible:ring-blue-500 rounded-md"
+												autoFocus
+											/>
+											{branchSearchQuery && (
+												<button
+													type="button"
+													onClick={() => setBranchSearchQuery("")}
+													className="absolute right-2 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-zinc-600 cursor-pointer"
+												>
+													<RiCloseLine className="size-3.5" />
+												</button>
+											)}
+										</div>
+
+										{/* Branch Options List */}
+										<div className="flex flex-col gap-0.5 max-h-56 overflow-y-auto overscroll-contain pr-1">
+											{!branchSearchQuery && (
+												<>
+													<div
+														className="flex items-center gap-2 p-1.5 hover:bg-zinc-50 rounded-md cursor-pointer transition-colors"
+														onClick={handleToggleAllBranches}
+													>
+														<Checkbox
+															checked={isAllBranchesSelected}
+															onCheckedChange={handleToggleAllBranches}
+															className="data-[state=checked]:bg-blue-600 data-[state=checked]:border-blue-600"
+														/>
+														<span className="text-xs font-medium text-zinc-900">All Branches</span>
+													</div>
+													<div className="h-px bg-zinc-100 my-1" />
+												</>
+											)}
+
+											{filteredBranchOptions.length === 0 ? (
+												<div className="py-4 text-center text-xs text-zinc-500">
+													No branches found
+												</div>
+											) : (
+												filteredBranchOptions.map((b) => {
+													const isChecked =
+														isAllBranchesSelected || selectedBranches.includes(b.id);
+													return (
+														<div
+															key={b.id}
+															className="flex items-center gap-2 p-1.5 hover:bg-zinc-50 rounded-md cursor-pointer transition-colors"
+															onClick={() => handleToggleBranch(b.id)}
+														>
+															<Checkbox
+																checked={isChecked}
+																onCheckedChange={() => handleToggleBranch(b.id)}
+																className="data-[state=checked]:bg-blue-600 data-[state=checked]:border-blue-600"
+															/>
+															<span className="text-xs font-normal text-zinc-800 flex-1 whitespace-normal leading-snug">
+																{b.name}
+															</span>
+														</div>
+													);
+												})
+											)}
+										</div>
+
+										{/* Footer */}
+										<div className="pt-1.5 border-t border-zinc-100 flex items-center justify-between text-[11px] text-zinc-500">
+											<span>
+												{isAllBranchesSelected || selectedBranches.length === 0
+													? "All branches selected"
+													: `${selectedBranches.length} selected`}
+											</span>
+											{selectedBranches.length > 0 && (
+												<button
+													type="button"
+													onClick={() => setSelectedBranches([])}
+													className="text-blue-600 hover:underline cursor-pointer font-medium"
+												>
+													Reset
+												</button>
+											)}
+										</div>
+									</PopoverContent>
+								</Popover>
 							</>
 						)}
 					</div>
@@ -227,7 +365,7 @@ export default function UsersPage() {
 										</TableCell>
 									</TableRow>
 								) : (
-									filteredStaff.map((staff: UserResponse) => (
+									staffPagination.paginatedItems.map((staff: UserResponse) => (
 										<TableRow key={staff.id}>
 											<TableCell>
 												<div className="flex items-center gap-3">
@@ -274,6 +412,18 @@ export default function UsersPage() {
 							</TableBody>
 						</Table>
 					</div>
+
+					<DataTablePagination
+						page={staffPagination.page}
+						pageSize={staffPagination.pageSize}
+						totalPages={staffPagination.totalPages}
+						totalItems={staffPagination.totalItems}
+						startIndex={staffPagination.startIndex}
+						endIndex={staffPagination.endIndex}
+						onPageChange={staffPagination.setPage}
+						onPageSizeChange={staffPagination.setPageSize}
+						itemName="staff members"
+					/>
 				</TabsContent>
 
 				{/* Doctors Tab Content */}
@@ -299,7 +449,7 @@ export default function UsersPage() {
 										</TableCell>
 									</TableRow>
 								) : (
-									filteredDoctors.map((doc: UserResponse) => (
+									doctorPagination.paginatedItems.map((doc: UserResponse) => (
 										<TableRow key={doc.id}>
 											<TableCell>
 												<div className="flex items-center gap-3">
@@ -350,6 +500,18 @@ export default function UsersPage() {
 							</TableBody>
 						</Table>
 					</div>
+
+					<DataTablePagination
+						page={doctorPagination.page}
+						pageSize={doctorPagination.pageSize}
+						totalPages={doctorPagination.totalPages}
+						totalItems={doctorPagination.totalItems}
+						startIndex={doctorPagination.startIndex}
+						endIndex={doctorPagination.endIndex}
+						onPageChange={doctorPagination.setPage}
+						onPageSizeChange={doctorPagination.setPageSize}
+						itemName="doctors"
+					/>
 				</TabsContent>
 			</Tabs>
 

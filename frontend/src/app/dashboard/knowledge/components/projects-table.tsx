@@ -32,6 +32,8 @@ import {
 import { useProjects, useUpdateProject, useDeleteProject } from "../hooks/use-projects";
 import { ProjectDialog } from "./project-dialog";
 import { ConfirmationModal } from "@/components/shared/confirmation-modal";
+import { usePagination } from "@/hooks/use-pagination";
+import { DataTablePagination } from "@/components/shared/data-table-pagination";
 import type { ProjectResponse } from "../api/types";
 
 interface ProjectsTableProps {
@@ -54,6 +56,18 @@ export function ProjectsTable({ searchQuery = "" }: ProjectsTableProps) {
 	const { data: projects = [], isLoading, isError } = useProjects(searchQuery);
 	const updateMutation = useUpdateProject();
 	const deleteMutation = useDeleteProject();
+
+	const {
+		page,
+		pageSize,
+		totalPages,
+		totalItems,
+		paginatedItems,
+		setPage,
+		setPageSize,
+		startIndex,
+		endIndex,
+	} = usePagination({ items: projects, initialPageSize: 10 });
 
 	const handleOpenAdd = () => {
 		setProjectToEdit(null);
@@ -178,7 +192,7 @@ export function ProjectsTable({ searchQuery = "" }: ProjectsTableProps) {
 						)}
 
 						{!isLoading &&
-							projects.map((project) => {
+							paginatedItems.map((project) => {
 								const isInlineEditing = editingProjectId === project.id;
 
 								return (
@@ -296,6 +310,18 @@ export function ProjectsTable({ searchQuery = "" }: ProjectsTableProps) {
 					</TableBody>
 				</Table>
 			</div>
+
+			<DataTablePagination
+				page={page}
+				pageSize={pageSize}
+				totalPages={totalPages}
+				totalItems={totalItems}
+				startIndex={startIndex}
+				endIndex={endIndex}
+				onPageChange={setPage}
+				onPageSizeChange={setPageSize}
+				itemName="projects"
+			/>
 
 			<ProjectDialog
 				isOpen={isDialogOpen}

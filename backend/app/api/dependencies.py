@@ -11,7 +11,7 @@ from cryptography.hazmat.primitives.asymmetric import padding
 from app.core.config import settings
 from app.core.database import get_db
 from app.models.user import User
-from app.services.cis_sync import get_cis_public_key
+from app.services.cis_sync import get_cis_public_key, parse_cis_int
 
 # Used for Swagger UI only, actual auth happens via cookies
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="api/auth/login", auto_error=False)
@@ -39,9 +39,8 @@ async def get_current_user(
             user_cis_id = payload.get("sub")
             if not user_cis_id:
                 raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
-            try:
-                cis_int = int(user_cis_id)
-            except (ValueError, TypeError):
+            cis_int = parse_cis_int(user_cis_id)
+            if cis_int is None:
                 raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid doctor ID in token")
             stmt = select(User).where(User.cis_id == cis_int, User.deleted_at.is_(None))
         else:
@@ -108,9 +107,8 @@ async def get_current_user_from_proxy(
     user_id: str = Depends(verify_cis_proxy_signature),
     db: AsyncSession = Depends(get_db)
 ) -> User:
-    try:
-        cis_int = int(user_id)
-    except (ValueError, TypeError):
+    cis_int = parse_cis_int(user_id)
+    if cis_int is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid user ID in header")
     stmt = select(User).where(User.cis_id == cis_int, User.deleted_at.is_(None))
     result = await db.execute(stmt)
@@ -139,9 +137,8 @@ async def get_current_user_flexible(
             request.headers.get("x-signature"), 
             request.headers.get("x-user-id")
         )
-        try:
-            cis_int = int(user_id)
-        except (ValueError, TypeError):
+        cis_int = parse_cis_int(user_id)
+        if cis_int is None:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid user ID in header")
         stmt = select(User).where(User.cis_id == cis_int, User.deleted_at.is_(None))
         result = await db.execute(stmt)

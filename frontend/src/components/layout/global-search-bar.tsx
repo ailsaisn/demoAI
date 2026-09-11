@@ -252,7 +252,7 @@ export function GlobalSearchBar({ className }: { className?: string }) {
 
 			{/* Anchored Dropdown Panel (Exact width matching the searchbar) */}
 			{isOpen && (
-				<div className="absolute top-full left-0 right-0 mt-1.5 w-full rounded-xl border border-gray-200 bg-white z-50 overflow-hidden animate-in fade-in-0 duration-100">
+				<div className="absolute top-full left-0 right-0 mt-1.5 w-full rounded-xl border border-gray-200 bg-white z-50 overflow-hidden shadow-xl animate-in fade-in-0 duration-100">
 					{/* Category Tabs Header in exact requested order: Project -> Knowledge -> Chat History -> Category */}
 					<div className="flex items-center gap-1.5 border-b border-gray-100 px-3 py-2 bg-gray-50/70 text-xs overflow-x-auto no-scrollbar">
 						<button

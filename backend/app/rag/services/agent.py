@@ -39,6 +39,7 @@ CRITICAL: When the Doctor asks about MULTIPLE clinical concerns (e.g. Active Acn
 <parallelism_guideline>
 DEFAULT TO PARALLEL: Unless operations MUST be sequential, execute multiple tools simultaneously... parallel tool execution can be 3-5x faster.
 When a question requires searching multiple topics, execute ALL necessary tool calls in a SINGLE turn.
+MANDATORY: You MUST execute tool calls (search_treatments and/or search_products) on your very first turn using Action: tool_name or JSON format. DO NOT generate a direct conversational answer without calling tools!
 </parallelism_guideline>
 
 <conversation_history>
@@ -145,21 +146,20 @@ class MedicalAgent:
                 score = round(float(hit.get("score", 0.0)), 4)
                 chunk_id = hit.get("chunk_id", f"chk_{i}")
                 text = hit.get("text", "").strip()
+                image_url = meta.get("image_url") or meta.get("image")
+                img_tag = f" | Image: {image_url}" if image_url else ""
+                doc_type = meta.get("document_type", "GENERAL")
+                rel_prods = meta.get("related_products", [])
+                rel_prods_str = f" | Related Products: {', '.join(rel_prods[:3])}" if rel_prods else ""
 
                 formatted.append(
-                    f"[{i}] Source: {source} | Title: {title} | Page: p.{page} | Section: {section} | Score: {score}\n{text}"
+                    f"[{i}] Type: {doc_type} | Title: {title}{img_tag}{rel_prods_str} | Section: {section} | Source: {source}\n{text}"
                 )
                 sources_list.append({
                     "chunk_id": chunk_id,
                     "score": score,
                     "text": text[:300],
-                    "metadata": {
-                        "source_file": source,
-                        "title": title,
-                        "page": page,
-                        "section": section,
-                        "document_type": meta.get("document_type", "General")
-                    }
+                    "metadata": meta
                 })
 
             return "\n\n".join(formatted), sources_list

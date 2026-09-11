@@ -4,7 +4,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
     PROJECT_NAME: str = "Arya Noble Chatbot API"
-    DATABASE_URL: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/arya_noble"
+    DATABASE_URL: str = "postgresql+asyncpg://postgres:postgres@localhost:50010/arya_noble"
     SECRET_KEY: str = "supersecretkey" # Replace in production
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60
@@ -27,13 +27,16 @@ class Settings(BaseSettings):
     S3_SECRET_KEY: str = "minioadmin"
     S3_BUCKET: str = "images"
     S3_DOCUMENTS_BUCKET: str = "knowledge-documents"
+    S3_STAGING_BUCKET: str = "staging"
+    S3_APPROVED_BUCKET: str = "approved"
     S3_REGION: str = "us-east-1"
     S3_USE_PATH_STYLE: bool = True
+    S3_PUBLIC_URL: Optional[str] = None # Optional public CDN / API prefix (e.g. "https://dokterpedia.aryanoble.co.id/api/storage")
 
     COOKIE_DOMAIN: Optional[str] = None # e.g. ".aryanoble.web.id" or ".aryanoble.co.id"
     COOKIE_SECURE: Optional[bool] = None
     COOKIE_SAMESITE: str = "lax"
-    CORS_ORIGINS: list[str] = [
+    CORS_ORIGINS: list[str] | str = [
         "http://localhost:3000",
         "http://localhost:8000",
         "http://localhost:8001",

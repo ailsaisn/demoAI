@@ -61,7 +61,7 @@ export async function searchGlobal(
 		return { query: "", total_results: 0, knowledge: [], projects: [], categories: [], chats: [] };
 	}
 
-	const response = await api.get<UnifiedSearchResponse>("/search", {
+	const response = await api.get<UnifiedSearchResponse>("/search/", {
 		params: {
 			q: query.trim(),
 			category,

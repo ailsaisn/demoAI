@@ -32,9 +32,15 @@ async def get_project_stats(
         total_knowledge=total_knowledge
     )
 
-@router.get("/", response_model=List[ProjectResponse])
+from app.schemas.pagination import PaginatedResponse
+from typing import List, Optional, Union
+import math
+
+@router.get("/", response_model=Union[PaginatedResponse[ProjectResponse], List[ProjectResponse]])
 async def list_projects(
     search: Optional[str] = Query(None, description="Search query for project name"),
+    page: Optional[int] = Query(None, ge=1, description="Page number"),
+    page_size: Optional[int] = Query(None, ge=1, le=100, description="Items per page"),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(RequireAccess("knowledge:read"))
 ):
@@ -53,6 +59,37 @@ async def list_projects(
     if search and search.strip():
         search_term = f"%{search.strip()}%"
         query = query.where(Project.name.ilike(search_term))
+
+    if page is not None:
+        p_size = page_size or 10
+        count_stmt = select(func.count()).select_from(query.subquery())
+        count_res = await db.execute(count_stmt)
+        total = count_res.scalar() or 0
+        total_pages = max(1, math.ceil(total / p_size))
+
+        paginated_query = query.offset((page - 1) * p_size).limit(p_size)
+        result = await db.execute(paginated_query)
+        rows = result.all()
+
+        responses: List[ProjectResponse] = []
+        for project, count in rows:
+            responses.append(ProjectResponse(
+                id=project.id,
+                name=project.name,
+                description=project.description,
+                created_by=project.created_by,
+                total_knowledges=count,
+                created_at=project.created_at,
+                updated_at=project.updated_at
+            ))
+
+        return PaginatedResponse[ProjectResponse](
+            items=responses,
+            total=total,
+            page=page,
+            page_size=p_size,
+            total_pages=total_pages
+        )
 
     result = await db.execute(query)
     rows = result.all()
@@ -194,5 +231,9 @@ async def delete_project(
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
 
+    from sqlalchemy import update
     project.deleted_at = datetime.now(timezone.utc)
+    await db.execute(
+        update(Knowledge).where(Knowledge.project_id == project_id).values(project_id=None)
+    )
     await db.commit()

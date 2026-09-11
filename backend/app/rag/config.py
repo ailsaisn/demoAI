@@ -7,10 +7,11 @@ class Settings(BaseSettings):
     llm_provider: str = "openai"
     openai_api_key: Optional[str] = None
     openai_model_name: str = "gpt-5.4-mini"
+    llm_generation_temperature: float = 0.0  # Default 0.0. Recommended clinical range: 0.0 - 0.2
 
     # Vector DB (PGVector) Settings
-    pg_host: str = "db"
-    pg_port: int = 5432
+    pg_host: str = "localhost"
+    pg_port: int = 50010
     pg_db: str = "arya_noble"
     pg_user: str = "postgres"
     pg_password: str = "postgres"
@@ -19,7 +20,8 @@ class Settings(BaseSettings):
     @property
     def pg_conn_str(self) -> str:
         host = os.getenv("POSTGRES_HOST") or os.getenv("PG_HOST") or self.pg_host
-        return f"postgresql+psycopg://{self.pg_user}:{self.pg_password}@{host}:{self.pg_port}/{self.pg_db}"
+        port = os.getenv("POSTGRES_PORT") or os.getenv("PG_PORT") or self.pg_port
+        return f"postgresql+psycopg://{self.pg_user}:{self.pg_password}@{host}:{port}/{self.pg_db}"
 
 
     
@@ -49,6 +51,7 @@ class Settings(BaseSettings):
     guardrails_enabled: bool = True
     guardrails_block_offtopic: bool = True
     guardrails_redact_pii: bool = True
+    prompt_injection_confidence_threshold: float = 0.7  # Score threshold for blocking prompt injections
 
     # Vector Store Provider (factory pattern)
     vector_store_provider: str = "pgvector"  # "pgvector" | "qdrant"

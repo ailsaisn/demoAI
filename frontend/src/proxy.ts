@@ -24,22 +24,26 @@ function parseJwt(token: string): JwtPayload | null {
 
 export function proxy(request: NextRequest) {
 	const { pathname } = request.nextUrl;
-	const token = request.cookies.get("access_token")?.value;
-	const payload = token ? parseJwt(token) : null;
-	const isExpired = payload?.exp ? payload.exp * 1000 < Date.now() : true;
-	const isAuthenticated = payload && !isExpired;
+	const accessToken = request.cookies.get("access_token")?.value;
+	const refreshToken = request.cookies.get("refresh_token")?.value;
+
+	const accessPayload = accessToken ? parseJwt(accessToken) : null;
+	const refreshPayload = refreshToken ? parseJwt(refreshToken) : null;
+
+	const isAccessExpired = accessPayload?.exp ? accessPayload.exp * 1000 < Date.now() : true;
+	const isRefreshExpired = refreshPayload?.exp ? refreshPayload.exp * 1000 < Date.now() : true;
+
+	const hasActiveSession = (accessPayload && !isAccessExpired) || (refreshPayload && !isRefreshExpired);
 
 	// Determine home landing page based on role
 	let homePath = "/login";
-	if (isAuthenticated && payload) {
-		if (payload.type === "STAFF") {
-			homePath = "/dashboard/knowledge";
-		}
+	if (accessPayload && !isAccessExpired && accessPayload.type === "STAFF") {
+		homePath = "/dashboard/knowledge";
 	}
 
-	// Handle /login page for authenticated users
+	// Handle /login page for authenticated users with active access token
 	if (pathname === "/login") {
-		if (isAuthenticated) {
+		if (accessPayload && !isAccessExpired) {
 			return NextResponse.redirect(new URL(homePath, request.url));
 		}
 		return NextResponse.next();
@@ -53,12 +57,13 @@ export function proxy(request: NextRequest) {
 
 	// Handle /dashboard routes
 	if (pathname.startsWith("/dashboard")) {
-		if (!isAuthenticated) {
+		if (!hasActiveSession) {
 			const loginUrl = new URL("/login", request.url);
+			loginUrl.searchParams.set("reason", "session_expired");
 			loginUrl.searchParams.set("from", pathname);
 			return NextResponse.redirect(loginUrl);
 		}
-		if (payload?.type !== "STAFF") {
+		if (accessPayload && !isAccessExpired && accessPayload.type !== "STAFF") {
 			return NextResponse.redirect(new URL("/login", request.url));
 		}
 

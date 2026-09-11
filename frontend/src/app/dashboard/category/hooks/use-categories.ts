@@ -35,8 +35,8 @@ export function useCreateCategory() {
 			return response.data;
 		},
 		onSuccess: () => {
-			queryClient.invalidateQueries({ queryKey: categoryKeys.all });
-			queryClient.invalidateQueries({ queryKey: knowledgeKeys.all });
+			queryClient.invalidateQueries({ queryKey: categoryKeys.all, refetchType: "all" });
+			queryClient.invalidateQueries({ queryKey: knowledgeKeys.all, refetchType: "all" });
 			toast.success("Category created successfully");
 		},
 		onError: (error) => {
@@ -55,10 +55,10 @@ export function useUpdateCategory() {
 			return response.data;
 		},
 		onSuccess: (_, variables) => {
-			queryClient.invalidateQueries({ queryKey: categoryKeys.all });
-			queryClient.invalidateQueries({ queryKey: knowledgeKeys.all });
+			queryClient.invalidateQueries({ queryKey: categoryKeys.all, refetchType: "all" });
+			queryClient.invalidateQueries({ queryKey: knowledgeKeys.all, refetchType: "all" });
 			if (variables?.id) {
-				queryClient.invalidateQueries({ queryKey: categoryKeys.detail(variables.id) });
+				queryClient.invalidateQueries({ queryKey: categoryKeys.detail(variables.id), refetchType: "all" });
 			}
 			toast.success("Category updated successfully");
 		},
@@ -78,8 +78,8 @@ export function useDeleteCategory() {
 			return response.data;
 		},
 		onSuccess: () => {
-			queryClient.invalidateQueries({ queryKey: categoryKeys.all });
-			queryClient.invalidateQueries({ queryKey: knowledgeKeys.all });
+			queryClient.invalidateQueries({ queryKey: categoryKeys.all, refetchType: "all" });
+			queryClient.invalidateQueries({ queryKey: knowledgeKeys.all, refetchType: "all" });
 			toast.success("Category deleted successfully");
 		},
 		onError: (error) => {

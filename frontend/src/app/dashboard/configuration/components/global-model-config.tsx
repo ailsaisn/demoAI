@@ -1,5 +1,6 @@
 "use client";
 
+import { ConfirmationModal } from "@/components/shared/confirmation-modal";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -22,6 +23,7 @@ export function GlobalModelConfig() {
 
 	const [isEditing, setIsEditing] = React.useState(false);
 	const [showKeys, setShowKeys] = React.useState(false);
+	const [isConfirmOpen, setIsConfirmOpen] = React.useState(false);
 
 	// Form state
 	const [activeProvider, setActiveProvider] = React.useState("openai");
@@ -44,8 +46,6 @@ export function GlobalModelConfig() {
 		}
 	}, [configs]);
 
-
-
 	const inputClass = "bg-black-50 border-black-50 text-black-500";
 
 	const handleFetchModels = async () => {
@@ -61,6 +61,18 @@ export function GlobalModelConfig() {
 			setAvailableModels([]);
 			toast.error(getErrorMessage(error, "Failed to fetch models."));
 		}
+	};
+
+	const handleInitiateSave = () => {
+		if (!modelName) {
+			toast.error("Please select a model.");
+			return;
+		}
+		if (!apiKey) {
+			toast.error("Please enter an API key.");
+			return;
+		}
+		setIsConfirmOpen(true);
 	};
 
 	const handleSave = async () => {
@@ -88,7 +100,6 @@ export function GlobalModelConfig() {
 	if (isLoading) {
 		return <div className="p-4 text-center text-sm text-zinc-600">Loading AI configuration...</div>;
 	}
-
 
 	return (
 		<div className="flex flex-col w-full">
@@ -134,7 +145,7 @@ export function GlobalModelConfig() {
 								<Button
 									type="button"
 									className="bg-blue-600 hover:bg-blue-700 text-white rounded-lg px-4 h-10 font-medium text-sm transition-colors cursor-pointer shadow-none gap-1.5 disabled:opacity-50"
-									onClick={handleSave}
+									onClick={handleInitiateSave}
 									disabled={updateConfig.isPending || !modelName || !apiKey}
 								>
 									{updateConfig.isPending ? (
@@ -278,6 +289,16 @@ export function GlobalModelConfig() {
 					</p>
 				</div>
 			</div>
+
+			<ConfirmationModal
+				isOpen={isConfirmOpen}
+				onOpenChange={setIsConfirmOpen}
+				title="Save AI Model Configuration"
+				description={`Are you sure you want to update the AI model settings with provider "${activeProvider}" and model "${modelName}"?`}
+				confirmText="Save and Apply"
+				isLoading={updateConfig.isPending}
+				onConfirm={handleSave}
+			/>
 		</div>
 	);
 }

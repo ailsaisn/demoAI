@@ -2,6 +2,7 @@ import os
 import json
 import base64
 import asyncio
+import logging
 import httpx
 import jwt
 import datetime
@@ -9,12 +10,15 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, status, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse, Response
 from pydantic import BaseModel
 from typing import Optional, List, Dict, Any
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import padding
 from cryptography.hazmat.primitives import serialization
+
+logger = logging.getLogger("mock-cis")
+logging.basicConfig(level=logging.INFO)
 
 KEYS_DIR = os.path.join(os.path.dirname(__file__), "keys")
 PRIVATE_KEY_PATH = os.path.join(KEYS_DIR, "private_key.pem")
@@ -409,6 +413,25 @@ async def proxy_chat_messages(session_id: str, request: Request):
 @app.post("/api/chats/{session_id}/messages/stream")
 async def proxy_chat_stream(session_id: str, request: Request):
     return await stream_to_backend(request, f"/api/chats/{session_id}/messages/stream")
+
+@app.get("/api/storage/{s3_key:path}")
+async def proxy_storage_asset(s3_key: str, request: Request):
+    clean_key = s3_key.lstrip("/")
+    target_url = f"{BACKEND_URL}/api/storage/{clean_key}"
+    if request.url.query:
+        target_url = f"{target_url}?{request.url.query}"
+    
+    try:
+        async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
+            resp = await client.get(target_url)
+            filtered_headers = {
+                k: v for k, v in resp.headers.items() 
+                if k.lower() not in ["transfer-encoding", "content-length"]
+            }
+            return Response(content=resp.content, status_code=resp.status_code, headers=filtered_headers)
+    except httpx.RequestError as e:
+        logger.error(f"Error proxying storage asset ({target_url}): {e}")
+        raise HTTPException(status_code=502, detail=f"Backend storage connection error: {str(e)}")
 
 # Serve static files from React build (dist folder)
 frontend_dist = os.path.join(os.path.dirname(__file__), "frontend", "dist")

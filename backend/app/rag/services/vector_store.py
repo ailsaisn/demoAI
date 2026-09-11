@@ -36,7 +36,7 @@ class PGVectorAdapter(BaseVectorStoreAdapter):
         
         logger.info(f"Initializing PGVector client (Dimension: {dim})...")
         try:
-            self.engine = create_engine(self.conn_str)
+            self.engine = create_engine(self.conn_str, pool_pre_ping=True, pool_recycle=300)
             with self.engine.connect() as conn:
                 conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
                 conn.commit()
@@ -154,19 +154,21 @@ class PGVectorAdapter(BaseVectorStoreAdapter):
                 q = session.query(DocumentChunk, dist_col)
                 
                 if filter_metadata:
+                    from sqlalchemy import cast, String, not_, or_
                     for k, v in filter_metadata.items():
                         if k == "excluded_categories" and isinstance(v, list):
-                            from sqlalchemy import not_
                             for item in v:
                                 if item:
-                                    q = q.filter(not_(DocumentChunk.metadata_["categories"].astext.ilike(f"%{item}%")))
+                                    q = q.filter(not_(cast(DocumentChunk.metadata_["categories"], String).ilike(f"%{item}%")))
                         elif isinstance(v, list):
-                            from sqlalchemy import or_
-                            or_clauses = [DocumentChunk.metadata_[k].astext.ilike(f"%{item}%") for item in v if item]
+                            or_clauses = [cast(DocumentChunk.metadata_[k], String).ilike(f"%{item}%") for item in v if item]
+                            if "all" in v:
+                                or_clauses.append(cast(DocumentChunk.metadata_[k], String).ilike("%all%"))
+                                or_clauses.append(DocumentChunk.metadata_[k].is_(None))
                             if or_clauses:
                                 q = q.filter(or_(*or_clauses))
                         elif v:
-                            q = q.filter(DocumentChunk.metadata_[k].astext.ilike(f"%{v}%"))
+                            q = q.filter(cast(DocumentChunk.metadata_[k], String).ilike(f"%{v}%"))
                         
                 results = q.order_by(dist_col).limit(top_k).all()
                 
@@ -184,15 +186,23 @@ class PGVectorAdapter(BaseVectorStoreAdapter):
             logger.error(f"Search failed in PGVector store: {e}")
             return []
 
-    def delete_document(self, source_file: str):
+    def delete_document(self, identifier: str):
         try:
-            logger.info(f"Deleting chunks for source_file: {source_file}")
+            logger.info(f"Deleting chunks for identifier: {identifier}")
+            from sqlalchemy import text
             with self.Session() as session:
-                session.query(DocumentChunk).filter_by(source_file=source_file).delete()
+                result = session.execute(text(f"""
+                    DELETE FROM {self.collection_name}
+                    WHERE source_file = :src
+                       OR source_file ILIKE :src_like
+                       OR metadata ->> 'knowledge_id' = :src
+                       OR metadata ->> 'file_name' = :src
+                """), {"src": str(identifier), "src_like": f"%{identifier}%"})
                 session.commit()
-            logger.info(f"Successfully deleted chunks for {source_file} from PGVector.")
+                deleted_rows = result.rowcount
+            logger.info(f"Successfully deleted {deleted_rows} chunks for {identifier} from PGVector.")
         except Exception as e:
-            logger.error(f"Failed to delete chunks for {source_file}: {e}")
+            logger.error(f"Failed to delete chunks for {identifier}: {e}")
             raise
 
     def clear_all(self):

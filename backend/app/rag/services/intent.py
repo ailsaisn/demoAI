@@ -50,26 +50,44 @@ def format_doctor_name(doctor_name: Optional[str] = None) -> str:
     return f"dr. {clean}"
 
 
-def get_time_greeting_response(query: str = "", doctor_name: Optional[str] = None) -> str:
+def get_contextual_greeting_response(query: str = "", doctor_name: Optional[str] = None) -> str:
     """
-    Generates a concise, polite, and objective greeting response for Doctors,
-    adjusted to the current time of day and identity questions.
+    Generates a natural, warm, and contextual greeting response for Doctors,
+    matching the doctor's greeting tone and greeting words (not rigid to server clock).
     """
-    period = get_current_time_period()
-    time_greeting = f"Selamat {period}"
     doc_title = format_doctor_name(doctor_name)
-
     q_lower = query.lower().strip()
-    if any(k in q_lower for k in ["siapa", "kamu siapa", "anda siapa", "bot apa", "kamu siapa?"]):
-        return f"Halo {doc_title}! {time_greeting}. Saya ERHA Medical Assistant, asisten klinis yang siap membantu Dokter mencari informasi SOP tindakan medis, indikasi, dan panduan produk ERHA."
 
-    return f"Halo {doc_title}! {time_greeting}. Saya ERHA Medical Assistant, siap membantu Dokter terkait protokol tindakan atau produk ERHA."
+    # Contextual greeting matching from doctor's prompt
+    salutation = "Halo"
+    if "selamat pagi" in q_lower or "pagi" in q_lower.split():
+        salutation = "Selamat pagi"
+    elif "selamat siang" in q_lower or "siang" in q_lower.split():
+        salutation = "Selamat siang"
+    elif "selamat sore" in q_lower or "sore" in q_lower.split():
+        salutation = "Selamat sore"
+    elif "selamat malam" in q_lower or "malam" in q_lower.split():
+        salutation = "Selamat malam"
+    elif "assalamualaikum" in q_lower or "assalamu'alaikum" in q_lower:
+        salutation = "Wa'alaikumsalam"
+    elif "hai" in q_lower.split() or "hi" in q_lower.split():
+        salutation = "Hai"
+
+    if any(k in q_lower for k in ["siapa", "kamu siapa", "anda siapa", "bot apa", "siapakah kamu"]):
+        return f"{salutation}, {doc_title}! Saya ERHA Medical Assistant, asisten klinis yang siap membantu Dokter mencari informasi SOP tindakan medis, indikasi, dan panduan produk ERHA."
+
+    return f"{salutation}, {doc_title}! Saya ERHA Medical Assistant. Ada yang bisa saya bantu terkait protokol tindakan medis atau produk ERHA hari ini?"
+
+
+# Backward compatibility alias
+def get_time_greeting_response(query: str = "", doctor_name: Optional[str] = None) -> str:
+    return get_contextual_greeting_response(query=query, doctor_name=doctor_name)
 
 
 def get_closing_response(doctor_name: Optional[str] = None) -> str:
     """Generates a warm, professional closing response without repeating past recommendations."""
     doc_title = format_doctor_name(doctor_name)
-    return f"Sama-sama, {doc_title}! Senang bisa membantu. Jika butuh referensi produk atau protokol lainnya, saya siap membantu!"
+    return f"Sama-sama, {doc_title}! Senang bisa membantu."
 
 
 class QueryIntent(str, Enum):
@@ -85,7 +103,10 @@ class QueryIntent(str, Enum):
     COMPARISON = "COMPARISON"
     AVAILABILITY = "AVAILABILITY"
     PRICE = "PRICE"
+    EDIT = "EDIT"
+    DELETE = "DELETE"
     UNKNOWN = "UNKNOWN"
+
 
 
 _INTENT_PATTERNS = [
@@ -114,12 +135,26 @@ _INTENT_PATTERNS = [
             r"^\s*(oke|ok|okay)\s+(dok|dokter|sip|siap|baik|noted)\s*[\.\,\!\?]*\s*$"
         ]
     ),
-    # 1. PRICE
+    # 1. EDIT KNOWLEDGE
+    (
+        QueryIntent.EDIT,
+        [
+            r"\b(ganti|ubah|edit|tukar|salin|revisi|pembaruan|perbarui|modifikasi|perbaiki|gantikan|gantiin|update|pasang|set|sesuaikan)\b"
+        ]
+    ),
+    # 2. DELETE KNOWLEDGE
+    (
+        QueryIntent.DELETE,
+        [
+            r"\b(hapus|delete|hilangkan|remove|buang|bersihkan|tiadakan|drop|clear|wipe|erase)\b"
+        ]
+    ),
+    # 3. PRICE
     (
         QueryIntent.PRICE,
         [r"\bharga\b", r"\bberapa harga\b", r"\bbiaya\b", r"\bprice\b", r"\bharganya\b"]
     ),
-    # 2. PRODUCT_NAME
+    # 4. PRODUCT_NAME
     (
         QueryIntent.PRODUCT_NAME,
         [
@@ -129,7 +164,7 @@ _INTENT_PATTERNS = [
             r"\bsebutkan nama produk\b"
         ]
     ),
-    # 3. INGREDIENTS
+    # 5. INGREDIENTS
     (
         QueryIntent.INGREDIENTS,
         [
@@ -138,16 +173,17 @@ _INTENT_PATTERNS = [
             r"\bterbuat dari\b", r"\bmengandung apa\b"
         ]
     ),
-    # 4. HOW_TO_USE
+    # 6. HOW_TO_USE / PROCEDURE / TAHAPAN TREATMENT
     (
         QueryIntent.HOW_TO_USE,
         [
             r"\bcara pakain?ya?\b", r"\bcara pengunaan\b", r"\baturan pakai\b",
             r"\bdosis\b", r"\bhow to use\b", r"\bdipakai kapan\b", r"\burutan pakai\b",
-            r"\bcara menggunakannya\b", r"\bcara mengoleskan\b"
+            r"\bcara menggunakannya\b", r"\bcara mengoleskan\b",
+            r"\b(tahapan|tahapan treatment|tahapan tindakan|prosedur|prosedur tindakan|prosedur treatment|langkah[- ]langkah|protokol|step[- ]by[- ]step|alur tindakan|alur treatment)\b"
         ]
     ),
-    # 5. WARNING / CONTRAINDICATION / PREGNANCY
+    # 7. WARNING / CONTRAINDICATION / PREGNANCY
     (
         QueryIntent.WARNING,
         [
@@ -156,7 +192,7 @@ _INTENT_PATTERNS = [
             r"\biritasi\b", r"\balergi\b", r"\bpantangan\b"
         ]
     ),
-    # 6. COMPARISON
+    # 8. COMPARISON
     (
         QueryIntent.COMPARISON,
         [
@@ -164,7 +200,7 @@ _INTENT_PATTERNS = [
             r"\bdibandingkan\b", r"\bvs\b", r"\bmana yang lebih\b"
         ]
     ),
-    # 7. SUITABLE_FOR
+    # 9. SUITABLE_FOR
     (
         QueryIntent.SUITABLE_FOR,
         [
@@ -172,14 +208,14 @@ _INTENT_PATTERNS = [
             r"\bjenis kulit\b", r"\bindikasi pasien\b", r"\bsuitable for\b"
         ]
     ),
-    # 8. BENEFITS
+    # 10. BENEFITS
     (
         QueryIntent.BENEFITS,
         [
             r"\bkeunggulan\b", r"\bkelebihan\b", r"\bbenefit\b", r"\badvantages\b"
         ]
     ),
-    # 9. PRODUCT_FUNCTION
+    # 11. PRODUCT_FUNCTION
     (
         QueryIntent.PRODUCT_FUNCTION,
         [
@@ -188,7 +224,7 @@ _INTENT_PATTERNS = [
             r"\bberfungsi untuk\b"
         ]
     ),
-    # 10. AVAILABILITY
+    # 12. AVAILABILITY
     (
         QueryIntent.AVAILABILITY,
         [
@@ -197,6 +233,7 @@ _INTENT_PATTERNS = [
         ]
     ),
 ]
+
 
 
 class QueryIntentDetector:
@@ -291,59 +328,59 @@ class QueryIntentDetector:
             return {
                 "max_sentences": 1,
                 "length_instruction": "Return ONLY the exact product name in 1 sentence. Do not add unsolicited product recommendations, clinical regimens, or usage instructions.",
-                "missing_fallback": "Informasi mengenai topik ini belum terdaftar dalam panduan resmi ERHA saat ini, Dok. Silakan lakukan konfirmasi manual ke Dept Functional / Admin."
+                "missing_fallback": "Untuk saat ini informasi tersebut belum tersedia."
             }
         elif intent == QueryIntent.INGREDIENTS:
             return {
                 "max_sentences": 2,
                 "length_instruction": "Return ONLY the relevant active ingredients in 1-2 sentences or a concise list. Do not add unsolicited product recommendations or clinical advice.",
-                "missing_fallback": "Informasi mengenai topik ini belum terdaftar dalam panduan resmi ERHA saat ini, Dok. Silakan lakukan konfirmasi manual ke Dept Functional / Admin."
+                "missing_fallback": "Untuk saat ini informasi tersebut belum tersedia."
             }
         elif intent == QueryIntent.PRODUCT_FUNCTION or intent == QueryIntent.BENEFITS:
             return {
                 "max_sentences": 3,
                 "length_instruction": "Return ONLY the primary product function/benefits in maximum 2-3 sentences. Do not add unsolicited clinical regimens, extra product recommendations, or disclaimers.",
-                "missing_fallback": "Informasi mengenai topik ini belum terdaftar dalam panduan resmi ERHA saat ini, Dok. Silakan lakukan konfirmasi manual ke Dept Functional / Admin."
+                "missing_fallback": "Untuk saat ini informasi tersebut belum tersedia."
             }
         elif intent == QueryIntent.HOW_TO_USE:
             return {
-                "max_sentences": 4,
-                "length_instruction": "Return ONLY the usage instructions in maximum 2-4 sentences. Do not add extra product recommendations or clinical disclaimers.",
-                "missing_fallback": "Informasi mengenai topik ini belum terdaftar dalam panduan resmi ERHA saat ini, Dok. Silakan lakukan konfirmasi manual ke Dept Functional / Admin."
+                "max_sentences": 6,
+                "length_instruction": "Return ONLY the usage instructions, treatment steps, or clinical procedure in a clear step-by-step manner. Do not add extra product recommendations or clinical disclaimers.",
+                "missing_fallback": "Untuk saat ini informasi tersebut belum tersedia."
             }
         elif intent == QueryIntent.PRICE:
             return {
                 "max_sentences": 3,
                 "length_instruction": "Return the product price if found in context. If the query also asks about active ingredients or indications, summarize all requested details found in context.",
-                "missing_fallback": "Informasi mengenai topik ini belum terdaftar dalam panduan resmi ERHA saat ini, Dok. Silakan lakukan konfirmasi manual ke Dept Functional / Admin."
+                "missing_fallback": "Untuk saat ini informasi tersebut belum tersedia."
             }
         elif intent == QueryIntent.WARNING:
             return {
                 "max_sentences": 3,
                 "length_instruction": "Return ONLY safety warnings, contraindications, or pregnancy notes mentioned in context in maximum 2-3 sentences. Do not provide medical advice outside retrieved context.",
-                "missing_fallback": "Informasi mengenai topik ini belum terdaftar dalam panduan resmi ERHA saat ini, Dok. Silakan lakukan konfirmasi manual ke Dept Functional / Admin."
+                "missing_fallback": "Untuk saat ini informasi tersebut belum tersedia."
             }
         elif intent == QueryIntent.COMPARISON:
             return {
                 "max_sentences": 4,
                 "length_instruction": "Provide a concise comparison comparing ONLY the requested products using retrieved context. Do not mention any third product.",
-                "missing_fallback": "Informasi mengenai topik ini belum terdaftar dalam panduan resmi ERHA saat ini, Dok. Silakan lakukan konfirmasi manual ke Dept Functional / Admin."
+                "missing_fallback": "Untuk saat ini informasi tersebut belum tersedia."
             }
         elif intent == QueryIntent.SUITABLE_FOR:
             return {
                 "max_sentences": 2,
                 "length_instruction": "Return ONLY the target skin type / indication in 1-2 sentences.",
-                "missing_fallback": "Informasi mengenai topik ini belum terdaftar dalam panduan resmi ERHA saat ini, Dok. Silakan lakukan konfirmasi manual ke Dept Functional / Admin."
+                "missing_fallback": "Untuk saat ini informasi tersebut belum tersedia."
             }
         elif intent == QueryIntent.AVAILABILITY:
             return {
                 "max_sentences": 2,
                 "length_instruction": "Return ONLY product availability or branch availability mentioned in context.",
-                "missing_fallback": "Informasi mengenai topik ini belum terdaftar dalam panduan resmi ERHA saat ini, Dok. Silakan lakukan konfirmasi manual ke Dept Functional / Admin."
+                "missing_fallback": "Untuk saat ini informasi tersebut belum tersedia."
             }
         else:
             return {
                 "max_sentences": 3,
                 "length_instruction": "Answer the question concisely in maximum 2-3 sentences using ONLY the retrieved context. Do not over-explain or provide unsolicited recommendations.",
-                "missing_fallback": "Informasi mengenai topik ini belum terdaftar dalam panduan resmi ERHA saat ini, Dok. Silakan lakukan konfirmasi manual ke Dept Functional / Admin."
+                "missing_fallback": "Untuk saat ini informasi tersebut belum tersedia."
             }

@@ -119,7 +119,7 @@ export function ProjectDialog({ isOpen, onClose, projectToEdit }: ProjectDialogP
 							variant="outline"
 							onClick={onClose}
 							disabled={isPending}
-							className="h-10 px-4 text-sm font-medium text-zinc-700 bg-white hover:bg-zinc-50 border-gray-200 rounded-lg cursor-pointer shadow-none"
+							className="border-gray-200 bg-white text-zinc-700 hover:bg-zinc-50 rounded-lg px-4 h-10 font-medium text-sm transition-colors cursor-pointer shadow-none"
 						>
 							Cancel
 						</Button>

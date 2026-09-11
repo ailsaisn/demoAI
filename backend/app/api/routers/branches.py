@@ -74,9 +74,10 @@ async def _hydrate_branch(branch: Branch, db: AsyncSession) -> dict:
     doctors = result.scalars().all()
     
     for doc in doctors:
-        # Get doctor's total tokens used
+        # Get doctor's tokens used specifically in this branch
         stmt_token = select(func.sum(UserTokenUsage.tokens_used)).where(
             UserTokenUsage.user_id == doc.id,
+            UserTokenUsage.branch_id == branch.id,
             UserTokenUsage.year_month == current_ym
         )
         result_token = await db.execute(stmt_token)
@@ -109,9 +110,11 @@ async def _hydrate_branch(branch: Branch, db: AsyncSession) -> dict:
                 status = "Warning"
         else:
             status = "Active"
-            max_tokens = doc.token_limit or 0
-            tokens_left = max(0, max_tokens - doc_tokens_used)
+            max_tokens = doc.token_limit if (doc.token_limit and doc.token_limit > 0) else (effective_branch_limit or 0)
+            tokens_left = max(0, (doc.token_limit - doc_tokens_used) if (doc.token_limit and doc.token_limit > 0) else ((effective_branch_limit or 0) - branch_used))
             if doc.token_limit and doc.token_limit > 0 and doc_tokens_used >= doc.token_limit * 0.9:
+                status = "Warning"
+            elif branch_used >= (effective_branch_limit or 1) * 0.9:
                 status = "Warning"
             
         branch_dict["doctors"].append({
@@ -119,6 +122,7 @@ async def _hydrate_branch(branch: Branch, db: AsyncSession) -> dict:
             "name": doc.name,
             "speciality": speciality,
             "tokensLeft": tokens_left,
+            "tokens_used": doc_tokens_used,
             "status": status,
             "maxTokens": max_tokens,
             "employee_id": doc.employee_id,
@@ -129,12 +133,49 @@ async def _hydrate_branch(branch: Branch, db: AsyncSession) -> dict:
         
     return branch_dict
 
-@router.get("/", response_model=List[BranchResponse])
+from app.schemas.pagination import PaginatedResponse
+from typing import List, Optional, Union
+from fastapi import Query
+import math
+
+@router.get("/", response_model=Union[PaginatedResponse[BranchResponse], List[BranchResponse]])
 async def list_branches(
+    search: Optional[str] = None,
+    page: Optional[int] = Query(None, ge=1, description="Page number"),
+    page_size: Optional[int] = Query(None, ge=1, le=100, description="Items per page"),
     db: AsyncSession = Depends(get_db),
     current_admin: User = Depends(RequireAccess("branches:read"))
 ):
     stmt = select(Branch).where(Branch.deleted_at.is_(None))
+    if search:
+        s_clean = f"%{search.strip()}%"
+        stmt = stmt.where(
+            (Branch.name.ilike(s_clean)) |
+            (Branch.code.ilike(s_clean)) |
+            (Branch.ecosystem.ilike(s_clean))
+        )
+    stmt = stmt.order_by(Branch.name.asc())
+
+    if page is not None:
+        p_size = page_size or 10
+        count_stmt = select(func.count()).select_from(stmt.subquery())
+        count_res = await db.execute(count_stmt)
+        total = count_res.scalar() or 0
+        total_pages = max(1, math.ceil(total / p_size))
+
+        paginated_stmt = stmt.offset((page - 1) * p_size).limit(p_size)
+        result = await db.execute(paginated_stmt)
+        branches = result.scalars().all()
+        hydrated = [await _hydrate_branch(b, db) for b in branches]
+
+        return PaginatedResponse[BranchResponse](
+            items=hydrated,
+            total=total,
+            page=page,
+            page_size=p_size,
+            total_pages=total_pages
+        )
+
     result = await db.execute(stmt)
     branches = result.scalars().all()
     return [await _hydrate_branch(b, db) for b in branches]

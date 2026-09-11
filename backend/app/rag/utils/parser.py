@@ -52,17 +52,70 @@ class DocumentParser:
     # FAST EXTRACTION: DOCX
     # -------------------------------------------------------------------------
     def _parse_docx_fast(self, file_path: str) -> ParseResult:
-        """Extract text from .docx using python-docx with heading hierarchy and table structure."""
+        """Extract text from .docx using python-docx with heading hierarchy, inline images, and table structure."""
         from docx import Document as DocxDocument
         import re
+        import os
 
         doc = DocxDocument(file_path)
         pages = []
         current_page_text = []
         page_num = 1
 
+        # 1. Pre-extract and upload embedded images from docx relationships
+        rid_to_url = {}
+        extracted_image_urls = []
+        try:
+            from app.services.storage import upload_image
+
+            for rId, rel in doc.part.rels.items():
+                if hasattr(rel, "target_ref") and "image" in str(rel.target_ref).lower() and hasattr(rel, "target_part"):
+                    try:
+                        img_bytes = rel.target_part.blob
+                        img_ext = os.path.splitext(rel.target_ref)[1].lower().replace(".", "") or "png"
+                        fname = f"docx_img_{rId}_{os.path.basename(rel.target_ref)}"
+                        upload_res = upload_image(img_bytes, fname, content_type=f"image/{img_ext}")
+                        img_url = upload_res.get("image_url")
+                        if img_url:
+                            rid_to_url[rId] = img_url
+                            extracted_image_urls.append(img_url)
+                            logger.info(f"🖼️ Extracted and uploaded embedded DOCX image '{rel.target_ref}' (rId: {rId}) -> {img_url}")
+                    except Exception as upload_err:
+                        logger.debug(f"Failed uploading image for rId {rId}: {upload_err}")
+        except Exception as img_init_err:
+            logger.debug(f"DOCX rel image extraction error: {img_init_err}")
+
+        # Fallback zip extraction if relationship extraction yielded nothing
+        if not extracted_image_urls:
+            try:
+                import zipfile
+                from app.services.storage import upload_image
+
+                with zipfile.ZipFile(file_path, 'r') as z:
+                    media_files = [f for f in z.namelist() if f.startswith('word/media/')]
+                    for idx, media_name in enumerate(media_files, start=1):
+                        img_bytes = z.read(media_name)
+                        img_ext = os.path.splitext(media_name)[1].lower().replace(".", "")
+                        if img_ext in ["png", "jpg", "jpeg", "webp"]:
+                            fname = f"docx_img_{idx}_{os.path.basename(media_name)}"
+                            upload_res = upload_image(img_bytes, fname, content_type=f"image/{img_ext}")
+                            img_url = upload_res.get("image_url")
+                            if img_url:
+                                extracted_image_urls.append(img_url)
+            except Exception as zip_err:
+                logger.debug(f"DOCX zip fallback image extraction skipped: {zip_err}")
+
+        # 2. Extract paragraphs with inline images
         for para in doc.paragraphs:
             text = para.text.strip()
+            blips = para._element.xpath('.//a:blip/@r:embed')
+            img_tags = [f"![Gambar]({rid_to_url[rId]})" for rId in blips if rId in rid_to_url]
+            if img_tags:
+                if text:
+                    text = f"{text}\n\n" + "\n\n".join(img_tags)
+                else:
+                    text = "\n\n".join(img_tags)
+
             if not text:
                 continue
 
@@ -101,11 +154,24 @@ class DocumentParser:
 
             current_page_text.append(formatted_text)
 
-        # Extract tables in docx as clean markdown tables
+        # 3. Extract tables in docx as clean markdown tables (including embedded images in cells)
         for table in doc.tables:
             table_rows = []
+            header_cells = [cell.text.strip() for cell in table.rows[0].cells] if table.rows else []
             for row in table.rows:
-                row_cells = [cell.text.strip().replace("\n", " ") for cell in row.cells]
+                row_cells = []
+                for c_idx, cell in enumerate(row.cells):
+                    c_text = cell.text.strip().replace("\n", " ")
+                    blips = cell._element.xpath('.//a:blip/@r:embed')
+                    if blips:
+                        col_name = header_cells[c_idx] if c_idx < len(header_cells) and header_cells[c_idx] else "Gambar"
+                        cell_img_tags = [f"![{col_name}]({rid_to_url[rId]})" for rId in blips if rId in rid_to_url]
+                        if cell_img_tags:
+                            if c_text:
+                                c_text = f"{c_text} " + " ".join(cell_img_tags)
+                            else:
+                                c_text = " ".join(cell_img_tags)
+                    row_cells.append(c_text)
                 table_rows.append("| " + " | ".join(row_cells) + " |")
             if table_rows:
                 if len(table_rows) >= 1:
@@ -118,30 +184,9 @@ class DocumentParser:
         if current_page_text:
             pages.append({"page": page_num, "text": "\n\n".join(current_page_text)})
 
-        # Extract embedded images from .docx media parts and upload to MinIO
-        try:
-            import zipfile
-            from app.services.storage import upload_image
-
-            with zipfile.ZipFile(file_path, 'r') as z:
-                media_files = [f for f in z.namelist() if f.startswith('word/media/')]
-                extracted_image_urls = []
-                for idx, media_name in enumerate(media_files, start=1):
-                    img_bytes = z.read(media_name)
-                    img_ext = os.path.splitext(media_name)[1].lower().replace(".", "")
-                    if img_ext in ["png", "jpg", "jpeg", "webp"]:
-                        fname = f"docx_img_{idx}_{os.path.basename(media_name)}"
-                        upload_res = upload_image(img_bytes, fname, content_type=f"image/{img_ext}")
-                        img_url = upload_res.get("image_url")
-                        if img_url:
-                            extracted_image_urls.append(img_url)
-                            logger.info(f"🖼️ Extracted and uploaded embedded DOCX image #{idx} '{media_name}' to MinIO -> {img_url}")
-                
-                if extracted_image_urls and pages:
-                    pages[0]["image_urls"] = extracted_image_urls
-                    pages[0]["image_url"] = extracted_image_urls[0]
-        except Exception as img_err:
-            logger.debug(f"DOCX embedded image extraction skipped: {img_err}")
+        if extracted_image_urls and pages:
+            pages[0]["image_urls"] = extracted_image_urls
+            pages[0]["image_url"] = extracted_image_urls[0]
 
         return ParseResult(pages=pages, method="fast")
 
@@ -193,30 +238,112 @@ class DocumentParser:
             )
             return None  # Signal to use Docling OCR
 
-        # Try to extract embedded images from PDF pages and upload to MinIO
+        # Try to extract embedded images from PDF pages and upload to MinIO in parallel
         try:
             import fitz  # PyMuPDF
-            from app.services.storage import upload_image
+            import re
+            from app.services.storage import upload_images_parallel
             doc = fitz.open(file_path)
+            upload_batch = []
+            
             for i, page in enumerate(doc):
-                img_list = page.get_images()
-                page_image_urls = []
-                img_markdowns = []
-                for img_idx, img_info in enumerate(img_list):
-                    xref = img_info[0]
+                img_infos = page.get_image_info(xrefs=True)
+                if not img_infos:
+                    raw_imgs = page.get_images()
+                    img_infos = [{"xref": im[0], "bbox": [0, 0, 0, 0]} for im in raw_imgs if len(im) > 0]
+
+                blocks = page.get_text("blocks")
+                text_blocks = [b for b in blocks if len(b) >= 5 and b[4].strip() and (len(b) < 7 or b[6] == 0)]
+                
+                seen_xrefs = set()
+                for img_idx, im in enumerate(img_infos):
+                    xref = im.get("xref")
+                    if not xref or xref in seen_xrefs:
+                        continue
+                    seen_xrefs.add(xref)
+                    
                     base_img = doc.extract_image(xref)
                     img_bytes = base_img.get("image")
                     img_ext = base_img.get("ext", "png")
-                    if img_bytes:
-                        fname = f"pdf_p{i+1}_img{img_idx+1}.{img_ext}"
-                        upload_res = upload_image(img_bytes, fname, content_type=f"image/{img_ext}")
-                        img_url = upload_res.get("image_url")
-                if img_markdowns and i < len(pages):
-                    pages[i]["text"] += "\n\n" + "\n".join(img_markdowns)
-                    pages[i]["image_urls"] = page_image_urls
-                    pages[i]["image_url"] = page_image_urls[0] if page_image_urls else None
+                    if not img_bytes or len(img_bytes) < 100:
+                        continue
+                        
+                    bbox = im.get("bbox", [0, 0, 0, 0])
+                    img_y_mid = (bbox[1] + bbox[3]) / 2.0
+                    
+                    best_block = None
+                    best_dist = float("inf")
+                    for b in text_blocks:
+                        b_y_mid = (b[1] + b[3]) / 2.0
+                        dist = abs(b_y_mid - img_y_mid)
+                        if dist < best_dist:
+                            best_dist = dist
+                            best_block = b
+                            
+                    prod_label = ""
+                    if best_block and best_dist <= 80:
+                        lines = [l.strip() for l in best_block[4].splitlines() if l.strip()]
+                        for l in lines:
+                            if l.lower() in ("foto produk", "nama produk", "brand", "kategori", "ukuran", "deskripsi", "no", "action", "gambar"):
+                                continue
+                            prod_label = l
+                            break
+                            
+                    if not prod_label:
+                        prod_label = f"Image p{i+1}_{img_idx+1}"
+                        
+                    clean_fname = re.sub(r'[^a-zA-Z0-9_\-]', '_', prod_label)[:40].strip('_')
+                    if not clean_fname:
+                        clean_fname = f"pdf_img_p{i+1}_{img_idx+1}"
+                    else:
+                        clean_fname = f"pdf_img_p{i+1}_{img_idx+1}_{clean_fname}"
+                        
+                    fname = f"{clean_fname}.{img_ext}"
+                    
+                    upload_batch.append({
+                        "content": img_bytes,
+                        "filename": fname,
+                        "content_type": f"image/{img_ext}",
+                        "page_index": i,
+                        "img_fname": fname,
+                        "product_name": prod_label
+                    })
+            
+            if upload_batch:
+                results = upload_images_parallel(upload_batch)
+                for item, res in zip(upload_batch, results):
+                    img_url = res.get("image_url")
+                    p_idx = item["page_index"]
+                    fname = item["img_fname"]
+                    prod_name = item.get("product_name") or fname
+                    if img_url and p_idx < len(pages):
+                        if "image_urls" not in pages[p_idx]:
+                            pages[p_idx]["image_urls"] = []
+                        if "images" not in pages[p_idx]:
+                            pages[p_idx]["images"] = []
+                        pages[p_idx]["image_urls"].append(img_url)
+                        pages[p_idx]["images"].append({
+                            "id": f"img_p{p_idx+1}_{len(pages[p_idx]['images'])+1}",
+                            "url": img_url,
+                            "product_name": prod_name,
+                            "caption": prod_name,
+                            "role": "PRODUCT_PACKAGING"
+                        })
+                        # Embed image tag into page text near the product if found, else append
+                        if prod_name and prod_name in pages[p_idx]["text"]:
+                            pattern = re.compile(rf'(^.*{re.escape(prod_name)}.*$)', re.MULTILINE)
+                            if pattern.search(pages[p_idx]["text"]):
+                                pages[p_idx]["text"] = pattern.sub(rf'\1\n![{prod_name}]({img_url})', pages[p_idx]["text"], count=1)
+                            else:
+                                pages[p_idx]["text"] += f"\n\n![{prod_name}]({img_url})"
+                        else:
+                            pages[p_idx]["text"] += f"\n\n![{prod_name}]({img_url})"
+                            
+                for i in range(len(pages)):
+                    if pages[i].get("image_urls"):
+                        pages[i]["image_url"] = pages[i]["image_urls"][0]
         except Exception as img_err:
-            logger.debug(f"PDF embedded image extraction skipped/optional: {img_err}")
+            logger.warning(f"PDF embedded image extraction failed: {img_err}", exc_info=True)
 
         # Apply Structure Reconstruction / Document Normalization on each page's extracted text
         from app.rag.utils.normalizer import normalize_document_text
@@ -356,6 +483,7 @@ class DocumentParser:
 
             prs = Presentation(file_path)
             pages = []
+            any_shape_has_image = False
 
             for slide_idx, slide in enumerate(prs.slides, start=1):
                 slide_texts = []
@@ -367,8 +495,47 @@ class DocumentParser:
                     slide_title = slide.shapes.title.text.strip()
                     slide_texts.append(f"## {slide_title}")
 
+                # 1. Detect spatial Before / After text labels on this slide
+                before_labels = []
+                after_labels = []
+                for s in slide.shapes:
+                    if s.has_text_frame:
+                        s_text = s.text_frame.text.strip().upper()
+                        if any(w in s_text for w in ["SEBELUM", "BEFORE"]):
+                            before_labels.append((s.left, s.top, s_text))
+                        elif any(w in s_text for w in ["SESUDAH", "AFTER", "SETELAH"]):
+                            after_labels.append((s.left, s.top, s_text))
+
+                # 2. Collect and classify image shapes spatially
+                img_shapes_on_slide = [s for s in slide.shapes if hasattr(s, "image")]
+                classified_images = []
+
+                if img_shapes_on_slide:
+                    any_shape_has_image = True
+                    if before_labels and after_labels and len(img_shapes_on_slide) >= 2:
+                        # Spatial proximity matching: match each image to closest label on X axis
+                        scored_shapes = []
+                        for s in img_shapes_on_slide:
+                            dist_before = min(abs(s.left - bl[0]) for bl in before_labels)
+                            dist_after = min(abs(s.left - al[0]) for al in after_labels)
+                            scored_shapes.append((s, dist_before, dist_after))
+
+                        # Shape with smallest distance to Before label is BEFORE
+                        # Shape with smallest distance to After label is AFTER
+                        # Sort so that BEFORE comes first (0), AFTER comes second (1)
+                        scored_shapes.sort(key=lambda item: item[1] - item[2])
+                        for idx, (s, d_b, d_a) in enumerate(scored_shapes):
+                            role = "CLINICAL_BEFORE" if idx == 0 else "CLINICAL_AFTER"
+                            classified_images.append((s, role))
+                    else:
+                        # Standard reading order: top-to-bottom, left-to-right
+                        sorted_shapes = sorted(img_shapes_on_slide, key=lambda s: (round(s.top / 100000), s.left))
+                        for s in sorted_shapes:
+                            classified_images.append((s, "IMAGE"))
+
+                # 3. Process non-image shapes (text & tables)
                 for shape in slide.shapes:
-                    if shape == slide.shapes.title:
+                    if shape == slide.shapes.title or hasattr(shape, "image"):
                         continue
                     # Extract text frames
                     if shape.has_text_frame:
@@ -391,21 +558,27 @@ class DocumentParser:
                                 table_rows.insert(1, delimiter)
                             slide_texts.append("\n".join(table_rows))
 
-                    # Extract embedded images in shapes
-                    elif hasattr(shape, "image"):
-                        try:
-                            from app.services.storage import upload_image
-                            img_obj = shape.image
-                            img_bytes = img_obj.blob
-                            img_ext = img_obj.ext
-                            fname = f"pptx_s{slide_idx}_img.{img_ext}"
-                            upload_res = upload_image(img_bytes, fname, content_type=f"image/{img_ext}")
-                            img_url = upload_res.get("image_url")
-                            if img_url:
-                                slide_image_urls.append(img_url)
+                # 4. Upload and append classified image shapes in deterministic order (BEFORE first, then AFTER)
+                for img_idx, (shape, role) in enumerate(classified_images, start=1):
+                    try:
+                        from app.services.storage import upload_image
+                        img_obj = shape.image
+                        img_bytes = img_obj.blob
+                        img_ext = img_obj.ext
+                        role_tag = "before" if role == "CLINICAL_BEFORE" else ("after" if role == "CLINICAL_AFTER" else f"img_{img_idx}")
+                        fname = f"pptx_s{slide_idx}_{role_tag}.{img_ext}"
+                        upload_res = upload_image(img_bytes, fname, content_type=f"image/{img_ext}")
+                        img_url = upload_res.get("image_url")
+                        if img_url:
+                            slide_image_urls.append(img_url)
+                            if role == "CLINICAL_BEFORE":
+                                slide_texts.append(f"![Foto Sebelum Perawatan - {slide_title}]({img_url})")
+                            elif role == "CLINICAL_AFTER":
+                                slide_texts.append(f"![Foto Sesudah Perawatan - {slide_title}]({img_url})")
+                            else:
                                 slide_texts.append(f"![{slide_title} Image]({img_url})")
-                        except Exception as shape_img_err:
-                            logger.debug(f"PPTX slide image shape extraction skipped: {shape_img_err}")
+                    except Exception as shape_img_err:
+                        logger.debug(f"PPTX slide image shape extraction skipped: {shape_img_err}")
 
                 # Extract speaker notes if any
                 if slide.has_notes_slide and slide.notes_slide.notes_text_frame:
@@ -425,32 +598,37 @@ class DocumentParser:
             if not pages:
                 pages = [{"page": 1, "text": "Presentasi PowerPoint kosong."}]
 
-            # Extract embedded images from .pptx media parts zip fallback
-            try:
-                import zipfile
-                from app.services.storage import upload_image
+            # Extract embedded images from .pptx media parts zip fallback ONLY if NO shapes had images
+            if not any_shape_has_image:
+                try:
+                    import zipfile
+                    from app.services.storage import upload_images_parallel
 
-                with zipfile.ZipFile(file_path, 'r') as z:
-                    media_files = [f for f in z.namelist() if f.startswith('ppt/media/')]
-                    extracted_image_urls = []
-                    for idx, media_name in enumerate(media_files, start=1):
-                        img_bytes = z.read(media_name)
-                        img_ext = os.path.splitext(media_name)[1].lower().replace(".", "")
-                        if img_ext in ["png", "jpg", "jpeg", "webp"]:
-                            fname = f"pptx_img_{idx}_{os.path.basename(media_name)}"
-                            upload_res = upload_image(img_bytes, fname, content_type=f"image/{img_ext}")
-                            img_url = upload_res.get("image_url")
-                            if img_url:
-                                extracted_image_urls.append(img_url)
-                                logger.info(f"🖼️ Extracted and uploaded embedded PPTX image #{idx} '{media_name}' to MinIO -> {img_url}")
-                    
-                    if extracted_image_urls and pages:
-                        existing_urls = pages[0].get("image_urls", [])
-                        combined_urls = list(dict.fromkeys(existing_urls + extracted_image_urls))
-                        pages[0]["image_urls"] = combined_urls
-                        pages[0]["image_url"] = combined_urls[0]
-            except Exception as img_err:
-                logger.debug(f"PPTX embedded image extraction skipped: {img_err}")
+                    with zipfile.ZipFile(file_path, 'r') as z:
+                        media_files = [f for f in z.namelist() if f.startswith('ppt/media/')]
+                        upload_batch = []
+                        for idx, media_name in enumerate(media_files, start=1):
+                            img_bytes = z.read(media_name)
+                            img_ext = os.path.splitext(media_name)[1].lower().replace(".", "")
+                            if img_ext in ["png", "jpg", "jpeg", "webp"]:
+                                fname = f"pptx_img_{idx}_{os.path.basename(media_name)}"
+                                upload_batch.append({
+                                    "content": img_bytes,
+                                    "filename": fname,
+                                    "content_type": f"image/{img_ext}"
+                                })
+                        
+                        if upload_batch:
+                            results = upload_images_parallel(upload_batch)
+                            extracted_image_urls = [r["image_url"] for r in results if r.get("image_url")]
+                            if extracted_image_urls and pages:
+                                existing_urls = pages[0].get("image_urls", [])
+                                combined_urls = list(dict.fromkeys(existing_urls + extracted_image_urls))
+                                pages[0]["image_urls"] = combined_urls
+                                pages[0]["image_url"] = combined_urls[0]
+                            logger.info(f"⚡ [ASYNC BATCH] Uploaded {len(extracted_image_urls)} embedded PPTX images to MinIO in parallel.")
+                except Exception as img_err:
+                    logger.debug(f"PPTX embedded image extraction skipped: {img_err}")
 
             return ParseResult(pages=pages, method="fast")
         except Exception as e:
@@ -554,26 +732,21 @@ class DocumentParser:
 
                     client = OpenAI(**client_kwargs)
                     prompt_text = (
-                        "You are an expert medical aesthetic AI knowledge engineer for PT Arya Noble (ERHA) Knowledge Base.\n\n"
-                        "Your task is to analyze the provided image (which could be a Product Photo or a Clinical Before-After Face Condition Photo) and extract accurate, fluent, and cohesive knowledge.\n\n"
-                        "## Guidelines:\n"
-                        "1. **Natural & Cohesive Language**: Write natural, professional, fluent Indonesian prose suitable for clinical doctors and aesthetic specialists. Avoid stiff key-value forms or empty template blocks.\n"
-                        "2. **Product Photos (Foto Produk)**:\n"
-                        "   - Describe the product name, intended skin types, key benefits, and usage naturally.\n"
-                        "   - Include active ingredients in standard markdown bullet points.\n"
-                        "3. **Before-After Face Condition Photos (Foto Wajah Before-After)**:\n"
-                        "   - State the treatment/product name.\n"
-                        "   - Analyze the clinical skin condition changes (Before vs After) naturally (e.g. reduction of inflammatory acne lesions, fading of post-acne erythema, smoothing of skin texture).\n"
-                        "4. **No Visual Fluff**: Do NOT describe background color, packaging graphics, lighting, or photography angles.\n\n"
+                        "You are an expert product recognition system for PT Arya Noble (ERHA) Knowledge Base.\n\n"
+                        "Your task is to identify the EXACT PRODUCT NAME shown on the product packaging or image.\n\n"
+                        "## STRICT RULES (MANDATORY):\n"
+                        "1. **IDENTIFY PRODUCT NAME ONLY**: Recognize and extract ONLY the official Product Name printed on the packaging (e.g., 'Exfoliating Cleansing Scrub', 'Acne Act Acne Spot Gel').\n"
+                        "2. **DO NOT EXTRACT PACKAGING DETAILS**: Do NOT generate, OCR, or invent packaging text such as Brand, SKU, Net Weight, instructions, benefits, or 'Informasi Tertera pada Kemasan'. Generating packaging text is strictly forbidden to prevent false detections.\n"
+                        "3. **PRESERVE RETRIEVAL CONTEXT**: Provide the clean product name and a clean 1-line Indonesian context so this image has full context and can be retrieved accurately in search and RAG answers.\n"
+                        "4. **Clinical / Before-After Photos**: If this is a clinical photo of skin/face (not product packaging), identify the treatment or clinical condition (e.g., 'Acne Vulgaris - Before Treatment') and state whether it is BEFORE or AFTER.\n\n"
                         "## Output Format (Valid JSON ONLY):\n"
                         "{\n"
-                        '  "title": "ERHA Acneact Gentle Acne Moisturizer",\n'
-                        '  "product_name": "ERHA Acneact Gentle Acne Moisturizer",\n'
+                        '  "title": "Exact Visible Product Name",\n'
+                        '  "product_name": "Exact Visible Product Name",\n'
+                        '  "image_role": "PRODUCT_PACKAGING",\n'
+                        '  "caption": "Foto produk Exact Visible Product Name",\n'
                         '  "document_type": "PRODUCT",\n'
-                        '  "brand": "ERHA",\n'
-                        '  "sku": null,\n'
-                        '  "active_ingredients": ["Granactive Acne Peptide", "Salicylic Acid (BHA)"],\n'
-                        '  "summary_markdown": "# ERHA Acneact Gentle Acne Moisturizer\\n\\nERHA Acneact Gentle Acne Moisturizer adalah pelembap wajah ringan yang diformulasikan khusus untuk kulit berminyak, berjerawat, dan sensitif. Memiliki tekstur gel-krim yang cepat meresap dan tidak menyumbat pori-pori.\\n\\n## Manfaat & Penggunaan\\n- Melembapkan kulit berjerawat sekaligus menenangkan kemerahan.\\n- Membantu mengontrol produksi sebum berlebih.\\n- Digunakan secara merata pada wajah setelah pembersih dan serum.\\n\\n## Active Ingredients\\n- **Granactive Acne Peptide**: Membantu meredakan peradangan jerawat.\\n- **Salicylic Acid (BHA)**: Merawat pori-pori dan mencegah timbulnya jerawat baru."\n'
+                        '  "summary_markdown": "# Exact Visible Product Name\\n\\n![Exact Visible Product Name](IMAGE_URL_PLACEHOLDER)\\n\\nDokumen visual produk resmi ERHA: Exact Visible Product Name."\n'
                         "}"
                     )
 
@@ -619,47 +792,40 @@ class DocumentParser:
 
                             img_title = data.get("title") or data.get("product_name") or os.path.splitext(file_name)[0]
                             p_name = data.get("product_name") or img_title
-                            brand = data.get("brand") or "ERHA"
-                            active_ing = data.get("active_ingredients") or []
-                            sku_val = data.get("sku")
-                            clean_sku = str(sku_val).strip() if sku_val and str(sku_val).strip().lower() not in ["none", "null", "n/a", "-"] else None
+                            brand = data.get("brand") or "PT Arya Noble"
+                            active_ing = []
+                            clean_sku = None
+
+                            # Infer or extract image role
+                            img_role = data.get("image_role")
+                            valid_roles = ["PRODUCT_PACKAGING", "CLINICAL_BEFORE", "CLINICAL_AFTER", "TREATMENT_PROCEDURE", "GENERAL"]
+                            if not img_role or img_role not in valid_roles:
+                                lower_fname = file_name.lower()
+                                lower_text = (data.get("summary_markdown") or "").lower()
+                                if any(k in lower_fname or k in lower_text for k in ["before", "sebelum"]):
+                                    img_role = "CLINICAL_BEFORE"
+                                elif any(k in lower_fname or k in lower_text for k in ["after", "sesudah", "setelah"]):
+                                    img_role = "CLINICAL_AFTER"
+                                elif any(k in lower_fname or k in lower_text for k in ["kemasan", "packaging", "bottle", "box", "produk"]):
+                                    img_role = "PRODUCT_PACKAGING"
+                                else:
+                                    img_role = "PRODUCT_PACKAGING" if data.get("document_type") == "PRODUCT" else "GENERAL"
+
+                            caption = data.get("caption") or f"Foto produk {p_name}"
 
                             extracted_meta.update({
                                 "title": img_title,
                                 "product_name": p_name,
                                 "brand": brand,
-                                "sku": clean_sku,
-                                "active_ingredients": active_ing
+                                "sku": None,
+                                "active_ingredients": [],
+                                "image_role": img_role,
+                                "caption": caption
                             })
 
-                            # If Vision LLM provided a beautiful fluent summary_markdown directly, use it!
-                            raw_summary_md = data.get("summary_markdown")
-                            if raw_summary_md and raw_summary_md.strip():
-                                summary_text = raw_summary_md.strip()
-                                # Ensure image URL is embedded right below the first H1 title
-                                if image_url and image_url not in summary_text:
-                                    lines = summary_text.split("\n")
-                                    if lines and lines[0].startswith("#"):
-                                        summary_text = lines[0] + f"\n\n![{img_title}]({image_url})\n" + "\n".join(lines[1:])
-                                    else:
-                                        summary_text = f"# {img_title}\n\n![{img_title}]({image_url})\n\n" + summary_text
-                                extracted_text = summary_text
-                            else:
-                                # Fallback natural markdown
-                                md_blocks = [f"# {img_title}\n\n![{img_title}]({image_url})"]
-                                deskripsi = data.get("deskripsi_fungsi") or data.get("searchable_knowledge") or ""
-                                if deskripsi:
-                                    md_blocks.append(f"## Deskripsi & Fungsi Produk\n{deskripsi}")
-                                if active_ing:
-                                    ing_lines = ["## Active Ingredients"]
-                                    if isinstance(active_ing, list):
-                                        for ing in active_ing:
-                                            if ing and str(ing).strip():
-                                                ing_lines.append(f"- {ing}")
-                                    else:
-                                        ing_lines.append(f"- {active_ing}")
-                                    md_blocks.append("\n".join(ing_lines))
-                                extracted_text = "\n\n".join(md_blocks)
+                            # Clean structured markdown with product name and image context only (zero packaging hallucination)
+                            clean_markdown = f"# {img_title}\n\n![{img_title}]({image_url})\n\nDokumen visual resmi: {p_name}."
+                            extracted_text = clean_markdown
 
                         except Exception as json_err:
                             logger.warning(f"Could not parse Vision LLM JSON response for '{file_name}': {json_err}. Using raw output.")
@@ -684,14 +850,40 @@ class DocumentParser:
                 clean_title = os.path.splitext(file_name)[0]
                 extracted_text = f"### Image Asset: {clean_title}\n\n![{clean_title}]({image_url})\n\nStorage Key: `{s3_key}`."
 
+            import uuid
+            img_id = f"img_{uuid.uuid4().hex[:8]}"
+            clean_title = os.path.splitext(file_name)[0]
+            current_role = img_role if 'img_role' in locals() and img_role else ("PRODUCT_PACKAGING" if any(k in file_name.lower() for k in ["produk", "bottle", "box"]) else "GENERAL")
+            current_caption = caption if 'caption' in locals() and caption else f"Foto {clean_title}"
+            current_pname = p_name if 'p_name' in locals() and p_name else clean_title
+
+            image_asset = {
+                "id": img_id,
+                "url": image_url,
+                "s3_key": s3_key,
+                "role": current_role,
+                "product_name": current_pname,
+                "caption": current_caption
+            }
+
             page_data = {
                 "page": 1,
                 "text": extracted_text,
+                "image_id": img_id,
                 "image_urls": [image_url] if image_url else [],
                 "image_url": image_url,
+                "images": [image_asset],
                 "s3_key": s3_key,
                 "storage_key": s3_key,
-                "image_reference": image_url
+                "image_reference": image_url,
+                "clinics": ["all"],
+                "doctor_types": ["all"],
+                "doctors": ["all"],
+                "visibility_settings": {
+                    "clinics": ["all"],
+                    "doctor_types": ["all"],
+                    "doctors": ["all"]
+                }
             }
             page_data.update(extracted_meta)
 

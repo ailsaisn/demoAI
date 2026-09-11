@@ -7,3 +7,4 @@ from .knowledge import Knowledge, KnowledgeCategory, KnowledgeChunk
 from .chat import ChatSession, ChatMessage
 from .config import AppConfig
 from .ingestion_usage import IngestionTokenUsage
+from .pending_operation import PendingOperation

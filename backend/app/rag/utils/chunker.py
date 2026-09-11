@@ -328,7 +328,7 @@ class CustomChunker:
 
         # Extract contextual image_url from markdown image tags in chunk text
         if chunk_text:
-            img_matches = re.findall(r'!\[.*?\]\((https?://[^\s\)]+)\)', chunk_text)
+            img_matches = re.findall(r'!\[.*?\]\(([^\s\)]+)\)', chunk_text)
             if img_matches:
                 meta["image_url"] = img_matches[0]
 
@@ -429,7 +429,7 @@ class CustomChunker:
                 }
                 extracted_urls = []
                 if chunk_text:
-                    found_matches = re.findall(r'!\[.*?\]\((https?://[^\s\)]+)\)', chunk_text)
+                    found_matches = re.findall(r'!\[.*?\]\(([^\s\)]+)\)', chunk_text)
                     for u in found_matches:
                         if u not in extracted_urls:
                             extracted_urls.append(u)
@@ -452,10 +452,14 @@ class CustomChunker:
                         meta["price"] = price_match.group(1).strip()
 
                 all_urls = list(dict.fromkeys(extracted_urls + page_image_urls))
-                if all_urls:
+                if extracted_urls:
+                    meta["image_url"] = extracted_urls[0]
+                elif all_urls:
                     meta["image_url"] = all_urls[0]
                 elif page_image_url:
                     meta["image_url"] = page_image_url
+                if all_urls:
+                    meta["image_urls"] = all_urls
                 return meta
 
             def flush_entity_block():
@@ -669,7 +673,7 @@ def chunk_summary_markdown(
             "doctors": visibility_settings.get("doctors", ["all"]),
         }
         if chunk_text:
-            img_matches = re.findall(r'!\[.*?\]\((https?://[^\s\)]+)\)', chunk_text)
+            img_matches = re.findall(r'!\[.*?\]\(([^\s\)]+)\)', chunk_text)
             if img_matches:
                 meta["image_url"] = img_matches[0]
             sku_match = re.search(

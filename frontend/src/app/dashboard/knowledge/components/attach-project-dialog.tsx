@@ -5,11 +5,13 @@ import { toast } from "sonner";
 import {
 	Dialog,
 	DialogContent,
+	DialogDescription,
 	DialogFooter,
 	DialogHeader,
 	DialogTitle,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Field, FieldLabel, FieldContent } from "@/components/ui/field";
 import {
 	Select,
@@ -18,16 +20,16 @@ import {
 	SelectTrigger,
 	SelectValue,
 } from "@/components/ui/select";
-import { useProjects } from "../hooks/use-projects";
+import { useProjects, useCreateProject } from "../hooks/use-projects";
 import { useUpdateKnowledgeProject } from "../hooks/use-knowledge";
-import { RiLoader4Line } from "@remixicon/react";
+import { RiAddLine, RiLoader4Line } from "@remixicon/react";
 
 interface AttachProjectDialogProps {
 	isOpen: boolean;
 	onClose: () => void;
 	knowledgeId: string | null;
 	knowledgeIds?: string[];
-	knowledgeTitle: string;
+	knowledgeTitle?: string;
 	currentProjectId?: string | null;
 }
 
@@ -40,8 +42,15 @@ export function AttachProjectDialog({
 }: AttachProjectDialogProps) {
 	const { data: projects = [], isLoading: isLoadingProjects } = useProjects();
 	const updateKnowledgeProjectMutation = useUpdateKnowledgeProject();
+	const createProjectMutation = useCreateProject();
 
 	const [selectedProjectId, setSelectedProjectId] = useState<string>("none");
+	const [isCreatingProject, setIsCreatingProject] = useState(false);
+	const [newProjectName, setNewProjectName] = useState("");
+	const [createError, setCreateError] = useState<string | null>(null);
+
+	const isSubmitting =
+		createProjectMutation.isPending || updateKnowledgeProjectMutation.isPending;
 
 	const selectedProjectName = useMemo(() => {
 		if (!selectedProjectId || selectedProjectId === "none") {
@@ -54,24 +63,54 @@ export function AttachProjectDialog({
 	useEffect(() => {
 		const timer = setTimeout(() => {
 			if (isOpen) {
+				setIsCreatingProject(false);
+				setNewProjectName("");
+				setCreateError(null);
 				if (!currentProjectId || currentProjectId === "none") {
 					setSelectedProjectId("none");
-				} else if (projects.length > 0) {
-					const exists = projects.some((p) => p.id === currentProjectId);
-					setSelectedProjectId(exists ? currentProjectId : "none");
 				} else {
 					setSelectedProjectId(currentProjectId);
 				}
+			} else {
+				setIsCreatingProject(false);
+				setNewProjectName("");
+				setCreateError(null);
 			}
 		}, 0);
 		return () => clearTimeout(timer);
-	}, [isOpen, currentProjectId, projects]);
+	}, [isOpen, currentProjectId]);
 
 	const handleSubmit = async (e: React.FormEvent) => {
 		e.preventDefault();
-		const isValidProject = selectedProjectId !== "none" && projects.some((p) => p.id === selectedProjectId);
-		const targetProjectId = isValidProject ? selectedProjectId : null;
-		const idsToUpdate = knowledgeIds && knowledgeIds.length > 0 ? knowledgeIds : knowledgeId ? [knowledgeId] : [];
+
+		let targetProjectId: string | null = null;
+
+		if (isCreatingProject) {
+			if (!newProjectName.trim()) {
+				setCreateError("Project name is required.");
+				return;
+			}
+			try {
+				const newProj = await createProjectMutation.mutateAsync({
+					name: newProjectName.trim(),
+				});
+				targetProjectId = newProj.id;
+			} catch {
+				return; // Handled by mutation error toast
+			}
+		} else {
+			const isValidProject =
+				selectedProjectId !== "none" &&
+				projects.some((p) => p.id === selectedProjectId);
+			targetProjectId = isValidProject ? selectedProjectId : null;
+		}
+
+		const idsToUpdate =
+			knowledgeIds && knowledgeIds.length > 0
+				? knowledgeIds
+				: knowledgeId
+					? [knowledgeId]
+					: [];
 		if (idsToUpdate.length === 0) return;
 
 		try {
@@ -85,8 +124,12 @@ export function AttachProjectDialog({
 						}),
 					),
 				);
-				const actionText = targetProjectId ? "attached to project" : "detached from project";
-				toast.success(`All ${idsToUpdate.length} documents ${actionText} successfully!`);
+				const actionText = targetProjectId
+					? "attached to project"
+					: "detached from project";
+				toast.success(
+					`All ${idsToUpdate.length} documents ${actionText} successfully!`,
+				);
 			} else {
 				await updateKnowledgeProjectMutation.mutateAsync({
 					knowledgeId: idsToUpdate[0],
@@ -107,32 +150,105 @@ export function AttachProjectDialog({
 						<DialogTitle className="text-base font-semibold text-foreground">
 							Attach Knowledge to Project
 						</DialogTitle>
+						<DialogDescription className="text-xs text-muted-foreground">
+							Assign knowledge to a project workspace.
+						</DialogDescription>
 					</DialogHeader>
 
 					<Field className="space-y-2">
-						<FieldLabel className="text-xs font-medium text-zinc-700">
-							Project
-						</FieldLabel>
+						<div className="flex items-center justify-between">
+							<FieldLabel className="text-xs font-medium text-zinc-700">
+								{isCreatingProject ? "New Project Name" : "Project"}
+							</FieldLabel>
+							{isCreatingProject ? (
+								<button
+									type="button"
+									onClick={() => {
+										setIsCreatingProject(false);
+										setNewProjectName("");
+										setCreateError(null);
+									}}
+									className="text-xs text-blue-600 hover:text-blue-700 font-medium cursor-pointer transition-colors"
+								>
+									Choose existing project
+								</button>
+							) : (
+								<button
+									type="button"
+									onClick={() => {
+										setIsCreatingProject(true);
+										setCreateError(null);
+									}}
+									className="inline-flex items-center gap-1 text-xs font-medium text-blue-600 hover:text-blue-700 transition-colors cursor-pointer"
+								>
+									<RiAddLine className="size-3.5" />
+									<span>New Project</span>
+								</button>
+							)}
+						</div>
+
 						<FieldContent>
-							<Select
-								value={selectedProjectId}
-								onValueChange={(val) => setSelectedProjectId(val ?? "none")}
-								disabled={isLoadingProjects || updateKnowledgeProjectMutation.isPending}
-							>
-								<SelectTrigger className="w-full h-10 border-gray-200 bg-white text-gray-700 rounded-lg px-3">
-									<SelectValue placeholder="Select Project">
-										{selectedProjectName}
-									</SelectValue>
-								</SelectTrigger>
-								<SelectContent alignItemWithTrigger={false} sideOffset={4} className="bg-white">
-									<SelectItem value="none">No Project</SelectItem>
-									{projects.map((project) => (
-										<SelectItem key={project.id} value={project.id}>
-											{project.name}
+							{isCreatingProject ? (
+								<div className="space-y-1.5">
+									<Input
+										autoFocus
+										autoComplete="off"
+										placeholder="e.g. ERHA Acne Treatment"
+										value={newProjectName}
+										onChange={(e) => {
+											setNewProjectName(e.target.value);
+											if (createError) setCreateError(null);
+										}}
+										disabled={isSubmitting}
+										className="h-10 border-gray-200 bg-white text-sm focus-visible:ring-blue-500 rounded-lg"
+									/>
+									{createError && (
+										<p className="text-xs font-medium text-red-600">
+											{createError}
+										</p>
+									)}
+								</div>
+							) : (
+								<Select
+									value={selectedProjectId}
+									onValueChange={(val) => {
+										if (val === "__create_new__") {
+											setIsCreatingProject(true);
+											setCreateError(null);
+										} else {
+											setSelectedProjectId(val ?? "none");
+										}
+									}}
+									disabled={isLoadingProjects || isSubmitting}
+								>
+									<SelectTrigger className="w-full h-10 border-gray-200 bg-white text-gray-700 rounded-lg px-3">
+										<SelectValue placeholder="Select Project">
+											{selectedProjectName}
+										</SelectValue>
+									</SelectTrigger>
+									<SelectContent
+										alignItemWithTrigger={false}
+										sideOffset={4}
+										className="bg-white"
+									>
+										<SelectItem
+											value="__create_new__"
+											className="text-blue-600 font-medium hover:bg-blue-50 focus:bg-blue-50 focus:text-blue-700 cursor-pointer"
+										>
+											<div className="flex items-center gap-1.5">
+												<RiAddLine className="size-4" />
+												<span>Create new project...</span>
+											</div>
 										</SelectItem>
-									))}
-								</SelectContent>
-							</Select>
+										<SelectItem value="none">No Project</SelectItem>
+										{projects.map((project) => (
+											<SelectItem key={project.id} value={project.id}>
+												{project.name}
+											</SelectItem>
+										))}
+									</SelectContent>
+								</Select>
+							)}
 						</FieldContent>
 					</Field>
 
@@ -140,21 +256,37 @@ export function AttachProjectDialog({
 						<Button
 							type="button"
 							variant="outline"
-							onClick={onClose}
-							disabled={updateKnowledgeProjectMutation.isPending}
-							className="h-10 px-4 border-gray-200 bg-white text-zinc-700 hover:bg-zinc-50 rounded-lg text-sm font-medium cursor-pointer shadow-none"
+							onClick={() => {
+								if (isCreatingProject) {
+									setIsCreatingProject(false);
+									setNewProjectName("");
+									setCreateError(null);
+								} else {
+									onClose();
+								}
+							}}
+							disabled={isSubmitting}
+							className="border-gray-200 bg-white text-zinc-700 hover:bg-zinc-50 rounded-lg px-4 h-10 font-medium text-sm transition-colors cursor-pointer shadow-none"
 						>
-							Cancel
+							{isCreatingProject ? "Back" : "Cancel"}
 						</Button>
 						<Button
 							type="submit"
-							disabled={updateKnowledgeProjectMutation.isPending || isLoadingProjects}
+							disabled={
+								isSubmitting ||
+								isLoadingProjects ||
+								(isCreatingProject && !newProjectName.trim())
+							}
 							className="h-10 px-4 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium cursor-pointer shadow-none gap-2"
 						>
-							{updateKnowledgeProjectMutation.isPending && (
+							{isSubmitting && (
 								<RiLoader4Line className="size-4 animate-spin" />
 							)}
-							<span>Attach Knowledge</span>
+							<span>
+								{isCreatingProject
+									? "Create & Attach"
+									: "Attach Knowledge"}
+							</span>
 						</Button>
 					</DialogFooter>
 				</form>
