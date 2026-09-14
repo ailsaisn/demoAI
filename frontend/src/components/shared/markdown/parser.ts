@@ -10,7 +10,7 @@ export function parseMarkdownSegments(markdown: string): Segment[] {
 
 	// Pattern 1: Product or Treatment Overview Cards
 	const cardPattern =
-		/(?:!\[([^\]]*)\]\(([^)]+)\)\s*\n+)?###\s*(Product\s+(?:Overview|Details|Info|Specification|Summary)|Overview\s+Produk|Spesifikasi\s+Produk|Info\s+Produk|Ringkasan\s+Produk|Detail\s+Produk|Treatment\s+(?:Overview|Details|Info|Procedure|Summary)|Overview\s+Tindakan|Detail\s+Tindakan|Info\s+Tindakan)\s*\n+(?:!\[([^\]]*)\]\(([^)]+)\)\s*\n+)?((?:[ \t]*[-*]\s*\*\*[^*]+\*\*\s*[:–-][^\n]+(?:\n|$))+)/gi;
+		/(?:!\[([^\]]*)\]\(([^)]+)\)\s*\n+)?(?:###|##)\s*(Product\s+(?:Overview|Details|Info|Specification|Summary)|Overview\s+Produk|Spesifikasi\s+Produk|Info\s+Produk|Ringkasan\s+Produk|Detail\s+Produk|Informasi\s+Produk|Detail\s+Informasi\s+Produk|Treatment\s+(?:Overview|Details|Info|Procedure|Summary)|Overview\s+Tindakan|Detail\s+Tindakan|Info\s+Tindakan|[^\n#]+)\s*\n+(?:!\[([^\]]*)\]\(([^)]+)\)\s*\n+)?((?:[ \t]*[-*]\s*\*\*[^*]+\*\*\s*[:–-][^\n]+(?:\n|$))+)/gi;
 
 	// Pattern 2: Skincare Regimen / Rutinitas Routine Card
 	const regimenPattern =
@@ -56,12 +56,39 @@ export function parseMarkdownSegments(markdown: string): Segment[] {
 	while ((m = cardPattern.exec(markdown)) !== null) {
 		const rawImgAlt = m[1] || m[4] || "";
 		const rawImgUrl = m[2] || m[5] || "";
-		const headerTitle = m[3] || "";
-		const isTreatment = /treatment|tindakan|prosedur|protokol/i.test(headerTitle);
-		const bulletsText = m[6] || "";
+		const headerTitle = (m[3] || "").trim();
+		const headerLower = headerTitle.toLowerCase();
+		const isKnownCardHeader = /^(?:product\s+(?:overview|details|info|specification|summary)|overview\s+produk|spesifikasi\s+produk|info\s+produk|ringkasan\s+produk|detail\s+produk|informasi\s+produk|detail\s+informasi\s+produk|treatment\s+(?:overview|details|info|procedure|summary)|overview\s+tindakan|detail\s+tindakan|info\s+tindakan)$/i.test(headerLower);
 
+		const bulletsText = m[6] || "";
 		const items = parseBulletLines(bulletsText);
+		if (items.length === 0) continue;
+
+		const hasProductAttributes = items.some((item) => {
+			const k = item.key.toLowerCase();
+			return (
+				k.includes("nama") ||
+				k.includes("brand") ||
+				k.includes("merek") ||
+				k.includes("kategori") ||
+				k.includes("ukuran") ||
+				k.includes("harga") ||
+				k.includes("sku") ||
+				k.includes("deskripsi") ||
+				k.includes("net content") ||
+				k.includes("skin type") ||
+				k.includes("aturan pakai") ||
+				k.includes("treatment")
+			);
+		});
+
+		if (!isKnownCardHeader && !hasProductAttributes) {
+			continue;
+		}
+
+		const isTreatment = /treatment|tindakan|prosedur|protokol/i.test(headerTitle) || items.some((i) => /treatment|tindakan|durasi|dokter/i.test(i.key));
 		const cleanImgUrl = isValidImageUrl(rawImgUrl) ? resolveImageUrl(rawImgUrl) : undefined;
+		const finalAlt = rawImgAlt || (!isKnownCardHeader ? headerTitle : "");
 
 		ranges.push({
 			start: m.index,
@@ -71,7 +98,7 @@ export function parseMarkdownSegments(markdown: string): Segment[] {
 				content: m[0],
 				data: {
 					imageUrl: cleanImgUrl,
-					imageAlt: rawImgAlt,
+					imageAlt: finalAlt,
 					items,
 				},
 			},

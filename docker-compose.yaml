@@ -81,6 +81,7 @@ services:
       - "3000:3000"
     environment:
       - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-http://localhost:8000/api}
+      - CI=true
     depends_on:
       backend:
         condition: service_healthy

@@ -1249,14 +1249,29 @@ You are an expert document structuring and knowledge curation AI for PT Arya Nob
 
 Your tasks:
 1. **FORMAT DOCUMENT CONTENT IN CLEAN, WELL-STRUCTURED MARKDOWN**:
-   - Format the document content in clean, consistent, well-structured Markdown hierarchy (`#` for document title, `##` for main sections/products/treatments, `###` for subsections).
+   - Format the document content in clean, consistent, well-structured Markdown hierarchy (`#` for document title, `##` for main sections, `###` for subsections/products).
+   - PRODUCT CATALOG & PRODUCT LISTINGS RULE (CRITICAL):
+     * For multi-product catalogs, brochures, product lines, or lists of products with photos and attributes:
+       Format each product as a dedicated modular `### Detail Produk` block with its associated image and bullet attributes so that the UI can render interactive Product Cards:
+       ```markdown
+       ### Detail Produk
+       ![Nama Produk Lengkap](URL_GAMBAR)
+       - **Nama Produk**: Nama Produk Lengkap
+       - **Brand**: ERHA
+       - **Kategori**: Kategori Produk (misal: Sabun Wajah Jerawat)
+       - **Ukuran**: 100 g
+       - **Harga**: Rp ... (jika ada)
+       - **Deskripsi**: Penjelasan singkat manfaat dan kegunaan produk.
+       ```
+     * NEVER separate product catalogs into a plain text table with photos dumped at the bottom. Keep each photo directly inside its corresponding `### Detail Produk` block.
+     * If a product has no image in the source document, omit the image tag for that product block (or put no image), but still format it as a `### Detail Produk` block with key-value bullet points.
    - EXCEL & SPREADSHEET TABLE PRESERVATION:
-     * For SPREADSHEET / EXCEL / CSV files: PRESERVE AND KEEP ALL TABLES EXACTLY AS TABLES IN MARKDOWN (`| Col 1 | Col 2 |`). Do NOT flatten or break tables into unstructured bullet lists unless explicitly requested by the Admin.
+     * For non-product SPREADSHEET / CSV files: PRESERVE AND KEEP TABLES AS MARKDOWN (`| Col 1 | Col 2 |`).
      * IMAGE CAPTION & LEGEND PLACEMENT: For images inside or associated with tables/sections, place the markdown image tag `![Alt Text](IMAGE_URL)` cleanly, and place any caption, legend, or description text DIRECTLY BELOW the image tag.
    - SMART TOPIC-BASED IMAGE PLACEMENT:
-     * NEVER dump all images together at the top under the main document title (# Title).
+     * NEVER dump all images together at the top under the main document title (# Title) or at the bottom.
      * Place each image intelligently inside its relevant section or topic:
-       - Product packaging / hero photos: Place directly inside the specific product section (under `## [Product Name]` or `## Informasi Produk`).
+       - Product packaging / hero photos: Place directly inside the specific product section (under `### Detail Produk` or `## [Product Name]`).
        - Clinical Before & After photos: Place inside the clinical results or efficacy section (`## Hasil Uji Klinis` or `## Sebelum & Sesudah Pemakaian`).
        - Treatment procedure / usage photos: Place inside the directions or application section (`## Cara Pemakaian` or `## Prosedur Tindakan`).
      * Format images cleanly on separate lines with descriptive alt text and blank lines before and after:
@@ -2526,8 +2541,15 @@ async def refine_pending_document(
 
                     media_note = ""
                     if all_attached_images:
-                        media_lines = [f"![Asset Gambar {i+1}]({url})" for i, url in enumerate(all_attached_images)]
-                        media_note = f"\n\n### Asset Media dari File Terlampir:\n" + "\n\n".join(media_lines) + "\n"
+                        media_lines = [f"- Attached Image {i+1}: {url}" for i, url in enumerate(all_attached_images)]
+                        primary_img = all_attached_images[0]
+                        media_note = (
+                            f"\n\n[ATTACHED MEDIA ASSET URLS FOR THIS TURN:\n"
+                            + "\n".join(media_lines)
+                            + f"\nCRITICAL INSTRUCTION: If the admin adds a product or section, embed the exact URL '{primary_img}' inside that product's '### Detail Produk' block as ![Product Name]({primary_img}). "
+                            f"If updating/replacing an image, swap the old image tag with ![Product Name]({primary_img}). DO NOT output placeholder text like 'URL_GAMBAR' or 'new_image'. "
+                            f"NEVER create an 'Asset Media' heading or append raw media asset lists at the end of the summary.]\n"
+                        )
 
                     attached_file_context = (
                         f"\n\n--- NEWLY ATTACHED SUPPLEMENTARY FILE: '{attached_file_name}' ---\n"
@@ -2590,15 +2612,22 @@ EDITING GUIDELINES:
    - If admin asks to delete/remove a section or data (e.g. "hapus warnings", "hilangkan efek samping", "hapus tabel ini"), remove that section cleanly while keeping everything else intact.
    - If admin asks to change/update specific data (e.g. "ganti harga jadi 50.000", "ubah nama produk", "sku nya ganti ke ABC-123"), update that specific value accurately.
    - If admin asks to format or tidy up (e.g. "rapikan teks", "buat jadi bullet point", "perbaiki tabel"), re-format into clean, well-structured Markdown.
-   - If admin attaches a supplementary file or adds new details, integrate the new facts seamlessly into the appropriate section.
-2. **SMART TOPIC-BASED IMAGE PLACEMENT RULE**:
-   - Do NOT simply dump images under the main document heading (# Title).
-   - Intelligently embed each image into its most relevant section or topic:
-     * Product photo / packaging: Place inside that specific product's section (under `## [Product Name]` or `## Informasi Produk`).
-     * Clinical Before & After photos: Place inside the clinical results section (under `## Hasil Uji Klinis` or `## Sebelum & Sesudah`).
-     * Treatment procedure / application photos: Place inside the usage section (under `## Cara Pemakaian` or `## Prosedur Tindakan`).
-   - Format images cleanly on their own lines with descriptive alt text and blank lines before and after:
-     ![Deskripsi Gambar](URL_GAMBAR)
+   - If admin attaches a supplementary file or adds new details (e.g. "tambahkan produk ini"), format the new product as a `### Detail Produk` block with its image and attributes.
+2. **MODULAR PRODUCT CARDS & IMAGE PLACEMENT RULE**:
+   - For multi-product catalogs or when adding a new product:
+     Format each product as a modular `### Detail Produk` block with its associated image and bullet attributes so the UI renders interactive Product Cards:
+     ```markdown
+     ### Detail Produk
+     ![Nama Produk Lengkap](URL_GAMBAR)
+     - **Nama Produk**: Nama Produk Lengkap
+     - **Brand**: ERHA
+     - **Kategori**: Kategori Produk (misal: Sabun Wajah Jerawat)
+     - **Ukuran**: 100 g
+     - **Harga**: Rp ... (jika ada)
+     - **Deskripsi**: Penjelasan manfaat dan kegunaan produk.
+     ```
+   - Intelligently embed each image into its most relevant section or product block.
+   - NEVER create any "Asset Media dari File Terlampir" heading or list of raw media assets at the end of the summary. Embed the attached image URL ONLY where it belongs.
 3. **DELETION OF SECTIONS, PRODUCTS & IMAGES RULE**:
    - If the admin instructs to delete or remove a specific product, treatment, or section (e.g. "hapus produk X", "hilangkan section Y", "hapus tabel ini"):
      * You MUST completely delete that product/section's headings, text, tables, AND all associated markdown image tags `![...](url)` belonging to that product/section.
@@ -2677,18 +2706,37 @@ CRITICAL REQUIREMENT FOR THE "summary" FIELD:
                 old_img_match = re.search(r'!\[([^\]]*)\]\(([^\)]+)\)', current_doc_summary)
                 if old_img_match:
                     old_tag = old_img_match.group(0)
+                    old_url = old_img_match.group(2)
                     alt_text = old_img_match.group(1) or cur_title or "Foto Produk"
                     new_tag = f"![{alt_text}]({all_attached_images[0]})"
                     updated_data["summary"] = current_doc_summary.replace(old_tag, new_tag, 1)
                     updated_data["feedback"] = "Gambar berhasil diganti dengan file terlampir yang baru."
+                    # Purge old replaced image from MinIO & disk immediately
+                    try:
+                        from app.services.storage import delete_image_by_ref
+                        delete_image_by_ref(old_url, knowledge_id=knowledge_id)
+                        logger.info(f"🗑️ Purged old replaced image '{old_url}' from MinIO on pending refine swap.")
+                    except Exception as del_old_err:
+                        logger.debug(f"Failed deleting old swapped image: {del_old_err}")
             else:
                 missing_new_imgs = [u for u in all_attached_images if u and u not in updated_data.get("summary", "")]
                 if missing_new_imgs:
-                    updated_data["summary"] = auto_embed_images_in_summary(
-                        updated_data.get("summary", ""),
-                        missing_new_imgs,
-                        title=cur_title or "Knowledge Image"
-                    )
+                    appended_tags = "\n\n" + "\n\n".join([f"![{cur_title or 'Foto Produk'}]({u})" for u in missing_new_imgs])
+                    updated_data["summary"] = updated_data.get("summary", "") + appended_tags
+
+        # Clean up any accidental "Asset Media" headers and duplicate image tags
+        clean_sum = updated_data.get("summary", "")
+        clean_sum = re.sub(r'(?:###?|\*\*)\s*(?:Asset Media dari File Terlampir|Asset Media|Media Assets|File Terlampir)[^\n]*[\s\S]*?(?=\n#{1,3}\s+|\n\*\*[^*]+\*\*|\Z)', '', clean_sum, flags=re.IGNORECASE)
+        seen_img_urls = set()
+        def _dedup_img_tag(m):
+            u_t = m.group(2).strip()
+            if u_t in seen_img_urls:
+                return ""
+            seen_img_urls.add(u_t)
+            return m.group(0)
+        clean_sum = re.sub(r'!\[([^\]]*)\]\(([^\)]+)\)', _dedup_img_tag, clean_sum)
+        clean_sum = re.sub(r'\n{3,}', '\n\n', clean_sum).strip()
+        updated_data["summary"] = clean_sum
 
         # Dynamically synchronize image_urls from the updated summary (Single Source of Truth)
         # Any image of a deleted product/section will naturally not be in the summary and thus cleanly excluded.
@@ -3475,8 +3523,15 @@ async def refine_approved_document(
 
                     media_note = ""
                     if all_attached_images:
-                        media_lines = [f"![Asset Gambar {i+1}]({url})" for i, url in enumerate(all_attached_images)]
-                        media_note = f"\n\n### Asset Media dari File Terlampir:\n" + "\n\n".join(media_lines) + "\n"
+                        media_lines = [f"- Attached Image {i+1}: {url}" for i, url in enumerate(all_attached_images)]
+                        primary_img = all_attached_images[0]
+                        media_note = (
+                            f"\n\n[ATTACHED MEDIA ASSET URLS FOR THIS TURN:\n"
+                            + "\n".join(media_lines)
+                            + f"\nCRITICAL INSTRUCTION: If the admin adds a product or section, embed the exact URL '{primary_img}' inside that product's '### Detail Produk' block as ![Product Name]({primary_img}). "
+                            f"If updating/replacing an image, swap the old image tag with ![Product Name]({primary_img}). DO NOT output placeholder text like 'URL_GAMBAR' or 'new_image'. "
+                            f"NEVER create an 'Asset Media' heading or append raw media asset lists at the end of the summary.]\n"
+                        )
 
                     attached_file_context = (
                         f"\n\n--- NEWLY ATTACHED SUPPLEMENTARY FILE: '{attached_file_name}' ---\n"
@@ -3535,15 +3590,22 @@ EDITING GUIDELINES:
    - If admin asks to delete/remove a section or data (e.g. "hapus warnings", "hilangkan efek samping", "hapus tabel ini"), remove that section cleanly while keeping everything else intact.
    - If admin asks to change/update specific data (e.g. "ganti harga jadi 50.000", "ubah nama produk", "sku nya ganti ke ABC-123"), update that specific value accurately.
    - If admin asks to format or tidy up (e.g. "rapikan teks", "buat jadi bullet point", "perbaiki tabel"), re-format into clean, well-structured Markdown.
-   - If admin attaches a supplementary file or adds new details, integrate the new facts seamlessly into the appropriate section.
-2. **SMART TOPIC-BASED IMAGE PLACEMENT RULE**:
-   - Do NOT simply dump images under the main document heading (# Title).
-   - Intelligently embed each image into its most relevant section or topic:
-     * Product photo / packaging: Place inside that specific product's section (under `## [Product Name]` or `## Informasi Produk`).
-     * Clinical Before & After photos: Place inside the clinical results section (under `## Hasil Uji Klinis` or `## Sebelum & Sesudah`).
-     * Treatment procedure / application photos: Place inside the usage section (under `## Cara Pemakaian` or `## Prosedur Tindakan`).
-   - Format images cleanly on their own lines with descriptive alt text and blank lines before and after:
-     ![Deskripsi Gambar](URL_GAMBAR)
+   - If admin attaches a supplementary file or adds new details (e.g. "tambahkan produk ini"), format the new product as a `### Detail Produk` block with its image and attributes.
+2. **MODULAR PRODUCT CARDS & IMAGE PLACEMENT RULE**:
+   - For multi-product catalogs or when adding a new product:
+     Format each product as a modular `### Detail Produk` block with its associated image and bullet attributes so the UI renders interactive Product Cards:
+     ```markdown
+     ### Detail Produk
+     ![Nama Produk Lengkap](URL_GAMBAR)
+     - **Nama Produk**: Nama Produk Lengkap
+     - **Brand**: ERHA
+     - **Kategori**: Kategori Produk (misal: Sabun Wajah Jerawat)
+     - **Ukuran**: 100 g
+     - **Harga**: Rp ... (jika ada)
+     - **Deskripsi**: Penjelasan manfaat dan kegunaan produk.
+     ```
+   - Intelligently embed each image into its most relevant section or product block.
+   - NEVER create any "Asset Media dari File Terlampir" heading or list of raw media assets at the end of the summary. Embed the attached image URL ONLY where it belongs.
 3. **STRICT CATEGORIES RULE**:
    - Update categories ONLY if the content changes topic and matches the "Available System Categories" list below.
    - NEVER invent or create new categories. NEVER output placeholder text like "category_name".
@@ -3620,6 +3682,12 @@ CRITICAL REQUIREMENT FOR THE "summary" FIELD:
                     url = itag.group(2)
                     if any(tw.lower() in alt.lower() or tw.lower() in url.lower() for tw in target_words):
                         updated_summary = updated_summary.replace(itag.group(0), "")
+                        try:
+                            from app.services.storage import delete_image_by_ref
+                            delete_image_by_ref(url, knowledge_id=knowledge_id)
+                            logger.info(f"🗑️ Purged deleted image '{url}' from MinIO on admin request.")
+                        except Exception as del_err:
+                            logger.debug(f"Failed deleting requested image: {del_err}")
             updated_summary = re.sub(r'\n{3,}', '\n\n', updated_summary)
 
         # Embed or Swap newly attached image assets if uploaded in this turn
@@ -3629,17 +3697,33 @@ CRITICAL REQUIREMENT FOR THE "summary" FIELD:
                 old_img_match = re.search(r'!\[([^\]]*)\]\(([^\)]+)\)', updated_summary)
                 if old_img_match:
                     old_tag = old_img_match.group(0)
+                    old_url = old_img_match.group(2)
                     alt_text = old_img_match.group(1) or doc_title or "Foto Produk"
                     new_tag = f"![{alt_text}]({all_attached_images[0]})"
                     updated_summary = updated_summary.replace(old_tag, new_tag, 1)
+                    try:
+                        from app.services.storage import delete_image_by_ref
+                        delete_image_by_ref(old_url, knowledge_id=knowledge_id)
+                        logger.info(f"🗑️ Purged old replaced image '{old_url}' from MinIO on approved refine swap.")
+                    except Exception as del_old_err:
+                        logger.debug(f"Failed deleting old swapped image: {del_old_err}")
             else:
                 missing_new_imgs = [u for u in all_attached_images if u and u not in updated_summary]
                 if missing_new_imgs:
-                    updated_summary = auto_embed_images_in_summary(
-                        updated_summary,
-                        missing_new_imgs,
-                        title=doc_title or "Knowledge Image"
-                    )
+                    appended_tags = "\n\n" + "\n\n".join([f"![{doc_title or 'Foto Produk'}]({u})" for u in missing_new_imgs])
+                    updated_summary = updated_summary + appended_tags
+
+        # Clean up any accidental "Asset Media" headers and duplicate image tags
+        updated_summary = re.sub(r'(?:###?|\*\*)\s*(?:Asset Media dari File Terlampir|Asset Media|Media Assets|File Terlampir)[^\n]*[\s\S]*?(?=\n#{1,3}\s+|\n\*\*[^*]+\*\*|\Z)', '', updated_summary, flags=re.IGNORECASE)
+        seen_img_urls_appr = set()
+        def _dedup_img_tag_appr(m):
+            u_t = m.group(2).strip()
+            if u_t in seen_img_urls_appr:
+                return ""
+            seen_img_urls_appr.add(u_t)
+            return m.group(0)
+        updated_summary = re.sub(r'!\[([^\]]*)\]\(([^\)]+)\)', _dedup_img_tag_appr, updated_summary)
+        updated_summary = re.sub(r'\n{3,}', '\n\n', updated_summary).strip()
 
         # Dynamically synchronize image_urls from the updated summary (Single Source of Truth)
         # Any image of a deleted product/section or deleted image will naturally not be in the summary and thus cleanly excluded.
@@ -4243,6 +4327,7 @@ async def delete_document_endpoint(
                                 # Purge associated images in MinIO 'images' bucket and documents
                                 try:
                                     from app.services.storage import delete_knowledge_images_and_assets
+                                    doc_bid = str(f_data.get("batch_id") or (f_data.get("metadata") or {}).get("batch_id") or "")
                                     img_res = delete_knowledge_images_and_assets(doc_id or k_id, doc_data=f_data)
                                     total_images_deleted += img_res.get("deleted_images_count", 0)
                                     logger.info(f"Purged {img_res.get('deleted_images_count', 0)} image(s) from MinIO for doc '{k_id}'")
@@ -4303,9 +4388,10 @@ async def delete_document_endpoint(
                     try:
                         from app.services.storage import delete_knowledge_images_and_assets
                         d_meta = d_doc.metadata_ if isinstance(d_doc.metadata_, dict) else {}
+                        d_bid = str(d_meta.get("batch_id") or "").strip()
                         img_res = delete_knowledge_images_and_assets(
                             str(d_doc.id),
-                            doc_data={"summary": d_doc.ai_summary, "metadata": d_meta, "image_urls": d_meta.get("image_urls", [])}
+                            doc_data={"summary": d_doc.ai_summary, "metadata": d_meta, "batch_id": d_bid, "image_urls": d_meta.get("image_urls", [])}
                         )
                         total_images_deleted += img_res.get("deleted_images_count", 0)
                     except Exception as s3_db_err:

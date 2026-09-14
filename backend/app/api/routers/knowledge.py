@@ -2152,17 +2152,19 @@ async def refine_knowledge(
                 media_note = ""
                 replace_guidance = ""
                 if all_attached_images:
-                    media_lines = [f"![Asset Gambar {i+1}]({url})" for i, url in enumerate(all_attached_images)]
-                    media_note = f"\n\n### Asset Media dari File Terlampir:\n" + "\n\n".join(media_lines) + "\n"
+                    media_lines = [f"- Attached Image {i+1}: {url}" for i, url in enumerate(all_attached_images)]
                     primary_img = all_attached_images[0]
-                    replace_guidance = (
-                        f"\n[INSTRUCTION FOR IMAGE REPLACEMENT: If the admin instruction asks to change, swap, or update an image for a product or section, "
-                        f"you MUST embed the EXACT URL '{primary_img}' in that product's table cell or heading. DO NOT output placeholder text like 'URL_GAMBAR' or 'new_image'.]\n"
+                    media_note = (
+                        f"\n\n[ATTACHED MEDIA ASSET URLS FOR THIS TURN:\n"
+                        + "\n".join(media_lines)
+                        + f"\nCRITICAL INSTRUCTION: If the admin instruction adds a product or section, embed the exact URL '{primary_img}' inside that product's '### Detail Produk' block as ![Product Name]({primary_img}). "
+                        f"If updating/replacing an image, swap the old image tag with ![Product Name]({primary_img}). DO NOT output placeholder text like 'URL_GAMBAR' or 'new_image'. "
+                        f"NEVER create an 'Asset Media' heading or append raw media asset lists at the end of the summary.]\n"
                     )
 
                 file_note = (
                     f"\n\n[SUPPLEMENTARY ATTACHED FILE CONTENT: '{attached_file_name}']\n"
-                    f"{content_snippet}{media_note}{replace_guidance}\n"
+                    f"{content_snippet}{media_note}\n"
                     f"[END OF ATTACHED FILE CONTENT]"
                 )
                 payload.prompt = f"{payload.prompt}\n{file_note}" if payload.prompt else file_note
@@ -2540,6 +2542,7 @@ async def delete_knowledge(
     file_name = knowledge.file_name if knowledge else None
     d_meta = knowledge.metadata_ if knowledge and isinstance(knowledge.metadata_, dict) else {}
     ai_summary = knowledge.ai_summary if knowledge else ""
+    batch_id = str(d_meta.get("batch_id") or "").strip()
 
     pipeline = get_ingestion_pipeline(request)
     bm25 = get_bm25_index(request)
@@ -2555,6 +2558,8 @@ async def delete_knowledge(
 
     # 3. Collect all identifier variants for secondary fail-safe multi-key purge
     identifiers_to_purge = {kid_str, f"{kid_str}_parsed", f"{kid_str}.json", f"{kid_str}_parsed.json"}
+    if batch_id:
+        identifiers_to_purge.update({batch_id, f"{batch_id}_parsed", f"{batch_id}.json", f"{batch_id}_parsed.json"})
     if file_name:
         base_name, _ = os.path.splitext(file_name)
         identifiers_to_purge.update({
@@ -2588,7 +2593,8 @@ async def delete_knowledge(
                         if isinstance(f_data, dict):
                             doc_kid = str(f_data.get("knowledge_id", ""))
                             doc_fname = str(f_data.get("file_name", ""))
-                            if doc_kid == kid_str or (file_name and doc_fname.lower() == file_name.lower()):
+                            doc_bid = str(f_data.get("batch_id") or (f_data.get("metadata") or {}).get("batch_id") or "")
+                            if doc_kid == kid_str or (batch_id and doc_bid == batch_id) or (file_name and doc_fname.lower() == file_name.lower()):
                                 should_delete = True
                     except Exception:
                         pass
@@ -2605,7 +2611,7 @@ async def delete_knowledge(
         from app.services.storage import delete_knowledge_images_and_assets
         delete_knowledge_images_and_assets(
             kid_str,
-            doc_data={"summary": ai_summary, "metadata": d_meta, "image_urls": d_meta.get("image_urls", [])}
+            doc_data={"summary": ai_summary, "metadata": d_meta, "batch_id": batch_id, "image_urls": d_meta.get("image_urls", [])}
         )
     except Exception as s3_del_err:
         logger.debug(f"MinIO secondary delete note for {kid_str}: {s3_del_err}")

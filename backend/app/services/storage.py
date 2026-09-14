@@ -1454,6 +1454,7 @@ def delete_image_by_ref(raw_ref: str, knowledge_id: Optional[str] = None) -> boo
     """
     Sanitizes and deletes a single image reference from MinIO images bucket
     and local disk fallback storage.
+    Supports full URLs, relative paths, full S3 keys, and filename substrings.
     """
     if not raw_ref or not isinstance(raw_ref, str):
         return False
@@ -1475,18 +1476,38 @@ def delete_image_by_ref(raw_ref: str, knowledge_id: Optional[str] = None) -> boo
     clean = clean.lstrip("/")
     fname = os.path.basename(clean)
 
-    if not fname or len(fname) < 4:
+    if not fname or len(fname) < 3:
         return False
 
     success = False
-    # Delete from MinIO images bucket
+    # 1. Delete direct key candidates from MinIO images bucket
     if client:
-        for s3_candidate in [f"images/{fname}", clean, fname]:
+        candidates = {f"images/{fname}", clean, fname}
+        for s3_candidate in candidates:
             try:
                 client.delete_object(Bucket=images_bucket, Key=s3_candidate)
                 success = True
             except Exception as e:
                 logger.debug(f"MinIO delete image '{s3_candidate}' note: {e}")
+
+        # 2. If fname might be a suffix without the random UUID prefix (e.g. 'photo.jpg')
+        # Scan images bucket for keys ending with or containing the unique filename (if filename >= 6 chars)
+        if len(fname) >= 6:
+            try:
+                paginator = client.get_paginator('list_objects_v2')
+                for page in paginator.paginate(Bucket=images_bucket, Prefix="images/"):
+                    for obj in page.get('Contents', []):
+                        k = obj.get('Key', '')
+                        if k.endswith(f"_{fname}") or k == fname or k.endswith(f"/{fname}"):
+                            try:
+                                client.delete_object(Bucket=images_bucket, Key=k)
+                                success = True
+                                logger.info(f"🗑️ Deleted MinIO image matched suffix '{k}'")
+                            except Exception as del_err:
+                                logger.debug(f"Failed deleting matched key '{k}': {del_err}")
+            except Exception as scan_err:
+                logger.debug(f"MinIO pattern scan error for '{fname}': {scan_err}")
+
         log_kid = f" for doc '{knowledge_id}'" if knowledge_id else ""
         logger.info(f"🗑️ Deleted MinIO image '{fname}'{log_kid}")
 
@@ -1624,7 +1645,7 @@ def extract_image_keys_from_doc_data(doc_data: dict) -> set:
 def delete_knowledge_images_and_assets(knowledge_id: str, doc_data: Optional[dict] = None) -> dict:
     """
     Comprehensively deletes all MinIO objects and local fallback files associated with a knowledge document:
-    1. All embedded images in MinIO 'images' bucket.
+    1. All embedded images in MinIO 'images' bucket (via explicit refs and active S3 pattern scanner).
     2. All original documents and canonical JSON in MinIO 'knowledge-documents' bucket.
     3. Staging and approved JSONs in MinIO 'staging' and 'approved' buckets.
     4. Local disk fallback files in data/images, data/storage, data/temp, data/uploads.
@@ -1632,10 +1653,16 @@ def delete_knowledge_images_and_assets(knowledge_id: str, doc_data: Optional[dic
     kid_str = str(knowledge_id).strip()
     client = _get_client()
     docs_bucket = _docs_bucket()
+    images_bucket = _images_bucket()
 
     all_image_refs = set()
+    batch_ids = set()
+
     if doc_data and isinstance(doc_data, dict):
         all_image_refs.update(extract_image_keys_from_doc_data(doc_data))
+        b_id = doc_data.get("batch_id") or (doc_data.get("metadata") or {}).get("batch_id")
+        if b_id and isinstance(b_id, str):
+            batch_ids.add(b_id.strip())
 
     # Also check staging and approved JSON from MinIO or disk if doc_data wasn't fully populated
     for getter in [get_staging_json, get_approved_json]:
@@ -1643,11 +1670,14 @@ def delete_knowledge_images_and_assets(knowledge_id: str, doc_data: Optional[dic
             m_doc = getter(kid_str)
             if m_doc and isinstance(m_doc, dict):
                 all_image_refs.update(extract_image_keys_from_doc_data(m_doc))
+                b_id = m_doc.get("batch_id") or (m_doc.get("metadata") or {}).get("batch_id")
+                if b_id and isinstance(b_id, str):
+                    batch_ids.add(b_id.strip())
         except Exception:
             pass
 
     # Check local JSON cache if doc_data wasn't fully populated
-    for folder in ["data/output", "data/pending", "data/temp"]:
+    for folder in ["data/output", "data/pending", "data/temp", "data/approved"]:
         for cand in [f"{kid_str}.json", f"{kid_str}_parsed.json"]:
             cand_path = os.path.join(folder, cand)
             if os.path.exists(cand_path):
@@ -1656,11 +1686,16 @@ def delete_knowledge_images_and_assets(knowledge_id: str, doc_data: Optional[dic
                         cached_doc = json.load(fp)
                     if isinstance(cached_doc, dict):
                         all_image_refs.update(extract_image_keys_from_doc_data(cached_doc))
+                        b_id = cached_doc.get("batch_id") or (cached_doc.get("metadata") or {}).get("batch_id")
+                        if b_id and isinstance(b_id, str):
+                            batch_ids.add(b_id.strip())
                 except Exception:
                     pass
 
     deleted_images = []
     seen_fnames = set()
+
+    # 1. Delete explicit image references
     for ref in all_image_refs:
         clean = str(ref).strip()
         if "/api/storage/" in clean:
@@ -1676,35 +1711,63 @@ def delete_knowledge_images_and_assets(knowledge_id: str, doc_data: Optional[dic
             if delete_image_by_ref(fname, knowledge_id=kid_str):
                 deleted_images.append(fname)
 
-    # Clean MinIO knowledge-documents bucket (originals & canonical)
-    if client and kid_str:
+    # 2. Comprehensive S3 Scanner on images bucket for any images tagged with kid_str or batch_id
+    if client and (kid_str or batch_ids):
         try:
-            # 1. Delete canonical JSON
-            client.delete_object(Bucket=docs_bucket, Key=f"canonical/{kid_str}/document.json")
-        except Exception:
-            pass
-
-        try:
-            # 2. Delete original upload files in originals/.../{kid_str}/...
+            match_identifiers = {kid_str} | batch_ids
             paginator = client.get_paginator('list_objects_v2')
-            for page in paginator.paginate(Bucket=docs_bucket, Prefix="originals/"):
+            for page in paginator.paginate(Bucket=images_bucket):
                 for obj in page.get('Contents', []):
                     key = obj.get('Key', '')
-                    if f"/{kid_str}/" in key:
+                    matched = False
+                    for ident in match_identifiers:
+                        if ident and len(ident) >= 6 and ident in key:
+                            matched = True
+                            break
+                    if matched and key not in seen_fnames:
+                        seen_fnames.add(key)
                         try:
-                            client.delete_object(Bucket=docs_bucket, Key=key)
-                            logger.info(f"🗑️ Deleted original document '{key}' from MinIO '{docs_bucket}'")
-                        except Exception as err:
-                            logger.debug(f"Could not delete original document '{key}': {err}")
-        except Exception as e:
-            logger.debug(f"Error purging originals for '{kid_str}': {e}")
+                            client.delete_object(Bucket=images_bucket, Key=key)
+                            deleted_images.append(key)
+                            logger.info(f"🗑️ Purged matched MinIO image '{key}' for doc '{kid_str}'")
+                        except Exception as del_err:
+                            logger.debug(f"Failed deleting matched MinIO image '{key}': {del_err}")
+        except Exception as scan_err:
+            logger.debug(f"Error scanning images bucket for '{kid_str}': {scan_err}")
 
-    # Clean staging & approved JSON in MinIO
-    try:
-        delete_staging_json(kid_str)
-        delete_approved_json(kid_str)
-    except Exception:
-        pass
+    # Clean MinIO knowledge-documents bucket (originals & canonical)
+    if client and (kid_str or batch_ids):
+        all_ids_to_clean = {kid_str} | batch_ids
+        for target_id in all_ids_to_clean:
+            if not target_id:
+                continue
+            try:
+                # 1. Delete canonical JSON
+                client.delete_object(Bucket=docs_bucket, Key=f"canonical/{target_id}/document.json")
+            except Exception:
+                pass
+
+            try:
+                # 2. Delete original upload files in originals/.../{target_id}/...
+                paginator = client.get_paginator('list_objects_v2')
+                for page in paginator.paginate(Bucket=docs_bucket, Prefix="originals/"):
+                    for obj in page.get('Contents', []):
+                        key = obj.get('Key', '')
+                        if f"/{target_id}/" in key or f"_{target_id}_" in key:
+                            try:
+                                client.delete_object(Bucket=docs_bucket, Key=key)
+                                logger.info(f"🗑️ Deleted original document '{key}' from MinIO '{docs_bucket}'")
+                            except Exception as err:
+                                logger.debug(f"Could not delete original document '{key}': {err}")
+            except Exception as e:
+                logger.debug(f"Error purging originals for '{target_id}': {e}")
+
+            # Clean staging & approved JSON in MinIO
+            try:
+                delete_staging_json(target_id)
+                delete_approved_json(target_id)
+            except Exception:
+                pass
 
     return {
         "knowledge_id": kid_str,

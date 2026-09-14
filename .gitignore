@@ -20,3 +20,8 @@ backend/tests/
 backend/scripts/
 scripts/
 data/
+
+# pnpm store and cache
+.pnpm-store
+**/.pnpm-store/
+
