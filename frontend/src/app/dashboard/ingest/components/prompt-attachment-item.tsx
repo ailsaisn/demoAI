@@ -8,7 +8,7 @@ import {
 } from "@/components/ui/attachment";
 import { cn } from "@/lib/utils";
 import { RiCloseLine, RiLoader4Line } from "@remixicon/react";
-import { getFileIconAndColor } from "../utils/prompt-input-utils";
+import { formatFileSize, getFileIconAndColor } from "../utils/prompt-input-utils";
 
 interface PromptAttachmentItemProps {
 	file: File;
@@ -44,7 +44,7 @@ export function PromptAttachmentItem({
 					{file.name}
 				</AttachmentTitle>
 				<div className="flex items-center justify-between gap-1 text-[11px] text-zinc-500 mt-0.5">
-					<span>{(file.size / 1024).toFixed(1)} KB</span>
+					<span>{formatFileSize(file.size)}</span>
 					{isLoading && uploadProgress !== undefined && (
 						<span className="font-semibold text-blue-600">
 							{uploadProgress > 0 ? `${uploadProgress}%` : "Uploading..."}

@@ -1017,6 +1017,14 @@ export function ChatPreview({
 		}
 	};
 
+	const formatFileSize = (bytes?: number | null) => {
+		if (!bytes || bytes <= 0) return "0 B";
+		if (bytes >= 1024 * 1024 * 1024) return (bytes / (1024 * 1024 * 1024)).toFixed(1) + " GB";
+		if (bytes >= 1024 * 1024) return (bytes / (1024 * 1024)).toFixed(1) + " MB";
+		if (bytes >= 1024) return (bytes / 1024).toFixed(1) + " KB";
+		return bytes + " B";
+	};
+
 	const scrollToBottomAndFocus = () => {
 		setTimeout(() => {
 			if (viewportRef.current) {
@@ -2270,7 +2278,7 @@ export function ChatPreview({
 												{file.name}
 											</AttachmentTitle>
 											<AttachmentDescription className="text-[11px] text-zinc-500">
-												{(file.size / 1024).toFixed(1)} KB
+												{formatFileSize(file.size)}
 											</AttachmentDescription>
 										</AttachmentContent>
 										<AttachmentActions>

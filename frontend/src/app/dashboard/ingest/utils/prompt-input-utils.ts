@@ -94,3 +94,17 @@ export function getFileIconAndColor(filename?: string | null) {
 			return { Icon: RiFileTextLine, bgColor: "bg-blue-50", textColor: "text-blue-600" };
 	}
 }
+
+export function formatFileSize(bytes?: number | null): string {
+	if (!bytes || bytes <= 0) return "0 B";
+	if (bytes >= 1024 * 1024 * 1024) {
+		return (bytes / (1024 * 1024 * 1024)).toFixed(1) + " GB";
+	}
+	if (bytes >= 1024 * 1024) {
+		return (bytes / (1024 * 1024)).toFixed(1) + " MB";
+	}
+	if (bytes >= 1024) {
+		return (bytes / 1024).toFixed(1) + " KB";
+	}
+	return bytes + " B";
+}
