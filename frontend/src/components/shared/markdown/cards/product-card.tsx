@@ -150,14 +150,18 @@ export function ProductCard({ data }: { data: CardData }) {
 						</h4>
 					)}
 
-					{/* 2. Brand / Product Type / Variant Badges */}
-					{(brand || productType || variant) && (
+					{/* 2. SKU / Brand / Product Type / Variant Badges */}
+					{(sku || brand || productType || variant) && (
 						<div className="flex items-center gap-1.5 flex-wrap my-0.5">
-							{brand && (
+							{sku ? (
+								<span className="text-xs font-mono font-medium text-zinc-800 bg-zinc-100 px-2 py-0.5 rounded border border-zinc-200">
+									SKU: {sku}
+								</span>
+							) : brand ? (
 								<span className="text-xs font-medium text-zinc-800 bg-zinc-100 px-2 py-0.5 rounded border border-zinc-200">
 									{brand}
 								</span>
-							)}
+							) : null}
 							{productType && (
 								<span className="text-xs font-normal text-zinc-700 bg-zinc-100 px-2 py-0.5 rounded border border-zinc-200/80">
 									{productType}

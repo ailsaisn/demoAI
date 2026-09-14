@@ -1257,6 +1257,7 @@ Your tasks:
        ### Detail Produk
        ![Nama Produk Lengkap](URL_GAMBAR)
        - **Nama Produk**: Nama Produk Lengkap
+       - **SKU**: Nomor SKU (jika ada, misal: ERHA-TRU-001)
        - **Brand**: ERHA
        - **Kategori**: Kategori Produk (misal: Sabun Wajah Jerawat)
        - **Ukuran**: 100 g
