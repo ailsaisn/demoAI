@@ -4961,7 +4961,7 @@ async def _resolve_query_general_prompt(db_session) -> str:
         result = await db_session.execute(stmt)
         db_prompt = result.scalar_one_or_none()
         if db_prompt and db_prompt.strip():
-            if "DILARANG KERAS MENAMPILKAN ATAU MEMINJAM GAMBAR DARI ENTITAS/PRODUK LAIN" not in db_prompt:
+            if "DILARANG KERAS MENULISKAN SIMBOL TITIK-TITIK DUMMY" not in db_prompt:
                 try:
                     stmt_update = select(AppConfig).where(AppConfig.key == "AI_PROMPT_QUERY_GENERAL")
                     res_cfg = await db_session.execute(stmt_update)
@@ -4969,7 +4969,7 @@ async def _resolve_query_general_prompt(db_session) -> str:
                     if cfg_obj:
                         cfg_obj.value = DEFAULT_QUERY_GENERAL_PROMPT
                         await db_session.commit()
-                        logger.info("[QUERY-GENERAL] Auto-synchronized AI_PROMPT_QUERY_GENERAL in AppConfig DB with strict 1-to-1 image matching rules.")
+                        logger.info("[QUERY-GENERAL] Auto-synchronized AI_PROMPT_QUERY_GENERAL in AppConfig DB with dynamic fluid formatting rules.")
                 except Exception as sync_err:
                     logger.warning(f"[QUERY-GENERAL] Could not auto-sync DB prompt: {sync_err}")
                 return DEFAULT_QUERY_GENERAL_PROMPT
@@ -5559,35 +5559,41 @@ async def query_general_endpoint(
 
         # Inject authentic approved MinIO images (Strict 1-to-1 Entity Isolated, Zero Cross-Product Fallback)
         injected_imgs = set()
+        injected_entities = set()
         for hit in results:
             meta = hit.get("metadata", {})
             img = meta.get("image_url") or meta.get("image")
             
             chunk_content = hit.get("content") or hit.get("text") or ""
             target_match = _extract_specific_treatment_or_product_name(meta, chunk_text=chunk_content)
+            if not target_match:
+                continue
+
+            entity_key = target_match.lower().strip()
+            if entity_key in injected_entities:
+                continue
 
             # Strict 1-to-1 matching: If chunk does not have an explicit image_url, check images list for exact product_name match
             if not img and isinstance(meta.get("images"), list):
                 for img_obj in meta["images"]:
                     if isinstance(img_obj, dict) and img_obj.get("url"):
                         p_name = img_obj.get("product_name") or img_obj.get("caption") or ""
-                        if p_name and target_match and (p_name.lower() in target_match.lower() or target_match.lower() in p_name.lower()):
+                        if p_name and (p_name.lower() in entity_key or entity_key in p_name.lower()):
                             img = img_obj["url"]
                             break
 
-            # STRICT RULE: NEVER fall back to meta["image_urls"][0] globally per document (prevents duplicate image cross-contamination)
-            if not img or not (str(img).startswith("http") or str(img).startswith("/api/storage/") or str(img).startswith("/storage/")):
+            # STRICT RULE: Verify physical asset exists on MinIO or storage before injecting
+            from app.services.storage import is_valid_storage_asset
+            if not img or not is_valid_storage_asset(str(img)):
                 continue
 
             img_filename = os.path.basename(str(img)).lower()
             if ("cover" in img_filename or "header_logo" in img_filename or meta.get("image_role") == "COVER") and not any(k in img_filename for k in ["before", "after", "product", "treatment", "photo", "image", "img"]):
                 continue
 
-            chunk_content = hit.get("content") or hit.get("text") or ""
-            target_match = _extract_specific_treatment_or_product_name(meta, chunk_text=chunk_content)
             display_label = target_match
 
-            if not target_match or str(img) in injected_imgs:
+            if str(img) in injected_imgs:
                 continue
 
             if target_match.lower() in clean_answer.lower() and str(img) not in clean_answer:
@@ -5595,6 +5601,7 @@ async def query_general_endpoint(
                 if pattern.search(clean_answer):
                     clean_answer = pattern.sub(rf'\1\n\n![{display_label}]({img})\n\n', clean_answer, count=1)
                     injected_imgs.add(str(img))
+                    injected_entities.add(entity_key)
 
         clean_answer = OutputGuard.strip_patient_disclaimers(clean_answer)
 
