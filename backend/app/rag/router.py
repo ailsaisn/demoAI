@@ -4951,7 +4951,7 @@ async def _resolve_query_general_prompt(db_session) -> str:
     Resolves the system prompt for Query General:
     1. AppConfig DB key: AI_PROMPT_QUERY_GENERAL (admin-configurable via CIS)
     2. DEFAULT_QUERY_GENERAL_PROMPT (hardcoded fallback)
-    Auto-synchronizes DB prompt if missing strict anti-duplication rules.
+    Auto-synchronizes DB prompt if missing strict anti-duplication rules or product image rules.
     """
     from app.rag.services.rag_generator import DEFAULT_QUERY_GENERAL_PROMPT
     try:
@@ -4961,7 +4961,7 @@ async def _resolve_query_general_prompt(db_session) -> str:
         result = await db_session.execute(stmt)
         db_prompt = result.scalar_one_or_none()
         if db_prompt and db_prompt.strip():
-            if "DILARANG KERAS MENULISKAN SIMBOL TITIK-TITIK DUMMY" not in db_prompt:
+            if "GAMBAR PRODUK & TREATMENT RESMI" not in db_prompt:
                 try:
                     stmt_update = select(AppConfig).where(AppConfig.key == "AI_PROMPT_QUERY_GENERAL")
                     res_cfg = await db_session.execute(stmt_update)
@@ -4969,7 +4969,7 @@ async def _resolve_query_general_prompt(db_session) -> str:
                     if cfg_obj:
                         cfg_obj.value = DEFAULT_QUERY_GENERAL_PROMPT
                         await db_session.commit()
-                        logger.info("[QUERY-GENERAL] Auto-synchronized AI_PROMPT_QUERY_GENERAL in AppConfig DB with dynamic fluid formatting rules.")
+                        logger.info("[QUERY-GENERAL] Auto-synchronized AI_PROMPT_QUERY_GENERAL in AppConfig DB with natural Q&A persona and authentic product image rules.")
                 except Exception as sync_err:
                     logger.warning(f"[QUERY-GENERAL] Could not auto-sync DB prompt: {sync_err}")
                 return DEFAULT_QUERY_GENERAL_PROMPT
@@ -5146,11 +5146,19 @@ async def query_general_endpoint(
         # -------------------------------------------------------------
         # PHASE 2: Operation Intent Classifier (EDIT / DELETE Intent Detection)
         # -------------------------------------------------------------
-        delete_verbs = r'(?:hapus|delete|hilangkan|remove|buang|bersihkan|tiadakan|drop|clear|wipe|erase)'
+        # Strict READ / Q&A Intent Guard: Never classify READ queries as EDIT/DELETE
+        read_keywords = r'\b(detail|info|informasi|penjelasan|deskripsi|apa|apakah|bagaimana|mengapa|kenapa|bisa\s*kah|kapan|berapa|siapa|sebutkan|rekomendasi|kandungan|komposisi|manfaat|fungsi|cara|prosedur|harga|sku|gambar|foto|lihat|tunjukkan|cari|tampilkan)\b'
+        is_read_query = bool(re.search(read_keywords, clean_user_prompt, re.IGNORECASE))
+
+        # Explicit action verbs for DELETE (avoiding collisions with product names like "Acne Clear Gel", "Make-up Remover")
+        delete_verbs = r'(?:hapus|delete|hilangkan|buang|bersihkan|tiadakan|wipe|erase|clear\s+data|clear\s+kb|clear\s+database|clear\s+knowledge|clear\s+dokumen|clear\s+item|remove\s+data|remove\s+kb|remove\s+dokumen|remove\s+item|^clear\s+|^remove\s+)'
         is_delete_cmd = (
-            bool(re.search(rf'\b{delete_verbs}\b', clean_user_prompt))
-            or bool(re.search(rf'\b{delete_verbs}\b', effective_prompt.lower()))
-        ) and not bool(re.search(r'\b(apakah|bagaimana|mengapa|kenapa|bisa kah|kapan)\b', clean_user_prompt))
+            not is_read_query
+            and (
+                bool(re.search(rf'\b{delete_verbs}', clean_user_prompt, re.IGNORECASE))
+                or bool(re.search(rf'\b{delete_verbs}', effective_prompt.lower(), re.IGNORECASE))
+            )
+        )
 
         if is_delete_cmd:
             matched_res = (
@@ -5263,11 +5271,14 @@ async def query_general_endpoint(
             )
 
         # Check if user explicitly requests EDIT
-        edit_verbs = r'(?:ubah|ganti|edit|tukar|salin|update|perbarui|revisi|terapkan|pasang|masukkan|tambahkan|sisipkan|gantikan|gantiin|set|sesuaikan|modifikasi|perbaiki)'
+        edit_verbs = r'(?:ubah|ganti|edit|tukar|salin|update|perbarui|revisi|terapkan|pasang|masukkan|tambahkan|sisipkan|gantikan|gantiin|set\s+data|set\s+harga|set\s+ukuran|modifikasi|perbaiki|^set\s+)'
         is_edit_cmd = (
-            bool(re.search(rf'\b{edit_verbs}\b', clean_user_prompt))
-            or bool(re.search(rf'\b{edit_verbs}\b', effective_prompt.lower()))
-        ) and not bool(re.search(r'\b(apakah|bagaimana|mengapa|kenapa|bisa kah|kapan)\b', clean_user_prompt))
+            not is_read_query
+            and (
+                bool(re.search(rf'\b{edit_verbs}', clean_user_prompt, re.IGNORECASE))
+                or bool(re.search(rf'\b{edit_verbs}', effective_prompt.lower(), re.IGNORECASE))
+            )
+        )
 
         if is_edit_cmd:
             matched_res = (
