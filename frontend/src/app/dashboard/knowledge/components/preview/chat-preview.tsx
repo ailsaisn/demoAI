@@ -337,14 +337,14 @@ export function ChatPreview({
 		onChangeSummary?.(val);
 	};
 
-	const handleStartManualEdit = (currentDisplayContent: string) => {
-		const initialText = localSummary || currentDisplayContent;
-		setBackupManualSummary(initialText);
-		if (!localSummary) {
-			setLocalSummary(initialText);
-		}
-		setIsManualEditing(true);
-	};
+	// const handleStartManualEdit = (currentDisplayContent: string) => {
+	// 	const initialText = localSummary || currentDisplayContent;
+	// 	setBackupManualSummary(initialText);
+	// 	if (!localSummary) {
+	// 		setLocalSummary(initialText);
+	// 	}
+	// 	setIsManualEditing(true);
+	// };
 
 	const handleCancelManualEdit = () => {
 		setLocalSummary(backupManualSummary);
@@ -1568,9 +1568,7 @@ export function ChatPreview({
 					<span className="inline-flex items-center px-2 py-0.5 rounded-md text-[11px] font-semibold bg-amber-50 text-amber-800 border border-amber-200/80">
 						Action Required
 					</span>
-					<span className="font-normal text-zinc-600">
-						Confirm to apply proposed changes
-					</span>
+					<span className="font-normal text-zinc-600">Confirm to apply proposed changes</span>
 				</div>
 				<div className="flex items-center gap-2">
 					<Button
@@ -1622,8 +1620,8 @@ export function ChatPreview({
 						{index === firstAssistantIndex && headerNode}
 						{index === firstAssistantIndex && renderConfidenceScore()}
 
-						{/* Primary Manual Edit Trigger Button matching action bar style */}
-						<div className="flex items-center justify-end mb-3">
+						{/* Primary Manual Edit Trigger Button (hidden for now) */}
+						{/* <div className="flex items-center justify-end mb-3">
 							<Button
 								type="button"
 								size="sm"
@@ -1634,7 +1632,7 @@ export function ChatPreview({
 								<RiEdit2Line className="size-3.5" />
 								Manual Edit
 							</Button>
-						</div>
+						</div> */}
 
 						<MarkdownContent content={displayContent} />
 						{renderOperationActions(msg)}
@@ -1911,7 +1909,8 @@ export function ChatPreview({
 													{failureErrorMsg}
 												</p>
 												<p className="text-[11px] text-zinc-600 leading-relaxed">
-													Please check if the file is password-protected, corrupted, or re-upload the document in a standard format (PDF, DOCX, XLSX, TXT, Images).
+													Please check if the file is password-protected, corrupted, or re-upload
+													the document in a standard format (PDF, DOCX, XLSX, TXT, Images).
 												</p>
 
 												<div className="flex flex-wrap items-center gap-2 pt-1">
