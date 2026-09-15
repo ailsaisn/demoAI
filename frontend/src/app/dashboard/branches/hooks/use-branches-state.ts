@@ -15,8 +15,12 @@ export function useBranchesState() {
 	const { data: branches = [], isLoading } = useBranches();
 	const { data: configs } = useConfigs();
 
-	const isGlobalLimitActive =
+	const isMasterActive =
 		configs?.find((c) => c.key === "GLOBAL_TOKEN_LIMIT_ACTIVE")?.value === "true";
+	const isBranchGlobalActive =
+		configs?.find((c) => c.key === "GLOBAL_BRANCH_LIMIT_ACTIVE")?.value === "true";
+	const isGlobalLimitActive = isMasterActive && isBranchGlobalActive;
+
 	const globalBranchLimit =
 		configs?.find((c) => c.key === "GLOBAL_TOKEN_LIMIT")?.value || "3000000";
 
@@ -38,12 +42,23 @@ export function useBranchesState() {
 			);
 		}
 		return sortItems<BranchResponse>(result, (branch: BranchResponse, key: string) => {
-			if (key === "remaining") return branch.remaining ?? branch.token_limit - (branch.used || 0);
-			if (key === "token_limit") return branch.token_limit ?? 0;
-			if (key === "used") return branch.used ?? 0;
+			const hasCustomLimit =
+				branch.has_custom_limit ??
+				(branch.token_limit !== undefined &&
+					branch.token_limit !== null &&
+					branch.token_limit > 0);
+			const effectiveLimit = hasCustomLimit
+				? (branch.token_limit ?? 0)
+				: isGlobalLimitActive
+				? Number(globalBranchLimit)
+				: (branch.token_limit ?? branch.tokensMonth ?? 0);
+			const used = branch.used ?? 0;
+			if (key === "remaining") return branch.remaining ?? Math.max(0, effectiveLimit - used);
+			if (key === "token_limit") return effectiveLimit;
+			if (key === "used") return used;
 			return (branch as unknown as Record<string, unknown>)[key];
 		});
-	}, [branches, debouncedSearch, sortItems]);
+	}, [branches, debouncedSearch, sortItems, isGlobalLimitActive, globalBranchLimit]);
 
 	const pagination = usePagination<BranchResponse>({
 		items: filteredBranches,

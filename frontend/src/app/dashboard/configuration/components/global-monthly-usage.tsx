@@ -9,12 +9,17 @@ export function GlobalMonthlyUsage() {
 
 	const isLoading = isUsageLoading || isConfigsLoading;
 
-	// Check if global limit config is active from configs (authoritative) or usage endpoint
-	const globalConfigItem = configs?.find((c) => c.key === "GLOBAL_TOKEN_LIMIT_ACTIVE");
+	// Check if global limit config and threshold are active from configs (authoritative) or usage endpoint
+	const isMasterActive =
+		configs?.find((c) => c.key === "GLOBAL_TOKEN_LIMIT_ACTIVE")?.value === "true";
+	const isThresholdActive =
+		configs?.find((c) => c.key === "GLOBAL_THRESHOLD_ACTIVE")?.value === "true";
 	const isGlobalLimitActive =
-		globalConfigItem !== undefined
-			? globalConfigItem.value === "true"
-			: usage?.is_global_active === true;
+		isMasterActive && isThresholdActive
+			? true
+			: isMasterActive === false
+				? false
+				: usage?.is_global_active === true;
 
 	const tokensUsed = usage?.tokens_used ?? 0;
 	const tokenLimit = usage?.token_limit ?? 1000000;

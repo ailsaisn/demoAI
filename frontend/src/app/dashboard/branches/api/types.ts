@@ -31,5 +31,6 @@ export interface BranchResponse extends BranchBase {
 	tokensMonth?: number;
 	used: number;
 	remaining: number;
+	has_custom_limit?: boolean;
 	doctors: BranchDoctorResponse[];
 }

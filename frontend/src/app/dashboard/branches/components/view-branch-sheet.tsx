@@ -17,12 +17,24 @@ export function ViewBranchSheet({ branch }: ViewBranchSheetProps) {
 	const [open, setOpen] = React.useState(false);
 
 	const { data: configs } = useConfigs();
-	const isGlobalLimitActive =
+	const isMasterActive =
 		configs?.find((c) => c.key === "GLOBAL_TOKEN_LIMIT_ACTIVE")?.value === "true";
+	const isBranchGlobalActive =
+		configs?.find((c) => c.key === "GLOBAL_BRANCH_LIMIT_ACTIVE")?.value === "true";
+	const isGlobalLimitActive = isMasterActive && isBranchGlobalActive;
+
 	const globalBranchLimit =
 		configs?.find((c) => c.key === "GLOBAL_TOKEN_LIMIT")?.value || "3000000";
 
-	const effectiveBranchLimit = isGlobalLimitActive
+	const hasCustomLimit =
+		branch.has_custom_limit ??
+		(branch.token_limit !== undefined &&
+			branch.token_limit !== null &&
+			branch.token_limit > 0);
+
+	const effectiveBranchLimit = hasCustomLimit
+		? (branch.token_limit ?? 0)
+		: isGlobalLimitActive
 		? Number(globalBranchLimit)
 		: (branch.token_limit ?? branch.tokensMonth ?? 0);
 
@@ -90,22 +102,28 @@ export function ViewBranchSheet({ branch }: ViewBranchSheetProps) {
 									</div>
 								)}
 
-								<div className="flex items-center justify-between gap-4">
+								<div className="flex items-start justify-between gap-4">
 									<div className="flex flex-col gap-1">
 										<span className="text-sm text-black-300">Tokens</span>
-										<div className="flex items-center gap-2">
-											<span className="text-sm font-medium text-blue-600">
-												{effectiveBranchLimit.toLocaleString()}{" "}
-												<span className="text-black-500 font-normal">/month</span>
-											</span>
-											{isGlobalLimitActive && (
-												<span className="text-[11px] bg-blue-50 text-blue-600 px-2 py-0.5 rounded-full font-medium border border-blue-100">
+										<span className="text-sm font-medium text-blue-600">
+											{effectiveBranchLimit.toLocaleString()}{" "}
+											<span className="text-black-500 font-normal">/month</span>
+										</span>
+										{hasCustomLimit ? (
+											<div className="pt-0.5">
+												<span className="inline-flex items-center text-[11px] bg-amber-50 text-amber-700 px-2 py-0.5 rounded-full font-medium border border-amber-200">
+													Custom Override
+												</span>
+											</div>
+										) : isGlobalLimitActive ? (
+											<div className="pt-0.5">
+												<span className="inline-flex items-center text-[11px] bg-blue-50 text-blue-600 px-2 py-0.5 rounded-full font-medium border border-blue-100">
 													Global Pool
 												</span>
-											)}
-										</div>
+											</div>
+										) : null}
 									</div>
-									{!isGlobalLimitActive && <EditBranchTokenDialog branch={branch} />}
+									<EditBranchTokenDialog branch={branch} />
 								</div>
 
 								<div className="flex items-center gap-4">

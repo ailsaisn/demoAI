@@ -19,8 +19,15 @@ export function DoctorAdjustLimitDialog({
 	doctor: UserResponse | null;
 }) {
 	const { data: configs } = useConfigs();
-	const isGlobalLimitActive =
+	const isMasterActive =
 		configs?.find((c) => c.key === "GLOBAL_TOKEN_LIMIT_ACTIVE")?.value === "true";
+	const isBranchGlobalActive =
+		isMasterActive && configs?.find((c) => c.key === "GLOBAL_BRANCH_LIMIT_ACTIVE")?.value === "true";
+	const isSpdveGlobalActive =
+		isMasterActive && configs?.find((c) => c.key === "GLOBAL_SPKK_LIMIT_ACTIVE")?.value === "true";
+	const isGpGlobalActive =
+		isMasterActive && configs?.find((c) => c.key === "GLOBAL_GP_LIMIT_ACTIVE")?.value === "true";
+
 	const globalBranchLimit = configs?.find((c) => c.key === "GLOBAL_TOKEN_LIMIT")?.value || "3000000";
 	const spdveLimit = configs?.find((c) => c.key === "TOKEN_LIMIT_SPKK")?.value || "500000";
 	const gpPlusLimit = configs?.find((c) => c.key === "TOKEN_LIMIT_GP")?.value || "250000";
@@ -28,6 +35,7 @@ export function DoctorAdjustLimitDialog({
 	const drTypeUpper = (doctor?.dr_type || "").toUpperCase();
 	const isSpDVE = drTypeUpper.includes("SPKK") || drTypeUpper.includes("SPDVE") || drTypeUpper.includes("SPDV");
 	const isGP = drTypeUpper.includes("GP") || drTypeUpper.includes("UMUM");
+	const isDoctorTypeGlobalActive = isSpDVE ? isSpdveGlobalActive : isGP ? isGpGlobalActive : false;
 	const effectiveGlobalLimit = isSpDVE ? Number(spdveLimit) : isGP ? Number(gpPlusLimit) : 0;
 
 	// Determine branch token limit bounds
@@ -37,20 +45,22 @@ export function DoctorAdjustLimitDialog({
 			? Math.max(...branches.map((b) => b.token_limit ?? 0))
 			: 0;
 
-	const maxBranchLimit = isGlobalLimitActive
+	const maxBranchLimit = isBranchGlobalActive
 		? Number(globalBranchLimit)
 		: rawMaxBranchLimit;
 
 	const hasCustomLimit = doctor?.token_limit !== null && doctor?.token_limit !== undefined && doctor.token_limit > 0;
 	const currentEffectiveLimit = hasCustomLimit
 		? doctor.token_limit!
-		: (isGlobalLimitActive ? effectiveGlobalLimit : (doctor?.token_limit ?? maxBranchLimit));
+		: isDoctorTypeGlobalActive
+			? effectiveGlobalLimit
+			: maxBranchLimit;
 
 	const tokensUsed = doctor?.tokens_used ?? 0;
 	const tokensLeft = Math.max(0, currentEffectiveLimit - tokensUsed);
 
 	const isNoBranchAssigned = branches.length === 0;
-	const isBranchLimitUnset = isNoBranchAssigned || (!isGlobalLimitActive && maxBranchLimit === 0);
+	const isBranchLimitUnset = isNoBranchAssigned || (!isBranchGlobalActive && maxBranchLimit === 0);
 
 	const [newLimit, setNewLimit] = useState<number>(0);
 	const updateDoctorAccess = useUpdateDoctorAccess();
@@ -58,10 +68,10 @@ export function DoctorAdjustLimitDialog({
 	useEffect(() => {
 		if (isOpen && doctor) {
 			setTimeout(() => {
-				setNewLimit(doctor.token_limit ?? (isGlobalLimitActive ? effectiveGlobalLimit : 0));
+				setNewLimit(doctor.token_limit ?? (isDoctorTypeGlobalActive ? effectiveGlobalLimit : 0));
 			}, 0);
 		}
-	}, [isOpen, doctor, isGlobalLimitActive, effectiveGlobalLimit]);
+	}, [isOpen, doctor, isDoctorTypeGlobalActive, effectiveGlobalLimit]);
 
 	const isExceedingBranch = newLimit > maxBranchLimit && !isBranchLimitUnset;
 
@@ -103,7 +113,7 @@ export function DoctorAdjustLimitDialog({
 						{branches.length > 0 ? (
 							branches.map((b) => (
 								<span key={b.id} className="text-gray-600 text-xs">
-									• {b.name}: {isGlobalLimitActive ? `${Number(globalBranchLimit).toLocaleString()} tokens (Global Pool)` : (b.token_limit ? `${b.token_limit.toLocaleString()} tokens` : "Not set (0)")}
+									• {b.name}: {isBranchGlobalActive ? `${Number(globalBranchLimit).toLocaleString()} tokens (Global Pool)` : (b.token_limit ? `${b.token_limit.toLocaleString()} tokens` : "Not set (0)")}
 								</span>
 							))
 						) : (
@@ -114,7 +124,7 @@ export function DoctorAdjustLimitDialog({
 					<div className="flex flex-col gap-1 text-sm text-foreground">
 						<span>
 							Current doctor limit: {currentEffectiveLimit.toLocaleString()}{" "}
-							{isGlobalLimitActive && (
+							{isDoctorTypeGlobalActive && (
 								<span className="text-xs text-blue-600">
 									({hasCustomLimit ? "Custom Override" : "Global Default"})
 								</span>
@@ -137,7 +147,7 @@ export function DoctorAdjustLimitDialog({
 						<>
 							<div className="flex flex-col gap-2">
 								<span className="text-xs font-medium text-zinc-700">
-									{isGlobalLimitActive ? "Custom Token Limit (Override)" : "New Token Limit"}
+									{isDoctorTypeGlobalActive ? "Custom Token Limit (Override)" : "New Token Limit"}
 								</span>
 								<div className="relative flex items-center">
 									<Input

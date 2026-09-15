@@ -66,13 +66,18 @@ async def get_global_monthly_usage(
 
     total_used = chat_tokens + ingest_tokens
 
-    # 3. Check if global token limit is active
+    # 3. Check if global token limit and threshold are active
     stmt_active = select(AppConfig.value).where(AppConfig.key == "GLOBAL_TOKEN_LIMIT_ACTIVE")
     res_active = await db.execute(stmt_active)
     active_val = res_active.scalar_one_or_none()
-    is_global_active = (active_val or "false").lower() == "true"
+    is_master_active = (active_val or "false").lower() == "true"
 
-    if is_global_active:
+    stmt_thresh_act = select(AppConfig.value).where(AppConfig.key == "GLOBAL_THRESHOLD_ACTIVE")
+    res_thresh_act = await db.execute(stmt_thresh_act)
+    thresh_act_val = res_thresh_act.scalar_one_or_none()
+    is_thresh_active = (thresh_act_val or "false").lower() == "true"
+
+    if is_master_active and is_thresh_active:
         stmt_thresh = select(AppConfig.value).where(AppConfig.key == "GLOBAL_TOKEN_THRESHOLD")
         res_thresh = await db.execute(stmt_thresh)
         thresh_val = res_thresh.scalar_one_or_none()
@@ -143,6 +148,34 @@ async def update_config(
         db.add(config)
     else:
         config.value = config_in.value
+
+    # Handle master switch cascade
+    if key == "GLOBAL_TOKEN_LIMIT_ACTIVE":
+        if config_in.value.lower() == "true":
+            # Master ON: Global Token Threshold is immediately active; other sub-rules remain inactive (on hold)
+            t_stmt = select(AppConfig).where(AppConfig.key == "GLOBAL_THRESHOLD_ACTIVE")
+            t_res = await db.execute(t_stmt)
+            t_cfg = t_res.scalar_one_or_none()
+            if t_cfg:
+                t_cfg.value = "true"
+            else:
+                db.add(AppConfig(key="GLOBAL_THRESHOLD_ACTIVE", value="true"))
+        elif config_in.value.lower() == "false":
+            # Master OFF: Atomically deactivate all sub-rules
+            sub_keys = [
+                "GLOBAL_BRANCH_LIMIT_ACTIVE",
+                "GLOBAL_THRESHOLD_ACTIVE",
+                "GLOBAL_SPKK_LIMIT_ACTIVE",
+                "GLOBAL_GP_LIMIT_ACTIVE"
+            ]
+            for sk in sub_keys:
+                s_stmt = select(AppConfig).where(AppConfig.key == sk)
+                s_res = await db.execute(s_stmt)
+                s_cfg = s_res.scalar_one_or_none()
+                if s_cfg:
+                    s_cfg.value = "false"
+                else:
+                    db.add(AppConfig(key=sk, value="false"))
         
     await db.commit()
     await db.refresh(config)

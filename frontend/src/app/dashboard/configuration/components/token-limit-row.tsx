@@ -1,16 +1,25 @@
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { RiCheckLine, RiEdit2Line, RiLoader4Line } from "@remixicon/react";
+import {
+	RiCheckLine,
+	RiCloseCircleLine,
+	RiCloseLine,
+	RiEdit2Line,
+	RiLoader4Line,
+} from "@remixicon/react";
 
 interface TokenLimitRowProps {
 	label: string;
 	value: string;
 	onChange: (val: string) => void;
 	isEditing: boolean;
+	isActive?: boolean;
 	onEdit: () => void;
 	onCancel: () => void;
 	onSave: () => void;
+	onDeactivate?: () => void;
 	isSaving: boolean;
+	isDeactivating?: boolean;
 	placeholder?: string;
 	suffix?: string;
 }
@@ -20,10 +29,13 @@ export function TokenLimitRow({
 	value,
 	onChange,
 	isEditing,
+	isActive = false,
 	onEdit,
 	onCancel,
 	onSave,
+	onDeactivate,
 	isSaving,
+	isDeactivating = false,
 	placeholder = "1000000",
 	suffix = "per month",
 }: TokenLimitRowProps) {
@@ -51,38 +63,58 @@ export function TokenLimitRow({
 						<Button
 							type="button"
 							variant="outline"
-							className="border-gray-200 bg-white text-zinc-700 hover:bg-zinc-50 rounded-lg px-4 font-medium h-10 text-sm transition-colors cursor-pointer shadow-none"
+							className="border-gray-200 bg-white text-zinc-700 hover:bg-zinc-50 rounded-lg px-4 font-medium h-10 text-sm transition-colors cursor-pointer shadow-none gap-1.5"
 							onClick={onCancel}
 							disabled={isSaving}
 						>
+							<RiCloseLine className="size-4 text-zinc-500 shrink-0" />
 							Cancel
 						</Button>
 						<Button
 							type="button"
-							className="bg-blue-600 hover:bg-blue-700 text-white rounded-lg px-4 font-medium h-10 text-sm transition-colors cursor-pointer shadow-none disabled:opacity-50"
+							className="bg-blue-600 hover:bg-blue-700 text-white rounded-lg px-4 font-medium h-10 text-sm transition-colors cursor-pointer shadow-none gap-1.5 disabled:opacity-50"
 							onClick={onSave}
 							disabled={isSaving || !value}
 						>
 							{isSaving ? (
-								<RiLoader4Line className="size-4 animate-spin mr-1" />
+								<RiLoader4Line className="size-4 animate-spin shrink-0" />
 							) : (
-								<RiCheckLine className="size-4 mr-1" />
+								<RiCheckLine className="size-4 shrink-0" />
 							)}
 							Save
 						</Button>
 					</div>
 				) : (
-					<Button
-						type="button"
-						variant="outline"
-						className="border-gray-200 bg-white text-zinc-700 hover:bg-zinc-50 rounded-lg px-4 h-10 text-sm font-medium transition-colors cursor-pointer shadow-none gap-1.5"
-						onClick={onEdit}
-					>
-						<RiEdit2Line className="size-4 text-zinc-500" />
-						Edit
-					</Button>
+					<div className="flex items-center gap-2">
+						<Button
+							type="button"
+							variant="outline"
+							className="border-gray-200 bg-white text-zinc-700 hover:bg-zinc-50 rounded-lg px-4 h-10 text-sm font-medium transition-colors cursor-pointer shadow-none gap-1.5"
+							onClick={onEdit}
+						>
+							<RiEdit2Line className="size-4 text-zinc-500 shrink-0" />
+							Edit
+						</Button>
+						{isActive && onDeactivate && (
+							<Button
+								type="button"
+								variant="outline"
+								className="border-red-200 bg-white text-red-600 hover:bg-red-50 hover:text-red-700 rounded-lg px-4 h-10 text-sm font-medium transition-colors cursor-pointer shadow-none gap-1.5 disabled:opacity-50"
+								onClick={onDeactivate}
+								disabled={isDeactivating}
+							>
+								{isDeactivating ? (
+									<RiLoader4Line className="size-4 animate-spin shrink-0" />
+								) : (
+									<RiCloseCircleLine className="size-4 text-red-500 shrink-0" />
+								)}
+								Deactivate
+							</Button>
+						)}
+					</div>
 				)}
 			</div>
 		</div>
 	);
 }
+

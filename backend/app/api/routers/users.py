@@ -56,6 +56,15 @@ async def _hydrate_user(user: User, db: AsyncSession) -> dict:
         result_acc = await db.execute(stmt_acc)
         user_dict["accesses"] = list(result_acc.scalars().all())
         
+        # Calculate staff tokens used (current month)
+        current_ym = datetime.now(timezone.utc).strftime("%Y-%m")
+        stmt_token = select(func.sum(UserTokenUsage.tokens_used)).where(
+            UserTokenUsage.user_id == user.id,
+            UserTokenUsage.year_month == current_ym
+        )
+        result_token = await db.execute(stmt_token)
+        user_dict["tokens_used"] = result_token.scalar() or 0
+        
     elif user.type == UserType.DOCTOR:
         stmt_branch = (
             select(Branch)
@@ -116,15 +125,24 @@ async def _hydrate_user(user: User, db: AsyncSession) -> dict:
         is_global_mode = (cfg_val or "false").lower() == "true"
 
         if is_global_mode:
-            # Check Doctor Type limits (SpDVE vs GP Plus)
+            # Check Doctor Type limits (SpDVE vs GP Plus) only if sub-flag is active
             dr_type_clean = (user.dr_type or "").upper()
-            type_key = "TOKEN_LIMIT_SPKK" if any(k in dr_type_clean for k in ["SPDVE", "SP.DVE", "SPKK", "SP.KK", "SPDV"]) else ("TOKEN_LIMIT_GP" if any(k in dr_type_clean for k in ["GP", "GP PLUS", "UMUM"]) else "TOKEN_LIMIT_DEFAULT")
-            t_stmt = select(AppConfig.value).where(AppConfig.key == type_key)
-            t_res = await db.execute(t_stmt)
-            t_val = t_res.scalar_one_or_none()
-            global_doc_limit = int(t_val) if (t_val and t_val.isdigit() and int(t_val) > 0) else 0
+            is_spkk = any(k in dr_type_clean for k in ["SPDVE", "SP.DVE", "SPKK", "SP.KK", "SPDV"])
+            is_gp = any(k in dr_type_clean for k in ["GP", "GP PLUS", "UMUM"])
+            
+            global_doc_limit = 0
+            if is_spkk:
+                spkk_act = (await db.execute(select(AppConfig.value).where(AppConfig.key == "GLOBAL_SPKK_LIMIT_ACTIVE"))).scalar_one_or_none()
+                if (spkk_act or "false").lower() == "true":
+                    t_val = (await db.execute(select(AppConfig.value).where(AppConfig.key == "TOKEN_LIMIT_SPKK"))).scalar_one_or_none()
+                    global_doc_limit = int(t_val) if (t_val and t_val.isdigit() and int(t_val) > 0) else 0
+            elif is_gp:
+                gp_act = (await db.execute(select(AppConfig.value).where(AppConfig.key == "GLOBAL_GP_LIMIT_ACTIVE"))).scalar_one_or_none()
+                if (gp_act or "false").lower() == "true":
+                    t_val = (await db.execute(select(AppConfig.value).where(AppConfig.key == "TOKEN_LIMIT_GP"))).scalar_one_or_none()
+                    global_doc_limit = int(t_val) if (t_val and t_val.isdigit() and int(t_val) > 0) else 0
 
-            # If user has custom override (user.token_limit > 0), prioritize it; otherwise use global limit
+            # If user has custom override (user.token_limit > 0), prioritize it; otherwise use global limit if active
             effective_limit = user.token_limit if (user.token_limit is not None and user.token_limit > 0) else global_doc_limit
             if user_dict["status"] == "Active" and effective_limit > 0 and tokens_used >= effective_limit * 0.9:
                 user_dict["status"] = "Warning"
@@ -270,19 +288,33 @@ async def update_user(
             if not user_branches:
                 raise HTTPException(status_code=400, detail="Doctor is not assigned to any branch yet.")
 
-            # Check if global mode is active to determine max branch limit
+            # Check if global branch pool is active to determine max branch limit
             from app.models.config import AppConfig
             cfg_stmt = select(AppConfig.value).where(AppConfig.key == "GLOBAL_TOKEN_LIMIT_ACTIVE")
             cfg_res = await db.execute(cfg_stmt)
             is_global_mode = (cfg_res.scalar_one_or_none() or "false").lower() == "true"
 
-            if is_global_mode:
+            b_act_stmt = select(AppConfig.value).where(AppConfig.key == "GLOBAL_BRANCH_LIMIT_ACTIVE")
+            b_act_res = await db.execute(b_act_stmt)
+            is_branch_global_active = is_global_mode and ((b_act_res.scalar_one_or_none() or "false").lower() == "true")
+
+            global_branch_limit = 0
+            if is_branch_global_active:
                 gl_stmt = select(AppConfig.value).where(AppConfig.key == "GLOBAL_TOKEN_LIMIT")
                 gl_res = await db.execute(gl_stmt)
                 gl_val = gl_res.scalar_one_or_none()
-                max_branch_limit = int(gl_val) if (gl_val and gl_val.isdigit() and int(gl_val) > 0) else 3000000
-            else:
-                max_branch_limit = max([b.token_limit for b in user_branches if b.token_limit] or [0])
+                global_branch_limit = int(gl_val) if (gl_val and gl_val.isdigit() and int(gl_val) > 0) else 3000000
+
+            branch_limits = []
+            for b in user_branches:
+                if b.token_limit is not None and b.token_limit > 0:
+                    branch_limits.append(b.token_limit)
+                elif is_branch_global_active:
+                    branch_limits.append(global_branch_limit)
+                else:
+                    branch_limits.append(b.token_limit or 0)
+
+            max_branch_limit = max(branch_limits) if branch_limits else 0
 
             if max_branch_limit == 0:
                 raise HTTPException(status_code=400, detail="Branch token limit must be set before setting doctor token limit.")

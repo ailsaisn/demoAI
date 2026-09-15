@@ -24,7 +24,12 @@ from app.schemas.knowledge import (
     GeneralChatSessionResponse, GeneralChatMessageItem, GeneralChatMessageSendRequest,
     BatchVisibilityUpdateRequest
 )
-from app.services.token_service import check_ingestion_quota, record_ingestion_token_usage
+from app.services.token_service import (
+    check_ingestion_quota,
+    record_ingestion_token_usage,
+    record_chat_token_usage
+)
+from app.core.token_counter import count_chat_prompt_tokens, count_chat_completion_tokens
 from datetime import datetime, timezone, timedelta
 
 from app.rag.deps import get_ingestion_pipeline, get_llm, get_bm25_index, get_vector_store, get_generation_pipeline
@@ -313,6 +318,20 @@ async def send_general_chat_message(
     )
     db.add(assistant_db_msg)
     await db.commit()
+
+    # Record token usage for the active user
+    in_tokens = count_chat_prompt_tokens(
+        user_query=payload.prompt,
+        history=history_payload
+    )
+    out_tokens = count_chat_completion_tokens(ai_res.answer or "")
+    await record_chat_token_usage(
+        db=db,
+        user_id=current_user.id,
+        branch_id=None,
+        input_tokens=in_tokens,
+        output_tokens=out_tokens
+    )
 
     return await get_general_chat_session(session_id, db, current_user)
 
@@ -1468,6 +1487,13 @@ async def upload_knowledge_file(
         output_tokens=200 * len(upload_list),
         documents_count=len(upload_list)
     )
+    await record_chat_token_usage(
+        db=db,
+        user_id=current_user.id,
+        branch_id=None,
+        input_tokens=estimated_doc_tokens,
+        output_tokens=200 * len(upload_list)
+    )
 
     ingest_res = await ingest_document(
         background_tasks=background_tasks,
@@ -1553,6 +1579,13 @@ async def ingest_knowledge_text_endpoint(
         input_tokens=estimated_tokens,
         output_tokens=150,
         documents_count=1
+    )
+    await record_chat_token_usage(
+        db=db,
+        user_id=current_user.id,
+        branch_id=None,
+        input_tokens=estimated_tokens,
+        output_tokens=150
     )
 
     pipeline = get_ingestion_pipeline(request)
@@ -2444,6 +2477,22 @@ async def refine_knowledge(
             await db.commit()
     except Exception as sync_err:
         logger.warning(f"Failed to sync refined knowledge to DB row: {sync_err}")
+
+    # Record token usage for refinement turn
+    refine_prompt = payload.prompt or ""
+    in_tokens = count_chat_prompt_tokens(
+        user_query=refine_prompt,
+        history=[{"role": m.role, "content": m.content} for m in payload.history or []]
+    )
+    refined_out = str(res.get("summary") or res.get("answer") or "") if isinstance(res, dict) else ""
+    out_tokens = count_chat_completion_tokens(refined_out)
+    await record_chat_token_usage(
+        db=db,
+        user_id=current_user.id,
+        branch_id=None,
+        input_tokens=in_tokens,
+        output_tokens=out_tokens
+    )
 
     return res
 

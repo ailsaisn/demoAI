@@ -12,6 +12,10 @@ export function GlobalTokenConfig() {
 		isLoading,
 		isPending,
 		isActive,
+		isThresholdActive,
+		isBranchActive,
+		isSpdveActive,
+		isGpPlusActive,
 		thresholdAmount,
 		setThresholdAmount,
 		globalThreshold,
@@ -33,6 +37,7 @@ export function GlobalTokenConfig() {
 		editingGpPlus,
 		setEditingGpPlus,
 		savingKey,
+		deactivatingKey,
 		showWarning,
 		toggleModalOpen,
 		setToggleModalOpen,
@@ -42,10 +47,16 @@ export function GlobalTokenConfig() {
 		setSaveModalOpen,
 		pendingSave,
 		setPendingSave,
+		deactivateModalOpen,
+		setDeactivateModalOpen,
+		pendingDeactivate,
+		setPendingDeactivate,
 		handleInitiateToggle,
 		handleConfirmToggle,
 		handleInitiateSave,
 		handleConfirmSave,
+		handleInitiateDeactivate,
+		handleConfirmDeactivate,
 	} = useTokenConfigState();
 
 	if (isLoading) {
@@ -94,6 +105,7 @@ export function GlobalTokenConfig() {
 								value={thresholdAmount}
 								onChange={setThresholdAmount}
 								isEditing={editingThreshold}
+								isActive={isThresholdActive}
 								onEdit={() => setEditingThreshold(true)}
 								onCancel={() => {
 									setEditingThreshold(false);
@@ -129,6 +141,7 @@ export function GlobalTokenConfig() {
 								value={branchAmount}
 								onChange={setBranchAmount}
 								isEditing={editingBranch}
+								isActive={isBranchActive}
 								onEdit={() => setEditingBranch(true)}
 								onCancel={() => {
 									setEditingBranch(false);
@@ -143,7 +156,15 @@ export function GlobalTokenConfig() {
 										setEditingBranch,
 									)
 								}
+								onDeactivate={() =>
+									handleInitiateDeactivate(
+										"GLOBAL_TOKEN_LIMIT",
+										"Deactivate Shared Branch Token Limit",
+										"Are you sure you want to deactivate the Shared Branch Token Limit? All branches will immediately revert to their individual branch token limits.",
+									)
+								}
 								isSaving={savingKey === "GLOBAL_TOKEN_LIMIT"}
+								isDeactivating={deactivatingKey === "GLOBAL_TOKEN_LIMIT"}
 								placeholder="3000000"
 							/>
 
@@ -154,6 +175,7 @@ export function GlobalTokenConfig() {
 									value={spdveAmount}
 									onChange={setSpdveAmount}
 									isEditing={editingSpdve}
+									isActive={isSpdveActive}
 									onEdit={() => setEditingSpdve(true)}
 									onCancel={() => {
 										setEditingSpdve(false);
@@ -168,7 +190,15 @@ export function GlobalTokenConfig() {
 											setEditingSpdve,
 										)
 									}
+									onDeactivate={() =>
+										handleInitiateDeactivate(
+											"TOKEN_LIMIT_SPKK",
+											"Deactivate SpDVE Token Limit",
+											"Are you sure you want to deactivate the SpDVE global token quota? SpDVE doctors will revert to drawing from branch pools or individual custom limits.",
+										)
+									}
 									isSaving={savingKey === "TOKEN_LIMIT_SPKK"}
+									isDeactivating={deactivatingKey === "TOKEN_LIMIT_SPKK"}
 									placeholder="500000"
 								/>
 
@@ -177,6 +207,7 @@ export function GlobalTokenConfig() {
 									value={gpPlusAmount}
 									onChange={setGpPlusAmount}
 									isEditing={editingGpPlus}
+									isActive={isGpPlusActive}
 									onEdit={() => setEditingGpPlus(true)}
 									onCancel={() => {
 										setEditingGpPlus(false);
@@ -191,7 +222,15 @@ export function GlobalTokenConfig() {
 											setEditingGpPlus,
 										)
 									}
+									onDeactivate={() =>
+										handleInitiateDeactivate(
+											"TOKEN_LIMIT_GP",
+											"Deactivate GP Plus Token Limit",
+											"Are you sure you want to deactivate the GP Plus global token quota? GP Plus doctors will revert to drawing from branch pools or individual custom limits.",
+										)
+									}
 									isSaving={savingKey === "TOKEN_LIMIT_GP"}
+									isDeactivating={deactivatingKey === "TOKEN_LIMIT_GP"}
 									placeholder="250000"
 								/>
 							</div>
@@ -251,6 +290,21 @@ export function GlobalTokenConfig() {
 				confirmText="Save and Apply"
 				isLoading={isPending && savingKey !== null}
 				onConfirm={handleConfirmSave}
+			/>
+
+			{/* Deactivate Field Confirmation Modal */}
+			<ConfirmationModal
+				isOpen={deactivateModalOpen}
+				onOpenChange={(open) => {
+					setDeactivateModalOpen(open);
+					if (!open) setPendingDeactivate(null);
+				}}
+				title={pendingDeactivate?.title || "Deactivate Configuration Rule"}
+				description={pendingDeactivate?.description || "Are you sure you want to deactivate this configuration rule?"}
+				confirmText="Deactivate"
+				variant="destructive"
+				isLoading={isPending && deactivatingKey !== null}
+				onConfirm={handleConfirmDeactivate}
 			/>
 		</div>
 	);

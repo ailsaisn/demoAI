@@ -22,6 +22,7 @@ async def _hydrate_branch(branch: Branch, db: AsyncSession) -> dict:
         "code": branch.code,
         "ecosystem": branch.ecosystem,
         "token_limit": branch.token_limit,
+        "tokensMonth": branch.token_limit,
         "created_at": branch.created_at,
         "updated_at": branch.updated_at,
         "used": 0,
@@ -36,15 +37,28 @@ async def _hydrate_branch(branch: Branch, db: AsyncSession) -> dict:
     cfg_val = cfg_res.scalar_one_or_none()
     is_global_mode = (cfg_val or "false").lower() == "true"
 
-    effective_branch_limit = branch.token_limit
-    if is_global_mode:
+    b_act_stmt = select(AppConfig.value).where(AppConfig.key == "GLOBAL_BRANCH_LIMIT_ACTIVE")
+    b_act_res = await db.execute(b_act_stmt)
+    is_branch_global_active = is_global_mode and ((b_act_res.scalar_one_or_none() or "false").lower() == "true")
+
+    has_custom_limit = branch.token_limit is not None and branch.token_limit > 0
+    branch_dict["has_custom_limit"] = has_custom_limit
+
+    if has_custom_limit:
+        effective_branch_limit = branch.token_limit
+        branch_dict["tokensMonth"] = effective_branch_limit
+        branch_dict["token_limit"] = effective_branch_limit
+    elif is_branch_global_active:
         gl_stmt = select(AppConfig.value).where(AppConfig.key == "GLOBAL_TOKEN_LIMIT")
         gl_res = await db.execute(gl_stmt)
         gl_val = gl_res.scalar_one_or_none()
-        if gl_val and gl_val.isdigit() and int(gl_val) > 0:
-            effective_branch_limit = int(gl_val)
-            branch_dict["tokensMonth"] = effective_branch_limit
-            branch_dict["token_limit"] = effective_branch_limit
+        effective_branch_limit = int(gl_val) if (gl_val and gl_val.isdigit() and int(gl_val) > 0) else 3000000
+        branch_dict["tokensMonth"] = effective_branch_limit
+        branch_dict["token_limit"] = effective_branch_limit
+    else:
+        effective_branch_limit = branch.token_limit or 0
+        branch_dict["tokensMonth"] = effective_branch_limit
+        branch_dict["token_limit"] = effective_branch_limit
 
     current_ym = datetime.now(timezone.utc).strftime("%Y-%m")
 
@@ -57,6 +71,15 @@ async def _hydrate_branch(branch: Branch, db: AsyncSession) -> dict:
     branch_used = result_branch_used.scalar() or 0
     branch_dict["used"] = branch_used
     branch_dict["remaining"] = max(0, (effective_branch_limit or 0) - branch_used)
+
+    # Fetch doctor sub-active flags if global mode is on
+    is_spkk_global_active = False
+    is_gp_global_active = False
+    if is_global_mode:
+        spkk_act = (await db.execute(select(AppConfig.value).where(AppConfig.key == "GLOBAL_SPKK_LIMIT_ACTIVE"))).scalar_one_or_none()
+        is_spkk_global_active = (spkk_act or "false").lower() == "true"
+        gp_act = (await db.execute(select(AppConfig.value).where(AppConfig.key == "GLOBAL_GP_LIMIT_ACTIVE"))).scalar_one_or_none()
+        is_gp_global_active = (gp_act or "false").lower() == "true"
 
     # 2. Get doctors assigned to this branch (active connections only)
     stmt = (
@@ -94,28 +117,40 @@ async def _hydrate_branch(branch: Branch, db: AsyncSession) -> dict:
         cat = result_cat.scalar() # just get first category
         speciality = cat.name if cat else ""
         
-        if is_global_mode:
-            status = "Active"
-            dr_type_clean = (doc.dr_type or "").upper()
-            t_key = "TOKEN_LIMIT_SPKK" if any(k in dr_type_clean for k in ["SPDVE", "SP.DVE", "SPKK", "SP.KK", "SPDV"]) else ("TOKEN_LIMIT_GP" if any(k in dr_type_clean for k in ["GP", "GP PLUS", "UMUM"]) else "TOKEN_LIMIT_DEFAULT")
-            t_stmt = select(AppConfig.value).where(AppConfig.key == t_key)
-            t_res = await db.execute(t_stmt)
-            t_val = t_res.scalar_one_or_none()
-            global_quota = int(t_val) if (t_val and t_val.isdigit()) else 500000
-            max_tokens = doc.token_limit if (doc.token_limit and doc.token_limit > 0) else global_quota
+        status = "Active"
+        dr_type_clean = (doc.dr_type or "").upper()
+        is_spkk_doc = any(k in dr_type_clean for k in ["SPDVE", "SP.DVE", "SPKK", "SP.KK", "SPDV"])
+        is_gp_doc = any(k in dr_type_clean for k in ["GP", "GP PLUS", "UMUM"])
+
+        if doc.token_limit and doc.token_limit > 0:
+            # Custom override
+            max_tokens = doc.token_limit
             tokens_left = max(0, max_tokens - doc_tokens_used)
-            if max_tokens > 0 and doc_tokens_used >= max_tokens * 0.9:
+            if doc_tokens_used >= max_tokens * 0.9:
                 status = "Warning"
-            elif branch_used >= (effective_branch_limit or 1) * 0.9:
+        elif is_spkk_doc and is_spkk_global_active:
+            t_stmt = select(AppConfig.value).where(AppConfig.key == "TOKEN_LIMIT_SPKK")
+            t_val = (await db.execute(t_stmt)).scalar_one_or_none()
+            max_tokens = int(t_val) if (t_val and t_val.isdigit()) else 500000
+            tokens_left = max(0, max_tokens - doc_tokens_used)
+            if doc_tokens_used >= max_tokens * 0.9:
+                status = "Warning"
+        elif is_gp_doc and is_gp_global_active:
+            t_stmt = select(AppConfig.value).where(AppConfig.key == "TOKEN_LIMIT_GP")
+            t_val = (await db.execute(t_stmt)).scalar_one_or_none()
+            max_tokens = int(t_val) if (t_val and t_val.isdigit()) else 250000
+            tokens_left = max(0, max_tokens - doc_tokens_used)
+            if doc_tokens_used >= max_tokens * 0.9:
                 status = "Warning"
         else:
-            status = "Active"
-            max_tokens = doc.token_limit if (doc.token_limit and doc.token_limit > 0) else (effective_branch_limit or 0)
-            tokens_left = max(0, (doc.token_limit - doc_tokens_used) if (doc.token_limit and doc.token_limit > 0) else ((effective_branch_limit or 0) - branch_used))
+            # Fallback to branch limit
+            max_tokens = effective_branch_limit or 0
+            tokens_left = max(0, (effective_branch_limit or 0) - branch_used)
             if doc.token_limit and doc.token_limit > 0 and doc_tokens_used >= doc.token_limit * 0.9:
                 status = "Warning"
-            elif branch_used >= (effective_branch_limit or 1) * 0.9:
-                status = "Warning"
+
+        if branch_used >= (effective_branch_limit or 1) * 0.9 and (effective_branch_limit or 0) > 0:
+            status = "Warning"
             
         branch_dict["doctors"].append({
             "id": doc.id,
