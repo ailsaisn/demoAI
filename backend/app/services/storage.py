@@ -335,21 +335,59 @@ def _generate_presigned_url(bucket_name: str, s3_key: str, expires: int = 604800
         return f"http://localhost:9000/{bucket_name}/{s3_key}"
 
 
+def is_valid_storage_asset(s3_key_or_url: str) -> bool:
+    """
+    Verifies if an image asset exists on MinIO or local disk storage (returns False if 404 / missing).
+    """
+    if not s3_key_or_url or not isinstance(s3_key_or_url, str):
+        return False
+    
+    input_str = s3_key_or_url.strip()
+    if not input_str or input_str.lower() in ("none", "null", "undefined", "#", "url", "url_gambar", "image_url"):
+        return False
+    
+    clean_key = input_str
+    if "/api/storage/" in clean_key:
+        clean_key = clean_key.split("/api/storage/")[-1]
+    elif "/storage/" in clean_key:
+        clean_key = clean_key.split("/storage/")[-1]
+    clean_key = clean_key.lstrip("/")
+
+    # 1. Check local disk storage folders
+    fname = os.path.basename(clean_key)
+    clean_norm = os.path.normpath(clean_key)
+    search_folders = ["data/temp", "data/images", "data/uploads", "data/documents", "data/storage", "data/temp/images", "data/output/images", "data/output"]
+    for folder in search_folders:
+        for candidate in [clean_key, clean_norm, fname]:
+            local_path = os.path.normpath(os.path.join(folder, candidate))
+            if os.path.exists(local_path) and os.path.isfile(local_path):
+                return True
+
+    # 2. Check MinIO S3 object storage
+    try:
+        client = _get_client()
+        if client:
+            client.head_object(Bucket=_images_bucket(), Key=clean_key)
+            return True
+    except Exception:
+        pass
+
+    return False
+
+
 def _format_browser_url(raw_url: str = None, s3_key: str = "") -> str:
     """
-    Ensures image URL is accessible across all network environments:
+    Ensures image URL is accessible across all network environments (Dashboard & Mock CIS cross-origin):
     1. If raw_url is a valid external third-party HTTP(S) URL, preserve it.
-    2. If S3_PUBLIC_URL is explicitly configured (e.g. custom CDN or public domain), use that.
-    3. Otherwise, return clean relative backend proxy path '/api/storage/{clean_key}'.
+    2. If S3_PUBLIC_URL is explicitly configured, use that.
+    3. Otherwise, return absolute backend API endpoint URL 'http://localhost:8000/api/storage/{clean_key}'.
     """
     input_str = (s3_key or raw_url or "").strip()
     if not input_str:
         return ""
 
-    # If already a valid absolute external URL (not minio:9000 / internal localhost:9000)
     if input_str.startswith("http://") or input_str.startswith("https://"):
-        if not any(internal_host in input_str for internal_host in ["minio:9000", "localhost:9000", "127.0.0.1:9000"]):
-            # If it's a domain URL containing /api/storage/ or /storage/, strip host to normalize
+        if not any(internal_host in input_str for internal_host in ["minio:9000", "localhost:9000", "127.0.0.1:9000", "localhost:8000", "127.0.0.1:8000"]):
             if "/api/storage/" in input_str:
                 input_str = input_str.split("/api/storage/")[-1]
             elif "/storage/" in input_str:
@@ -357,10 +395,8 @@ def _format_browser_url(raw_url: str = None, s3_key: str = "") -> str:
             else:
                 return input_str
         else:
-            # Strip internal host to re-bind to /api/storage
             input_str = re.sub(r'^https?://[^/]+/(?:images/|knowledge-documents/|api/storage/)?', '', input_str)
 
-    # Clean leading slashes and relative proxy prefixes
     clean_key = input_str.lstrip("/")
     if clean_key.startswith("api/storage/"):
         clean_key = clean_key[len("api/storage/"):]
@@ -377,17 +413,18 @@ def _format_browser_url(raw_url: str = None, s3_key: str = "") -> str:
         if clean_key:
             return f"{base}/{clean_key}"
 
-    # Universal relative proxy path
+    # Default backend host for cross-origin widget compatibility (e.g. Mock CIS port 8001 -> port 8000)
+    backend_base = os.getenv("BACKEND_PUBLIC_URL") or "http://localhost:8000"
     if clean_key:
-        return f"/api/storage/{clean_key}"
+        return f"{backend_base}/api/storage/{clean_key}"
     return raw_url or ""
 
 
 
-def expand_image_urls_in_markdown(text: str) -> str:
+def expand_image_urls_in_markdown(text: str, verify_exists: bool = True) -> str:
     """
-    Scans markdown content and dynamically normalizes any relative or local image URLs (![alt](url))
-    into standard /api/storage/... paths or S3_PUBLIC_URL if configured.
+    Scans markdown content and dynamically normalizes image URLs (![alt](url)).
+    Purges broken 404 image tags completely if verify_exists is True.
     """
     if not text or not isinstance(text, str):
         return text or ""
@@ -395,10 +432,19 @@ def expand_image_urls_in_markdown(text: str) -> str:
     def _replace_md_img(match):
         alt = match.group(1)
         raw_url = match.group(2).strip()
+        if not raw_url or raw_url.lower() in ("none", "null", "undefined", "#", "url_gambar", "url"):
+            return ""
+
+        if verify_exists and not is_valid_storage_asset(raw_url):
+            logger.info(f"Purging 404 / missing image tag from response markdown: ![{alt}]({raw_url})")
+            return ""
+
         expanded_url = _format_browser_url(raw_url=raw_url, s3_key=raw_url)
         return f"![{alt}]({expanded_url})"
 
-    return re.sub(r'!\[([^\]]*)\]\(([^)]+)\)', _replace_md_img, text)
+    cleaned = re.sub(r'!\[([^\]]*)\]\(([^)]*)\)', _replace_md_img, text)
+    cleaned = re.sub(r'\n{3,}', '\n\n', cleaned).strip()
+    return cleaned
 
 
 

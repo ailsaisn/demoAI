@@ -164,8 +164,16 @@ def _clean_invalid_image_markdown(text: str, title: str = "") -> str:
         url = match.group(2).strip()
         u_lower = url.lower()
         alt_lower = alt_text.lower()
+
+        if not url or u_lower in ("none", "null", "undefined", "#", "url_gambar", "url"):
+            return ""
+
+        from app.services.storage import is_valid_storage_asset
+        if not is_valid_storage_asset(url):
+            return ""
+
         if url.startswith("http://") or url.startswith("https://") or url.startswith("/api/storage/") or url.startswith("/storage/"):
-            # Never strip clinical, treatment, or product images
+            # Never strip clinical, treatment, or product images if physical asset exists
             is_clinical_or_treatment = any(k in alt_lower or k in u_lower for k in [
                 "sebelum", "sesudah", "before", "after", "alat", "device", "treatment",
                 "perawatan", "tindakan", "klinis", "clinical", "hasil", "spot", "wash",
@@ -405,6 +413,7 @@ def chunk_summary_markdown(
         heading_path = f"{title} > {entity_name}" if title and entity_name and title.lower() != entity_name.lower() else (entity_name or title)
         meta = {
             "source_file": source_file,
+            "file_name": source_file or knowledge_id,
             "section": entity_name,
             "heading_path": heading_path,
             "page": 1,
@@ -490,13 +499,21 @@ def chunk_summary_markdown(
             chunk_txt_l = chunk_text.lower()
             entity_l = (entity_name or "").lower()
 
+            is_before_topic = any(k in chunk_txt_l or k in entity_l for k in [
+                "kondisi before", "sebelum perawatan", "sebelum treatment", "sebelum tindakan",
+                "keluhan", "jerawat aktif", "kondisi kulit sebelum", "sebelum:"
+            ])
+            is_after_topic = any(k in chunk_txt_l or k in entity_l for k in [
+                "kondisi after", "sesudah perawatan", "setelah perawatan", "sesudah treatment",
+                "setelah treatment", "hasil treatment", "evaluasi", "sesudah:"
+            ])
+            is_treatment_device_topic = any(k in chunk_txt_l or k in entity_l for k in [
+                "alat", "device", "parameter", "energy", "frequency", "durasi treatment", "prosedur"
+            ])
+
             # 1. Extract inline image markdown tags in this chunk
             img_matches = re.findall(r'!\[.*?\]\(([^\s\)]+)\)', chunk_text)
             if img_matches:
-                # If chunk specifically discusses Before, prefer before_img if present in this chunk
-                is_before_topic = any(k in chunk_txt_l for k in ["kondisi before", "sebelum perawatan", "sebelum treatment", "sebelum tindakan", "sebelum:"])
-                is_after_topic = any(k in chunk_txt_l for k in ["kondisi after", "sesudah perawatan", "setelah perawatan", "sesudah treatment", "setelah treatment", "hasil treatment", "sesudah:"])
-
                 if is_before_topic and before_img and before_img in img_matches:
                     meta["image_url"] = before_img
                     meta["role"] = "CLINICAL_BEFORE"
@@ -505,22 +522,25 @@ def chunk_summary_markdown(
                     meta["role"] = "CLINICAL_AFTER"
                 else:
                     meta["image_url"] = img_matches[0]
-                meta["image_urls"] = img_matches
+                meta["image_urls"] = [meta["image_url"]]
             else:
-                # 2. Contextual Image Inheritance (Topic & Clinical Role Matching)
-                is_before_topic = any(k in chunk_txt_l or k in entity_l for k in [
-                    "kondisi before", "sebelum perawatan", "sebelum treatment", "sebelum tindakan",
-                    "keluhan", "jerawat aktif", "kondisi kulit sebelum", "sebelum:"
-                ])
-                is_after_topic = any(k in chunk_txt_l or k in entity_l for k in [
-                    "kondisi after", "sesudah perawatan", "setelah perawatan", "sesudah treatment",
-                    "setelah treatment", "hasil treatment", "evaluasi", "sesudah:"
-                ])
-                is_treatment_device_topic = any(k in chunk_txt_l or k in entity_l for k in [
-                    "alat", "device", "parameter", "energy", "frequency", "durasi treatment", "prosedur"
-                ])
+                # 2. Strict 1-to-1 Product Image Matching
+                product_img_match = None
+                target_entity = detected_product or detected_treatment
+                if target_entity and all_doc_imgs_with_alt:
+                    clean_target = re.sub(r'[^a-zA-Z0-9\s]', '', target_entity.lower()).strip()
+                    target_words = [w for w in clean_target.split() if len(w) > 2 and w not in ["erha", "acneact", "truwhite", "the", "and", "with"]]
+                    for alt, u in all_doc_imgs_with_alt:
+                        alt_l = alt.lower()
+                        u_l = u.lower()
+                        if clean_target in alt_l or (target_words and sum(1 for w in target_words if w in alt_l or w in u_l) >= max(1, len(target_words) - 1)):
+                            product_img_match = u
+                            break
 
-                if is_before_topic and before_img:
+                if product_img_match:
+                    meta["image_url"] = product_img_match
+                    meta["image_urls"] = [product_img_match]
+                elif is_before_topic and before_img:
                     meta["image_url"] = before_img
                     meta["role"] = "CLINICAL_BEFORE"
                 elif is_after_topic and after_img:
@@ -536,10 +556,9 @@ def chunk_summary_markdown(
                     meta["image_url"] = treatment_img
                     meta["role"] = "DEVICE_OR_TOOL"
                 elif doc_type == "TREATMENT" and (before_img or after_img) and ("before" in entity_l or "after" in entity_l):
-                    # Under a Before & After section, assign clinical photos, never device image
                     meta["image_url"] = before_img or after_img
                     meta["role"] = "CLINICAL_BEFORE" if before_img else "CLINICAL_AFTER"
-                elif default_image_url and doc_type != "PRODUCT":
+                elif default_image_url and doc_type != "PRODUCT" and len(sections) == 1:
                     meta["image_url"] = default_image_url
 
             # Extract SKU

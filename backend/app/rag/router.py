@@ -1257,15 +1257,18 @@ Your tasks:
        ### Detail Produk
        ![Nama Produk Lengkap](URL_GAMBAR)
        - **Nama Produk**: Nama Produk Lengkap
-       - **SKU**: Nomor SKU (jika ada, misal: ERHA-TRU-001)
-       - **Brand**: ERHA
-       - **Kategori**: Kategori Produk (misal: Sabun Wajah Jerawat)
-       - **Ukuran**: 100 g
-       - **Harga**: Rp ... (jika ada)
-       - **Deskripsi**: Penjelasan singkat manfaat dan kegunaan produk.
+       - **Brand**: Brand Produk (hanya jika ada di dokumen)
+       - **Kategori**: Kategori Produk (hanya jika ada di dokumen)
+       - **Ukuran**: Ukuran/Netto (hanya jika ada di dokumen)
+       - **Harga**: Harga Produk (hanya jika ada di dokumen)
+       - **Deskripsi**: Penjelasan singkat manfaat dan kegunaan produk (jika ada).
        ```
      * NEVER separate product catalogs into a plain text table with photos dumped at the bottom. Keep each photo directly inside its corresponding `### Detail Produk` block.
-     * If a product has no image in the source document, omit the image tag for that product block (or put no image), but still format it as a `### Detail Produk` block with key-value bullet points.
+     * If a product has no image in the source document, omit the image tag for that product block, but still format it as a `### Detail Produk` block with key-value bullet points.
+   - STRICT ZERO-HALLUCINATION & FACTUAL ACCURACY RULE FOR PRODUCT ATTRIBUTES (CRITICAL):
+     * SKU RULE: ONLY include the `- **SKU**: [Nomor SKU]` line IF AND ONLY IF an explicit SKU code or number is written in the source document. If NO SKU code/number is explicitly written in the source document, YOU MUST COMPLETELY OMIT THE `- **SKU**:` LINE ENTIRELY! DO NOT INVENT, FABRICATE, GENERATE, OR GUESS ANY SKU CODE (e.g. NEVER create ERHA-ACNE-001, ERHA-TRU-001, or any random code).
+     * ATTRIBUTE ACCURACY: ONLY include attribute bullet lines (`Brand`, `Kategori`, `Ukuran`, `Harga`, `Deskripsi`) for values that are EXPLICITLY present in the source document. Do NOT invent missing values or fabricate categories.
+     * NON-PRODUCT DOCUMENTS RULE: If the document is a Technical Design Document, SOP, FAQ, operational manual, or general report (NOT a product catalog): DO NOT format content into `### Detail Produk` blocks. Use clean, standard Markdown headings (`##`, `###`) reflecting the actual document sections.
    - EXCEL & SPREADSHEET TABLE PRESERVATION:
      * For non-product SPREADSHEET / CSV files: PRESERVE AND KEEP TABLES AS MARKDOWN (`| Col 1 | Col 2 |`).
      * IMAGE CAPTION & LEGEND PLACEMENT: For images inside or associated with tables/sections, place the markdown image tag `![Alt Text](IMAGE_URL)` cleanly, and place any caption, legend, or description text DIRECTLY BELOW the image tag.
@@ -1279,7 +1282,7 @@ Your tasks:
        
        ![Deskripsi Gambar](IMAGE_URL)
        
-   - GROUNDING RULE: Preserve all factual details (product names, active ingredients, usage steps, warnings, prices, SKUs) from the raw content, but adhere strictly to any modifications, exclusions, or additions requested in the ADMIN INGESTION INSTRUCTION.
+   - GROUNDING RULE: Preserve all factual details from the raw content, but adhere strictly to any modifications, exclusions, or additions requested in the ADMIN INGESTION INSTRUCTION.
 2. **DETECT METADATA**:
    - title: Short, clean professional document title inferred from content and admin instruction (without file extension or "Knowledge Base" prefixes).
    - document_type: "PRODUCT" | "TREATMENT" | "PROMOTIONAL" | "SOP" | "GENERAL"
@@ -2621,12 +2624,13 @@ EDITING GUIDELINES:
      ### Detail Produk
      ![Nama Produk Lengkap](URL_GAMBAR)
      - **Nama Produk**: Nama Produk Lengkap
-     - **Brand**: ERHA
-     - **Kategori**: Kategori Produk (misal: Sabun Wajah Jerawat)
-     - **Ukuran**: 100 g
-     - **Harga**: Rp ... (jika ada)
+     - **Brand**: Brand Produk (hanya jika ada)
+     - **Kategori**: Kategori Produk (hanya jika ada)
+     - **Ukuran**: Ukuran/Netto (hanya jika ada)
+     - **Harga**: Harga Produk (hanya jika ada)
      - **Deskripsi**: Penjelasan manfaat dan kegunaan produk.
      ```
+   - STRICT ZERO-HALLUCINATION RULE: ONLY include `- **SKU**:` IF AND ONLY IF an explicit SKU code/number is stated in the source document or explicitly instructed by Admin. NEVER fabricate SKU numbers (e.g. do NOT invent ERHA-ACNE-001).
    - Intelligently embed each image into its most relevant section or product block.
    - NEVER create any "Asset Media dari File Terlampir" heading or list of raw media assets at the end of the summary. Embed the attached image URL ONLY where it belongs.
 3. **DELETION OF SECTIONS, PRODUCTS & IMAGES RULE**:
@@ -4947,7 +4951,9 @@ async def _resolve_query_general_prompt(db_session) -> str:
     Resolves the system prompt for Query General:
     1. AppConfig DB key: AI_PROMPT_QUERY_GENERAL (admin-configurable via CIS)
     2. DEFAULT_QUERY_GENERAL_PROMPT (hardcoded fallback)
+    Auto-synchronizes DB prompt if missing strict anti-duplication rules or product image rules.
     """
+    from app.rag.services.rag_generator import DEFAULT_QUERY_GENERAL_PROMPT
     try:
         from app.models.config import AppConfig
         from sqlalchemy import select
@@ -4955,11 +4961,22 @@ async def _resolve_query_general_prompt(db_session) -> str:
         result = await db_session.execute(stmt)
         db_prompt = result.scalar_one_or_none()
         if db_prompt and db_prompt.strip():
+            if "GAMBAR PRODUK & TREATMENT RESMI" not in db_prompt:
+                try:
+                    stmt_update = select(AppConfig).where(AppConfig.key == "AI_PROMPT_QUERY_GENERAL")
+                    res_cfg = await db_session.execute(stmt_update)
+                    cfg_obj = res_cfg.scalar_one_or_none()
+                    if cfg_obj:
+                        cfg_obj.value = DEFAULT_QUERY_GENERAL_PROMPT
+                        await db_session.commit()
+                        logger.info("[QUERY-GENERAL] Auto-synchronized AI_PROMPT_QUERY_GENERAL in AppConfig DB with natural Q&A persona and authentic product image rules.")
+                except Exception as sync_err:
+                    logger.warning(f"[QUERY-GENERAL] Could not auto-sync DB prompt: {sync_err}")
+                return DEFAULT_QUERY_GENERAL_PROMPT
             return db_prompt.strip()
     except Exception as e:
         logger.warning(f"[QUERY-GENERAL] Failed to fetch system prompt from DB: {e}")
 
-    from app.rag.services.rag_generator import DEFAULT_QUERY_GENERAL_PROMPT
     return DEFAULT_QUERY_GENERAL_PROMPT
 
 
@@ -5129,11 +5146,19 @@ async def query_general_endpoint(
         # -------------------------------------------------------------
         # PHASE 2: Operation Intent Classifier (EDIT / DELETE Intent Detection)
         # -------------------------------------------------------------
-        delete_verbs = r'(?:hapus|delete|hilangkan|remove|buang|bersihkan|tiadakan|drop|clear|wipe|erase)'
+        # Strict READ / Q&A Intent Guard: Never classify READ queries as EDIT/DELETE
+        read_keywords = r'\b(detail|info|informasi|penjelasan|deskripsi|apa|apakah|bagaimana|mengapa|kenapa|bisa\s*kah|kapan|berapa|siapa|sebutkan|rekomendasi|kandungan|komposisi|manfaat|fungsi|cara|prosedur|harga|sku|gambar|foto|lihat|tunjukkan|cari|tampilkan)\b'
+        is_read_query = bool(re.search(read_keywords, clean_user_prompt, re.IGNORECASE))
+
+        # Explicit action verbs for DELETE (avoiding collisions with product names like "Acne Clear Gel", "Make-up Remover")
+        delete_verbs = r'(?:hapus|delete|hilangkan|buang|bersihkan|tiadakan|wipe|erase|clear\s+data|clear\s+kb|clear\s+database|clear\s+knowledge|clear\s+dokumen|clear\s+item|remove\s+data|remove\s+kb|remove\s+dokumen|remove\s+item|^clear\s+|^remove\s+)'
         is_delete_cmd = (
-            bool(re.search(rf'\b{delete_verbs}\b', clean_user_prompt))
-            or bool(re.search(rf'\b{delete_verbs}\b', effective_prompt.lower()))
-        ) and not bool(re.search(r'\b(apakah|bagaimana|mengapa|kenapa|bisa kah|kapan)\b', clean_user_prompt))
+            not is_read_query
+            and (
+                bool(re.search(rf'\b{delete_verbs}', clean_user_prompt, re.IGNORECASE))
+                or bool(re.search(rf'\b{delete_verbs}', effective_prompt.lower(), re.IGNORECASE))
+            )
+        )
 
         if is_delete_cmd:
             matched_res = (
@@ -5246,11 +5271,14 @@ async def query_general_endpoint(
             )
 
         # Check if user explicitly requests EDIT
-        edit_verbs = r'(?:ubah|ganti|edit|tukar|salin|update|perbarui|revisi|terapkan|pasang|masukkan|tambahkan|sisipkan|gantikan|gantiin|set|sesuaikan|modifikasi|perbaiki)'
+        edit_verbs = r'(?:ubah|ganti|edit|tukar|salin|update|perbarui|revisi|terapkan|pasang|masukkan|tambahkan|sisipkan|gantikan|gantiin|set\s+data|set\s+harga|set\s+ukuran|modifikasi|perbaiki|^set\s+)'
         is_edit_cmd = (
-            bool(re.search(rf'\b{edit_verbs}\b', clean_user_prompt))
-            or bool(re.search(rf'\b{edit_verbs}\b', effective_prompt.lower()))
-        ) and not bool(re.search(r'\b(apakah|bagaimana|mengapa|kenapa|bisa kah|kapan)\b', clean_user_prompt))
+            not is_read_query
+            and (
+                bool(re.search(rf'\b{edit_verbs}', clean_user_prompt, re.IGNORECASE))
+                or bool(re.search(rf'\b{edit_verbs}', effective_prompt.lower(), re.IGNORECASE))
+            )
+        )
 
         if is_edit_cmd:
             matched_res = (
@@ -5540,25 +5568,43 @@ async def query_general_endpoint(
         clean_answer = re.sub(r'```json\s*\n?\s*\{[^`]+?\}\s*\n?\s*```', '', answer).strip()
         clean_answer = re.sub(r'\{"action":\s*"[^"]+",\s*"knowledge_id":\s*"[^"]+".*?\}', '', clean_answer, flags=re.DOTALL).strip()
 
-        # Inject authentic approved MinIO images (Entity Isolated)
+        # Inject authentic approved MinIO images (Strict 1-to-1 Entity Isolated, Zero Cross-Product Fallback)
         injected_imgs = set()
+        injected_entities = set()
         for hit in results:
             meta = hit.get("metadata", {})
             img = meta.get("image_url") or meta.get("image")
-            if not img and meta.get("image_urls") and isinstance(meta.get("image_urls"), list) and len(meta["image_urls"]) > 0:
-                img = meta["image_urls"][0]
-            if not img or not (str(img).startswith("http") or str(img).startswith("/api/storage/") or str(img).startswith("/storage/")):
+            
+            chunk_content = hit.get("content") or hit.get("text") or ""
+            target_match = _extract_specific_treatment_or_product_name(meta, chunk_text=chunk_content)
+            if not target_match:
+                continue
+
+            entity_key = target_match.lower().strip()
+            if entity_key in injected_entities:
+                continue
+
+            # Strict 1-to-1 matching: If chunk does not have an explicit image_url, check images list for exact product_name match
+            if not img and isinstance(meta.get("images"), list):
+                for img_obj in meta["images"]:
+                    if isinstance(img_obj, dict) and img_obj.get("url"):
+                        p_name = img_obj.get("product_name") or img_obj.get("caption") or ""
+                        if p_name and (p_name.lower() in entity_key or entity_key in p_name.lower()):
+                            img = img_obj["url"]
+                            break
+
+            # STRICT RULE: Verify physical asset exists on MinIO or storage before injecting
+            from app.services.storage import is_valid_storage_asset
+            if not img or not is_valid_storage_asset(str(img)):
                 continue
 
             img_filename = os.path.basename(str(img)).lower()
             if ("cover" in img_filename or "header_logo" in img_filename or meta.get("image_role") == "COVER") and not any(k in img_filename for k in ["before", "after", "product", "treatment", "photo", "image", "img"]):
                 continue
 
-            chunk_content = hit.get("content") or hit.get("text") or ""
-            target_match = _extract_specific_treatment_or_product_name(meta, chunk_text=chunk_content)
             display_label = target_match
 
-            if not target_match or str(img) in injected_imgs:
+            if str(img) in injected_imgs:
                 continue
 
             if target_match.lower() in clean_answer.lower() and str(img) not in clean_answer:
@@ -5566,11 +5612,31 @@ async def query_general_endpoint(
                 if pattern.search(clean_answer):
                     clean_answer = pattern.sub(rf'\1\n\n![{display_label}]({img})\n\n', clean_answer, count=1)
                     injected_imgs.add(str(img))
+                    injected_entities.add(entity_key)
 
         clean_answer = OutputGuard.strip_patient_disclaimers(clean_answer)
 
+        # Strip any accidental "(jika ada gambar valid)" or "(URL gambar valid)" literal text strings
+        clean_answer = re.sub(r'\(\s*(?:jika\s+ada\s+)?(?:gambar|foto|url)(?:\s+valid|\s+resmi)?\s*\)', '', clean_answer, flags=re.IGNORECASE)
+
         # Strip any "Gambar:" or "• Gambar:" text labels per user requirement
         clean_answer = re.sub(r'^[|\-\*]?\s*(?:Gambar|Foto|Foto Produk)\s*:\s*', '', clean_answer, flags=re.MULTILINE | re.IGNORECASE)
+
+        # Clean invalid/placeholder image markdown tags and deduplicate image tags for the same product/treatment
+        seen_img_keys = set()
+        def _clean_and_dedup_img_tag(m):
+            alt_t = m.group(1).strip()
+            url_t = m.group(2).strip()
+            url_lower = url_t.lower()
+            if not url_t or url_lower in ("none", "null", "undefined", "#", "url_gambar", "url"):
+                return ""
+            key = (alt_t.lower(), url_lower)
+            if key in seen_img_keys:
+                return ""
+            seen_img_keys.add(key)
+            return f"![{alt_t}]({url_t})"
+
+        clean_answer = re.sub(r'!\[([^\]]*)\]\(([^\)]*)\)', _clean_and_dedup_img_tag, clean_answer)
 
         # Ensure introductory phrases like "Berikut ...:" have a blank line after them
         clean_answer = re.sub(r'^(Berikut [^\n:]+:)[ \t]*\n(?!\n)', r'\1\n\n', clean_answer, flags=re.MULTILINE | re.IGNORECASE)

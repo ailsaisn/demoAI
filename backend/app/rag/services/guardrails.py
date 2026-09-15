@@ -221,6 +221,12 @@ _WHITELIST_KEYWORDS: set[str] = {
     "simpan", "penyimpanan", "kulkas", "hamil", "bumil", "kehamilan", "pregnancy",
     "menyusui", "busui", "laktasi", "lactation", "anak", "bayi", "pediatrik",
     "dewasa", "lansia", "geriatrik", "formula",
+
+    # General conversational, discussion & interactive terms
+    "halo", "hi", "pagi", "siang", "sore", "malam", "terima", "kasih", "thanks", "thank", "you",
+    "jelaskan", "bagaimana", "bagaimanakah", "apakah", "mengapa", "kenapa", "rekomendasi", "saran",
+    "diskusi", "pendapat", "perbedaan", "beda", "mana", "cocok", "sesuai", "bantu", "bisa", "tolong",
+    "mohon", "info", "informasi", "detail", "penjelasan", "opsi", "pilihan", "tanya", "bertanya",
 }
 
 # Secondary Check Blacklist (used strictly to generate specific explanatory rejection messages)
@@ -509,16 +515,35 @@ class OutputGuard:
 
     @classmethod
     def format_clinical_tone(cls, text: str) -> str:
-        """Fixes robotic phrasing and ensures clean newline formatting for bullet points."""
+        """Fixes robotic phrasing, strips dummy placeholders, translates raw taxonomy terms, and cleans formatting."""
         if not text:
             return text
-        # Replace stiff robotic backend phrases with warm, natural clinical phrasing
+
+        # 1. Translate internal database taxonomy / snake_case terms to humanized Indonesian clinical terms
+        taxonomy_map = {
+            r'\bacne_vulgaris\b': 'Jerawat (Acne Vulgaris)',
+            r'\bcomedones\b': 'Komedo',
+            r'\bacne_scar\b': 'Bekas Jerawat (Acne Scar)',
+            r'\bsebum_oily\b': 'Kulit Berminyak',
+            r'\benlarged_pores\b': 'Pori-Pori Besar',
+            r'\bsensitive_barrier\b': 'Kulit Sensitif',
+            r'\baging_wrinkles\b': 'Penuaan & Kerutan',
+            r'\bdull_skin\b': 'Kulit Kusam',
+        }
+        for pattern, replacement in taxonomy_map.items():
+            text = re.sub(pattern, replacement, text, flags=re.IGNORECASE)
+
+        # 2. Strip dummy placeholder lines like "- **Brand**: ...", "- **Harga**: ...", "- **Durasi**: ..."
+        text = re.sub(r'^[|\-\*]?\s*\*\*[^\*\n]+\*\*\s*:\s*(?:\.\.\.|\-|null|none|undefined|n/a)\s*$', '', text, flags=re.MULTILINE | re.IGNORECASE)
+
+        # 3. Replace stiff robotic backend phrases with warm, natural clinical phrasing
         text = re.sub(r'(?i)\bproduk yang tercantum adalah\b', 'rekomendasi produk yang cocok adalah', text)
         text = re.sub(r'(?i)\bperawatan yang tercantum adalah\b', 'rekomendasi perawatan yang cocok adalah', text)
         text = re.sub(r'(?i)\bdokumen yang tercantum adalah\b', 'rekomendasi yang sesuai adalah', text)
         
-        # Ensure bullet points '- **' are always on a separate new line
+        # 4. Ensure bullet points '- **' are always on a separate new line
         text = re.sub(r'([^\n])\s+-\s+\*\*', r'\1\n- **', text)
+        text = re.sub(r'\n{3,}', '\n\n', text).strip()
         return text
 
     @classmethod
