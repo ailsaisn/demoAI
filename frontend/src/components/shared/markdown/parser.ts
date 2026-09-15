@@ -14,11 +14,11 @@ export function parseMarkdownSegments(markdown: string): Segment[] {
 
 	// Pattern 2: Skincare Regimen / Rutinitas Routine Card
 	const regimenPattern =
-		/###\s*(?:Cara\s+Penggunaan|Rutinitas|Aturan\s+Pakai|Skincare\s+Routine|Daily\s+Routine|Waktu\s+Pemakaian)\s*\n+((?:[ \t]*[-*]\s*\*\*(?:Pagi|Siang|Malam|Morning|Night|Evening|Sore)\*\*\s*[:–-][^\n]+(?:\n|$))+)/gi;
+		/(?:###|##)\s*(?:Cara\s+Penggunaan|Rutinitas|Aturan\s+Pakai|Skincare\s+Routine|Daily\s+Routine|Waktu\s+Pemakaian)\s*\n+((?:[ \t]*[-*]\s*\*\*(?:Pagi|Siang|Malam|Morning|Night|Evening|Sore)\*\*\s*[:–-][^\n]+(?:\n|$))+)/gi;
 
 	// Pattern 3: Do's & Don'ts Comparison Card
 	const dosDontsPattern =
-		/###\s*(?:Anjuran\s+&\s+Larangan|Do's\s+&\s+Don'ts|Do's\s+and\s+Don'ts|Yang\s+Boleh\s+&\s+Dilarang|Instruksi\s+Pasien)\s*\n+((?:[ \t]*[-*]\s*\*\*(?:Do's?|Anjuran|Boleh|Disarankan|Don'ts?|Larangan|Dilarang|Tidak\s+Boleh)\*\*\s*[:–-][^\n]+(?:\n|$))+)/gi;
+		/(?:###|##)\s*(?:Anjuran\s+&\s+Larangan|Do's\s+&\s+Don'ts|Do's\s+and\s+Don'ts|Yang\s+Boleh\s+&\s+Dilarang|Instruksi\s+Pasien)\s*\n+((?:[ \t]*[-*]\s*\*\*(?:Do's?|Anjuran|Boleh|Disarankan|Don'ts?|Larangan|Dilarang|Tidak\s+Boleh)\*\*\s*[:–-][^\n]+(?:\n|$))+)/gi;
 
 	// Pattern 4: Consecutive Images / Before & After Side-by-Side Images
 	const beforeAfterPattern =
@@ -26,23 +26,23 @@ export function parseMarkdownSegments(markdown: string): Segment[] {
 
 	// Pattern 5: Clinical SOP & Procedure Stepper Card
 	const sopPattern =
-		/###\s*(?:Prosedur\s+Tindakan|Tahapan\s+Treatment|Protokol\s+Tindakan|Prosedur\s+Klinis|Prosedur\s+Medis|Protokol\s+Perawatan|Tahapan\s+Aplikasi|Langkah\s+(?:Pengerjaan|Aplikasi)|Tahapan\s+Prosedur)\s*\n+((?:[ \t]*(?:[-*]\s*\*\*[^*]+\*\*|\d+\.|\bLangkah\s+\d+)[^\n]+(?:\n|$))+)/gi;
+		/(?:###|##)\s*(?:Prosedur\s+Tindakan|Tahapan\s+Treatment|Protokol\s+Tindakan|Prosedur\s+Klinis|Prosedur\s+Medis|Protokol\s+Perawatan|Tahapan\s+Aplikasi|Langkah\s+(?:Pengerjaan|Aplikasi)|Tahapan\s+Prosedur)\s*\n+((?:[ \t]*(?:[-*]\s*\*\*[^*]+\*\*|\d+\.|\bLangkah\s+\d+)[^\n]+(?:\n|$))+)/gi;
 
 	// Pattern 6: Promotional & Validity Campaign Card
 	const promoPattern =
-		/###\s*(?:Promo\s+Spesial|Penawaran\s+Khusus|Diskon\s+Khusus|Informasi\s+Promo|Program\s+Promo|Penawaran\s+Terbatas|Promo\s+Treatment|Promo\s+Produk)\s*\n+((?:[ \t]*[-*]\s*\*\*[^*]+\*\*\s*[:–-][^\n]+(?:\n|$))+)/gi;
+		/(?:###|##)\s*(?:Promo\s+Spesial|Penawaran\s+Khusus|Diskon\s+Khusus|Informasi\s+Promo|Program\s+Promo|Penawaran\s+Terbatas|Promo\s+Treatment|Promo\s+Produk)\s*\n+((?:[ \t]*[-*]\s*\*\*[^*]+\*\*\s*[:–-][^\n]+(?:\n|$))+)/gi;
 
 	// Pattern 7: Clinical Consultation & Diagnosis Summary Card
 	const diagnosisPattern =
-		/###\s*(?:Diagnosis\s+Klinis|Ringkasan\s+Konsultasi|Hasil\s+Diagnosis(?:\s+Klinis)?|Konsultasi\s+Kasus)\s*\n+((?:[ \t]*[-*]\s*\*\*[^*]+\*\*\s*[:–-][^\n]+(?:\n|$))+)/gi;
+		/(?:###|##)\s*(?:Diagnosis\s+Klinis|Ringkasan\s+Konsultasi|Hasil\s+Diagnosis(?:\s+Klinis)?|Konsultasi\s+Kasus)\s*\n+((?:[ \t]*[-*]\s*\*\*[^*]+\*\*\s*[:–-][^\n]+(?:\n|$))+)/gi;
 
 	// Pattern 8: Tiered Package & Multi-Session Pricing Card
 	const tieredPricingPattern =
-		/###\s*(?:Paket\s+Harga|Pilihan\s+Paket(?:\s+Treatment)?|Daftar\s+Paket|Opsi\s+Harga(?:\s+Paket)?|Tier\s+Pricing|Paket\s+Perawatan)\s*\n+((?:[ \t]*[-*]\s*\*\*[^*]+\*\*\s*[:–-][^\n]+(?:\n|$))+)/gi;
+		/(?:###|##)\s*(?:Paket\s+Harga|Pilihan\s+Paket(?:\s+Treatment)?|Daftar\s+Paket|Opsi\s+Harga(?:\s+Paket)?|Tier\s+Pricing|Paket\s+Perawatan)\s*\n+((?:[ \t]*[-*]\s*\*\*[^*]+\*\*\s*[:–-][^\n]+(?:\n|$))+)/gi;
 
 	// Pattern 9: Action / Mutation Confirmation Card
 	const actionConfirmationPattern =
-		/(?:(?:\*\*(?:Pratinjau\s+Perubahan(?:\s+Data)?|Konfirmasi\s+Penghapusan|Preview\s+Knowledge\s+Changes|Knowledge\s+Base\s+Update\s+Preview|Confirm\s+Document\s+Deletion)\*\*)|###\s*(?:Pratinjau\s+Perubahan(?:\s+Data)?|Konfirmasi\s+Penghapusan|Preview\s+Knowledge\s+Changes|Knowledge\s+Base\s+Update\s+Preview|Confirm\s+Document\s+Deletion))\s*\n+((?:[ \t]*[-*]\s*\*\*[^*]+\*\*\s*[:–-][^\n]+(?:\n|$))+)(?:[ \t]*\n+)?(?:```(?:json)?\s*(\{[\s\S]*?"action"\s*:[\s\S]*?\})\s*```)?/gi;
+		/(?:(?:\*\*(?:Pratinjau\s+Perubahan(?:\s+Data)?|Konfirmasi\s+Penghapusan|Preview\s+Knowledge\s+Changes|Knowledge\s+Base\s+Update\s+Preview|Confirm\s+Document\s+Deletion)\*\*)|(?:###|##)\s*(?:Pratinjau\s+Perubahan(?:\s+Data)?|Konfirmasi\s+Penghapusan|Preview\s+Knowledge\s+Changes|Knowledge\s+Base\s+Update\s+Preview|Confirm\s+Document\s+Deletion))\s*\n+((?:[ \t]*[-*]\s*\*\*[^*]+\*\*\s*[:–-][^\n]+(?:\n|$))+)(?:[ \t]*\n+)?(?:```(?:json)?\s*(\{[\s\S]*?"action"\s*:[\s\S]*?\})\s*```)?/gi;
 
 	interface MatchRange {
 		start: number;
@@ -59,6 +59,12 @@ export function parseMarkdownSegments(markdown: string): Segment[] {
 		const headerTitle = (m[3] || "").trim();
 		const headerLower = headerTitle.toLowerCase();
 		const isKnownCardHeader = /^(?:product\s+(?:overview|details|info|specification|summary)|overview\s+produk|spesifikasi\s+produk|info\s+produk|ringkasan\s+produk|detail\s+produk|informasi\s+produk|detail\s+informasi\s+produk|treatment\s+(?:overview|details|info|procedure|summary)|overview\s+tindakan|detail\s+tindakan|info\s+tindakan)$/i.test(headerLower);
+
+		// Prevent generic card pattern from hijacking specialized card sections
+		const isSpecializedHeader = /^(?:promo\s+spesial|penawaran\s+khusus|diskon\s+khusus|informasi\s+promo|program\s+promo|penawaran\s+terbatas|promo\s+treatment|promo\s+produk|diagnosis\s+klinis|ringkasan\s+konsultasi|hasil\s+diagnosis(?:\s+klinis)?|konsultasi\s+kasus|cara\s+penggunaan|rutinitas|aturan\s+pakai|skincare\s+routine|daily\s+routine|waktu\s+pemakaian|anjuran\s+&\s+larangan|do's\s+&\s+don'ts|do's\s+and\s+don'ts|yang\s+boleh\s+&\s+dilarang|instruksi\s+pasien|prosedur\s+tindakan|tahapan\s+treatment|protokol\s+tindakan|prosedur\s+klinis|prosedur\s+medis|protokol\s+perawatan|tahapan\s+aplikasi|langkah\s+pengerjaan|langkah\s+aplikasi|tahapan\s+prosedur|paket\s+harga|pilihan\s+paket(?:\s+treatment)?|daftar\s+paket|opsi\s+harga(?:\s+paket)?|tier\s+pricing|paket\s+perawatan|pratinjau\s+perubahan(?:\s+data)?|konfirmasi\s+penghapusan|preview\s+knowledge\s+changes|knowledge\s+base\s+update\s+preview|confirm\s+document\s+deletion)$/i.test(headerLower);
+		if (isSpecializedHeader) {
+			continue;
+		}
 
 		const bulletsText = m[6] || "";
 		const items = parseBulletLines(bulletsText);
@@ -188,42 +194,41 @@ export function parseMarkdownSegments(markdown: string): Segment[] {
 			const line = rawLine.trim();
 			if (!line) continue;
 
-			if (
+			const isPreCareHeader =
 				/^(?:[-*]\s*)?\*\*(?:persiapan|pre-care|sebelum\s+tindakan)[^*]*\*\*/i.test(line) ||
-				/^(?:persiapan|pre-care):/i.test(line)
-			) {
+				/^(?:persiapan|pre-care):/i.test(line);
+
+			const isAftercareHeader =
+				/^(?:[-*]\s*)?\*\*(?:aftercare|pasca|setelah\s+tindakan)[^*]*\*\*/i.test(line) ||
+				/^(?:aftercare|pasca):/i.test(line);
+
+			const isStepLine =
+				/^(?:[-*]\s*)?(?:\*\*(?:Langkah|Tahap|Step)\s*\d+[^*]*\*\*|\b(?:Langkah|Tahap|Step)\s*\d+[:\.]?|(?:\*\*)?\d+[\.\)](?:\*\*)?\s*)/i.test(line);
+
+			if (isPreCareHeader) {
 				currentPhase = "pre";
 				const stripped = line
 					.replace(/^(?:[-*]\s*)?\*\*[^*]+\*\*\s*[:–-]?\s*/i, "")
 					.replace(/^[-*]\s*/, "")
 					.trim();
 				if (stripped) preCare.push(stripped);
-			} else if (
-				/^(?:[-*]\s*)?\*\*(?:aftercare|pasca|setelah\s+tindakan)[^*]*\*\*/i.test(line) ||
-				/^(?:aftercare|pasca):/i.test(line)
-			) {
+			} else if (isAftercareHeader) {
 				currentPhase = "after";
 				const stripped = line
 					.replace(/^(?:[-*]\s*)?\*\*[^*]+\*\*\s*[:–-]?\s*/i, "")
 					.replace(/^[-*]\s*/, "")
 					.trim();
 				if (stripped) aftercare.push(stripped);
-			} else if (currentPhase === "pre" && (line.startsWith("-") || line.startsWith("*"))) {
-				preCare.push(line.replace(/^[-*]\s*/, "").trim());
-			} else if (currentPhase === "after" && (line.startsWith("-") || line.startsWith("*"))) {
-				aftercare.push(line.replace(/^[-*]\s*/, "").trim());
-			} else {
+			} else if (isStepLine || currentPhase === "step") {
 				currentPhase = "step";
 				let num = stepCounter;
-				let rem = line;
+				let rem = line.replace(/^[-*]\s*/, "").trim();
 
 				// 1. Extract numeric or "Tahap X" prefix if present
-				const numMatch = rem.match(/^(?:(\d+)[\.\)]\s*|(?:Langkah|Tahap|Step)\s*(\d+)[:\.]?\s*)/i);
+				const numMatch = rem.match(/^(?:(?:\*\*)?(?:Langkah|Tahap|Step)\s*(\d+)[:\.]?(?:\*\*)?\s*[:–-]?\s*|^(\d+)[\.\)]\s*)/i);
 				if (numMatch) {
 					num = parseInt(numMatch[1] || numMatch[2] || String(stepCounter), 10);
 					rem = rem.slice(numMatch[0].length).trim();
-				} else {
-					rem = rem.replace(/^[-*]\s*/, "").trim();
 				}
 
 				let stepTitle = "";
@@ -235,8 +240,8 @@ export function parseMarkdownSegments(markdown: string): Segment[] {
 					stepTitle = boldMatch[1].trim();
 					stepDesc = boldMatch[2].trim();
 				} else {
-					const colonMatch = rem.match(/^([^:–-]+)[:–-]\s*(.+)$/);
-					if (colonMatch && colonMatch[1].length < 35 && !colonMatch[1].includes(".")) {
+					const colonMatch = rem.match(/^([a-zA-Z0-9\s]{2,30})\s*[:–-]\s+(.+)$/);
+					if (colonMatch && !colonMatch[1].includes(".")) {
 						stepTitle = colonMatch[1].trim();
 						stepDesc = colonMatch[2].trim();
 					} else {
@@ -257,6 +262,10 @@ export function parseMarkdownSegments(markdown: string): Segment[] {
 					});
 					stepCounter = num + 1;
 				}
+			} else if (currentPhase === "pre" && (line.startsWith("-") || line.startsWith("*"))) {
+				preCare.push(line.replace(/^[-*]\s*/, "").trim());
+			} else if (currentPhase === "after" && (line.startsWith("-") || line.startsWith("*"))) {
+				aftercare.push(line.replace(/^[-*]\s*/, "").trim());
 			}
 		}
 

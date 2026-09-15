@@ -162,7 +162,7 @@ export function stripInternalMetadata(text?: string | null): string {
 
 	// Strip raw attached media asset headers e.g. ### Asset Media dari File Terlampir:
 	cleaned = cleaned.replace(
-		/(?:###?|\*\*)\s*(?:Asset Media dari File Terlampir|Asset Media|Media Assets|File Terlampir)[^\n]*[\s\S]*?(?=\n#{1,3}\s+|\n\*\*[^*]+\*\*|\Z)/gi,
+		/(?:###?|\*\*)\s*(?:Asset Media dari File Terlampir|Asset Media|Media Assets|File Terlampir)[^\n]*[\s\S]*?(?=\n#{1,3}\s+|\n\*\*[^*]+\*\*|$)/gi,
 		"",
 	);
 
