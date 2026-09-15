@@ -4951,7 +4951,9 @@ async def _resolve_query_general_prompt(db_session) -> str:
     Resolves the system prompt for Query General:
     1. AppConfig DB key: AI_PROMPT_QUERY_GENERAL (admin-configurable via CIS)
     2. DEFAULT_QUERY_GENERAL_PROMPT (hardcoded fallback)
+    Auto-synchronizes DB prompt if missing strict anti-duplication rules.
     """
+    from app.rag.services.rag_generator import DEFAULT_QUERY_GENERAL_PROMPT
     try:
         from app.models.config import AppConfig
         from sqlalchemy import select
@@ -4959,11 +4961,22 @@ async def _resolve_query_general_prompt(db_session) -> str:
         result = await db_session.execute(stmt)
         db_prompt = result.scalar_one_or_none()
         if db_prompt and db_prompt.strip():
+            if "DILARANG KERAS MENAMPILKAN ATAU MEMINJAM GAMBAR DARI ENTITAS/PRODUK LAIN" not in db_prompt:
+                try:
+                    stmt_update = select(AppConfig).where(AppConfig.key == "AI_PROMPT_QUERY_GENERAL")
+                    res_cfg = await db_session.execute(stmt_update)
+                    cfg_obj = res_cfg.scalar_one_or_none()
+                    if cfg_obj:
+                        cfg_obj.value = DEFAULT_QUERY_GENERAL_PROMPT
+                        await db_session.commit()
+                        logger.info("[QUERY-GENERAL] Auto-synchronized AI_PROMPT_QUERY_GENERAL in AppConfig DB with strict 1-to-1 image matching rules.")
+                except Exception as sync_err:
+                    logger.warning(f"[QUERY-GENERAL] Could not auto-sync DB prompt: {sync_err}")
+                return DEFAULT_QUERY_GENERAL_PROMPT
             return db_prompt.strip()
     except Exception as e:
         logger.warning(f"[QUERY-GENERAL] Failed to fetch system prompt from DB: {e}")
 
-    from app.rag.services.rag_generator import DEFAULT_QUERY_GENERAL_PROMPT
     return DEFAULT_QUERY_GENERAL_PROMPT
 
 
@@ -5544,13 +5557,25 @@ async def query_general_endpoint(
         clean_answer = re.sub(r'```json\s*\n?\s*\{[^`]+?\}\s*\n?\s*```', '', answer).strip()
         clean_answer = re.sub(r'\{"action":\s*"[^"]+",\s*"knowledge_id":\s*"[^"]+".*?\}', '', clean_answer, flags=re.DOTALL).strip()
 
-        # Inject authentic approved MinIO images (Entity Isolated)
+        # Inject authentic approved MinIO images (Strict 1-to-1 Entity Isolated, Zero Cross-Product Fallback)
         injected_imgs = set()
         for hit in results:
             meta = hit.get("metadata", {})
             img = meta.get("image_url") or meta.get("image")
-            if not img and meta.get("image_urls") and isinstance(meta.get("image_urls"), list) and len(meta["image_urls"]) > 0:
-                img = meta["image_urls"][0]
+            
+            chunk_content = hit.get("content") or hit.get("text") or ""
+            target_match = _extract_specific_treatment_or_product_name(meta, chunk_text=chunk_content)
+
+            # Strict 1-to-1 matching: If chunk does not have an explicit image_url, check images list for exact product_name match
+            if not img and isinstance(meta.get("images"), list):
+                for img_obj in meta["images"]:
+                    if isinstance(img_obj, dict) and img_obj.get("url"):
+                        p_name = img_obj.get("product_name") or img_obj.get("caption") or ""
+                        if p_name and target_match and (p_name.lower() in target_match.lower() or target_match.lower() in p_name.lower()):
+                            img = img_obj["url"]
+                            break
+
+            # STRICT RULE: NEVER fall back to meta["image_urls"][0] globally per document (prevents duplicate image cross-contamination)
             if not img or not (str(img).startswith("http") or str(img).startswith("/api/storage/") or str(img).startswith("/storage/")):
                 continue
 
@@ -5573,8 +5598,27 @@ async def query_general_endpoint(
 
         clean_answer = OutputGuard.strip_patient_disclaimers(clean_answer)
 
+        # Strip any accidental "(jika ada gambar valid)" or "(URL gambar valid)" literal text strings
+        clean_answer = re.sub(r'\(\s*(?:jika\s+ada\s+)?(?:gambar|foto|url)(?:\s+valid|\s+resmi)?\s*\)', '', clean_answer, flags=re.IGNORECASE)
+
         # Strip any "Gambar:" or "• Gambar:" text labels per user requirement
         clean_answer = re.sub(r'^[|\-\*]?\s*(?:Gambar|Foto|Foto Produk)\s*:\s*', '', clean_answer, flags=re.MULTILINE | re.IGNORECASE)
+
+        # Clean invalid/placeholder image markdown tags and deduplicate image tags for the same product/treatment
+        seen_img_keys = set()
+        def _clean_and_dedup_img_tag(m):
+            alt_t = m.group(1).strip()
+            url_t = m.group(2).strip()
+            url_lower = url_t.lower()
+            if not url_t or url_lower in ("none", "null", "undefined", "#", "url_gambar", "url"):
+                return ""
+            key = (alt_t.lower(), url_lower)
+            if key in seen_img_keys:
+                return ""
+            seen_img_keys.add(key)
+            return f"![{alt_t}]({url_t})"
+
+        clean_answer = re.sub(r'!\[([^\]]*)\]\(([^\)]*)\)', _clean_and_dedup_img_tag, clean_answer)
 
         # Ensure introductory phrases like "Berikut ...:" have a blank line after them
         clean_answer = re.sub(r'^(Berikut [^\n:]+:)[ \t]*\n(?!\n)', r'\1\n\n', clean_answer, flags=re.MULTILINE | re.IGNORECASE)
