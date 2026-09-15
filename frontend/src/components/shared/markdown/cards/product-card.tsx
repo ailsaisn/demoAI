@@ -89,7 +89,7 @@ export function ProductCard({ data }: { data: CardData }) {
 
 	return (
 		<div className="not-prose my-2.5 rounded-lg border border-zinc-200/80 bg-white p-3.5 flex flex-col sm:flex-row gap-3.5 items-start shadow-none">
-			{cleanImgUrl ? (
+			{cleanImgUrl && (
 				<>
 					<div
 						className="size-28 sm:size-32 shrink-0 bg-zinc-50 rounded-lg border border-zinc-200/80 p-2 flex items-center justify-center overflow-hidden relative group cursor-pointer"
@@ -134,11 +134,6 @@ export function ProductCard({ data }: { data: CardData }) {
 						onOpenChange={setIsPreviewOpen}
 					/>
 				</>
-			) : (
-				<div className="size-28 sm:size-32 shrink-0 bg-zinc-50 rounded-lg border border-zinc-200/80 p-2 flex flex-col items-center justify-center text-zinc-400 select-none">
-					<RiImageLine className="size-6 text-zinc-300 mb-1" />
-					<span className="text-[11px] text-zinc-400 font-medium">Tanpa Foto</span>
-				</div>
 			)}
 
 			<div className="flex-1 min-w-0 flex flex-col justify-between self-stretch">
