@@ -97,9 +97,11 @@ def _detect_auth_mode() -> tuple[str, bool, dict]:
     raw_access = os.getenv("S3_ACCESS_KEY") or getattr(settings, "S3_ACCESS_KEY", None)
     raw_secret = os.getenv("S3_SECRET_KEY") or getattr(settings, "S3_SECRET_KEY", None)
     
-    # If IRSA is present, or if no explicit endpoint/access keys are configured in production/staging
+    # AWS default IAM chain should only be preferred if:
+    # 1. Explicit AWS IRSA environment variables exist, OR
+    # 2. No custom endpoint is configured AND no custom access key is configured AND running in cloud environment
     env_mode = (getattr(settings, "ENVIRONMENT", "") or os.getenv("ENVIRONMENT") or "").lower().strip()
-    is_aws_env = is_irsa or (not raw_endpoint and (not raw_access or raw_access == "minioadmin")) or env_mode in ("staging", "production", "prod", "stage")
+    is_aws_env = is_irsa or (not raw_endpoint and (not raw_access or raw_access == "minioadmin") and env_mode in ("staging", "production", "prod", "stage"))
     
     auth_desc = "AWS IRSA (Web Identity Token)" if is_irsa else ("AWS IAM Role / Default Chain" if is_aws_env else "Static Credentials (MinIO/Local)")
     return auth_desc, is_aws_env, {
@@ -150,6 +152,18 @@ def _get_client():
                     retries={'max_attempts': 3}
                 )
             )
+            # Verify credentials and connectivity before caching client
+            try:
+                client.list_buckets()
+            except Exception as test_err:
+                err_code = getattr(getattr(test_err, "response", {}), "get", lambda k, d=None: None)("Error", {}).get("Code", "")
+                if "AccessDenied" in str(test_err) or err_code in ("AccessDenied", "403"):
+                    # Credentials exist and AWS authenticated, but lack ListAllMyBuckets permission
+                    pass
+                else:
+                    # NoCredentialsError, connection failure, etc.
+                    raise test_err
+
             _cached_client = client
             logger.info(f"S3 Object Storage connected via {auth_desc} (Region: {region})")
             return client
@@ -1376,6 +1390,11 @@ def sync_existing_local_to_minio(client=None) -> dict:
                         logger.debug(f"Could not remove synced fallback file {full_path}: {rm_e}")
                 except Exception as upload_e:
                     logger.warning(f"Failed to sync fallback file '{fname}' to MinIO: {upload_e}")
+                    # If credentials or connection fails, invalidate client and stop syncing loop
+                    if "credentials" in str(upload_e).lower() or "endpoint" in str(upload_e).lower():
+                        global _cached_client
+                        _cached_client = False
+                        return {"staging": synced_staging, "approved": synced_approved, "storage": synced_storage, "status": "offline"}
 
     if synced_staging > 0 or synced_approved > 0 or synced_storage > 0:
         logger.info(f"🔄 Synced local files to MinIO: {synced_staging} staging, {synced_approved} approved, {synced_storage} storage migrated.")
