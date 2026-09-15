@@ -5146,139 +5146,19 @@ async def query_general_endpoint(
         # -------------------------------------------------------------
         # PHASE 2: Operation Intent Classifier (EDIT / DELETE Intent Detection)
         # -------------------------------------------------------------
-        # Strict READ / Q&A Intent Guard: Never classify READ queries as EDIT/DELETE
-        read_keywords = r'\b(detail|info|informasi|penjelasan|deskripsi|apa|apakah|bagaimana|mengapa|kenapa|bisa\s*kah|kapan|berapa|siapa|sebutkan|rekomendasi|kandungan|komposisi|manfaat|fungsi|cara|prosedur|harga|sku|gambar|foto|lihat|tunjukkan|cari|tampilkan)\b'
-        is_read_query = bool(re.search(read_keywords, clean_user_prompt, re.IGNORECASE))
-
-        # Explicit action verbs for DELETE (avoiding collisions with product names like "Acne Clear Gel", "Make-up Remover")
+        # Explicit action verbs for DELETE & EDIT
         delete_verbs = r'(?:hapus|delete|hilangkan|buang|bersihkan|tiadakan|wipe|erase|clear\s+data|clear\s+kb|clear\s+database|clear\s+knowledge|clear\s+dokumen|clear\s+item|remove\s+data|remove\s+kb|remove\s+dokumen|remove\s+item|^clear\s+|^remove\s+)'
-        is_delete_cmd = (
-            not is_read_query
-            and (
-                bool(re.search(rf'\b{delete_verbs}', clean_user_prompt, re.IGNORECASE))
-                or bool(re.search(rf'\b{delete_verbs}', effective_prompt.lower(), re.IGNORECASE))
-            )
-        )
-
-        if is_delete_cmd:
-            matched_res = (
-                await GeneralKnowledgeService.find_all_target_documents_and_item(user_prompt)
-                or await GeneralKnowledgeService.find_all_target_documents_and_item(effective_prompt)
-            )
-            if not matched_res:
-                return QueryGeneralResponse(
-                    type="answer",
-                    message="Untuk saat ini informasi tersebut belum tersedia.",
-                    prompt=user_prompt,
-                    answer="Untuk saat ini informasi tersebut belum tersedia.",
-                    action="read",
-                    target_knowledge_id=None,
-                    total_found=0,
-                    results=[]
-                )
-            target_item, matched_docs = matched_res
-            top_doc = matched_docs[0]
-            target_kid = top_doc["knowledge_id"]
-            doc_data = top_doc["doc_data"]
-            doc_title = top_doc.get("title") or top_doc.get("file_name") or target_kid
-            batch_id = top_doc.get("batch_id")
-            context_label = doc_data.get("_matched_context_label") or target_item or doc_title
-
-            affected_kids = [d["knowledge_id"] for d in matched_docs]
-            metadata_payload = {
-                "affected_knowledge_ids": affected_kids,
-                "affected_docs": [
-                    {
-                        "knowledge_id": d["knowledge_id"],
-                        "title": d.get("title") or d.get("file_name"),
-                        "batch_id": d.get("batch_id"),
-                        "match_type": d.get("match_type"),
-                        "target_item": d.get("target_item") or target_item
-                    }
-                    for d in matched_docs
-                ]
-            }
-
-            from app.models.pending_operation import PendingOperation
-            from app.core.database import AsyncSessionLocal
-            import uuid as _uuid
-            op_id = _uuid.uuid4()
-            async with AsyncSessionLocal() as session:
-                op = PendingOperation(
-                    id=op_id,
-                    action="delete",
-                    knowledge_id=target_kid,
-                    target_item=target_item,
-                    context_label=context_label,
-                    batch_id=batch_id,
-                    status="pending",
-                    metadata_=metadata_payload
-                )
-                session.add(op)
-                await session.commit()
-
-            if len(matched_docs) > 1:
-                doc_list_items = []
-                for idx, d in enumerate(matched_docs, 1):
-                    kid = d["knowledge_id"]
-                    t = d.get("title") or d.get("file_name") or kid
-                    b_id = d.get("batch_id")
-                    link = f"[{kid}](/dashboard/knowledge/batch/{b_id})" if b_id else f"[{kid}](/dashboard/knowledge/{kid})"
-                    badge = " *(Dokumen Utama)*" if d.get("match_type") == "dedicated_document" else " *(Katalog Produk)*"
-                    item_note = f" — *Item*: `{d.get('target_item')}`" if d.get("target_item") and d.get("target_item") != target_item else ""
-                    doc_list_items.append(f"{idx}. {link} — *{t}*{badge}{item_note}")
-                doc_list_str = "\n".join(doc_list_items)
-
-                preview_text = (
-                    f"⚠️ **Konfirmasi Penghapusan Data Knowledge Base**\n\n"
-                    f"Berikut adalah rincian data yang akan dihapus:\n\n"
-                    + (f"- **Target Entitas / Item**: **{target_item}**\n" if target_item else f"- **Item Target**: **{context_label}**\n") +
-                    f"- **Dokumen Terdampak ({len(matched_docs)} Dokumen)**:\n{doc_list_str}\n\n"
-                    f"- **Dampak**: Data entitas ini akan dihapus dari seluruh dokumen terkait di Knowledge Base dan indeks pencarian.\n\n"
-                    f"Apakah Anda yakin ingin menghapus data ini dari Knowledge Base ERHA? Silakan klik tombol konfirmasi di bawah."
-                )
-            elif target_item:
-                batch_link = f"[{target_kid}](/dashboard/knowledge/batch/{batch_id})" if batch_id else f"[{target_kid}](/dashboard/knowledge/{target_kid})"
-                preview_text = (
-                    f"⚠️ **Konfirmasi Penghapusan Data Knowledge Base**\n\n"
-                    f"Berikut adalah rincian data yang akan dihapus:\n\n"
-                    f"- **Target Entitas / Item**: **{target_item}**\n"
-                    f"- **ID Dokumen**: {batch_link} — *{doc_title}*\n"
-                    f"- **Dampak**: Hanya item ini yang akan dihapus dari Knowledge Base dan indeks pencarian. Bagian lain dalam dokumen tetap aman tersimpan.\n\n"
-                    f"Apakah Anda yakin ingin menghapus data ini dari Knowledge Base ERHA? Silakan klik tombol konfirmasi di bawah."
-                )
-            else:
-                batch_link = f"[{target_kid}](/dashboard/knowledge/batch/{batch_id})" if batch_id else f"[{target_kid}](/dashboard/knowledge/{target_kid})"
-                preview_text = (
-                    f"⚠️ **Konfirmasi Penghapusan Data Knowledge Base**\n\n"
-                    f"Berikut adalah rincian data yang akan dihapus:\n\n"
-                    f"- **ID Dokumen**: {batch_link}\n"
-                    f"- **Judul Dokumen**: {doc_title}\n"
-                    f"- **Status**: Menunggu konfirmasi admin\n\n"
-                    f"Apakah Anda yakin ingin menghapus seluruh dokumen ini dari Knowledge Base ERHA? Silakan klik tombol konfirmasi di bawah."
-                )
-
-            return QueryGeneralResponse(
-                type="confirmation",
-                message=preview_text,
-                operation_id=str(op_id),
-                prompt=user_prompt,
-                answer=preview_text,
-                action="delete_preview",
-                target_knowledge_id=target_kid,
-                total_found=len(matched_docs),
-                results=[]
-            )
-
-        # Check if user explicitly requests EDIT
         edit_verbs = r'(?:ubah|ganti|edit|tukar|salin|update|perbarui|revisi|terapkan|pasang|masukkan|tambahkan|sisipkan|gantikan|gantiin|set\s+data|set\s+harga|set\s+ukuran|modifikasi|perbaiki|^set\s+)'
-        is_edit_cmd = (
-            not is_read_query
-            and (
-                bool(re.search(rf'\b{edit_verbs}', clean_user_prompt, re.IGNORECASE))
-                or bool(re.search(rf'\b{edit_verbs}', effective_prompt.lower(), re.IGNORECASE))
-            )
-        )
+
+        has_delete_verb = bool(re.search(rf'\b{delete_verbs}', clean_user_prompt, re.IGNORECASE)) or bool(re.search(rf'\b{delete_verbs}', effective_prompt.lower(), re.IGNORECASE))
+        has_edit_verb = bool(re.search(rf'\b{edit_verbs}', clean_user_prompt, re.IGNORECASE)) or bool(re.search(rf'\b{edit_verbs}', effective_prompt.lower(), re.IGNORECASE))
+
+        # Strict READ / Q&A Intent Guard: Active ONLY if prompt contains no explicit action mutation verb (edit/delete)
+        read_keywords = r'\b(detail|info|informasi|penjelasan|deskripsi|apa|apakah|bagaimana|mengapa|kenapa|bisa\s*kah|kapan|berapa|siapa|sebutkan|rekomendasi|manfaat|fungsi|cara|prosedur|gambar|foto|lihat|tunjukkan|cari|tampilkan)\b'
+        is_read_query = bool(re.search(read_keywords, clean_user_prompt, re.IGNORECASE)) and not (has_delete_verb or has_edit_verb)
+
+        is_delete_cmd = has_delete_verb and not is_read_query
+        is_edit_cmd = has_edit_verb and not is_read_query
 
         if is_edit_cmd:
             matched_res = (
