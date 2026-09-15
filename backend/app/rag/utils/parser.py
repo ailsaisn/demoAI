@@ -642,7 +642,7 @@ class DocumentParser:
         """Extract text from legacy .doc files using Docling OCR / parser."""
         return self._parse_with_docling(file_path)
 
-    def _parse_standalone_image(self, file_path: str) -> ParseResult:
+    def _parse_standalone_image(self, file_path: str, fast_mode: bool = False) -> ParseResult:
         """
         Uploads standalone image file to MinIO S3 and extracts structured knowledge using 
         Generic Image Knowledge Extraction Vision LLM (with Docling OCR fallback)
@@ -650,6 +650,7 @@ class DocumentParser:
         """
         import base64
         import json
+        import uuid
         from app.services.storage import upload_image
 
         file_name = os.path.basename(file_path)
@@ -663,6 +664,40 @@ class DocumentParser:
             upload_res = upload_image(image_bytes, file_name, content_type=content_type)
             image_url = upload_res.get("image_url", "")
             s3_key = upload_res.get("s3_key", "")
+
+            # If fast_mode or refine attachment: upload directly to MinIO and return instant ParseResult (<0.1s)
+            if fast_mode or "refine_" in file_name or "supp_" in file_name or "refine" in file_path.lower():
+                clean_title = os.path.splitext(file_name)[0]
+                img_id = f"img_{uuid.uuid4().hex[:8]}"
+                image_asset = {
+                    "id": img_id,
+                    "url": image_url,
+                    "s3_key": s3_key,
+                    "role": "PRODUCT_PACKAGING",
+                    "product_name": clean_title,
+                    "caption": f"Foto {clean_title}"
+                }
+                page_data = {
+                    "page": 1,
+                    "text": f"![{clean_title}]({image_url})",
+                    "image_id": img_id,
+                    "image_urls": [image_url] if image_url else [],
+                    "image_url": image_url,
+                    "images": [image_asset],
+                    "s3_key": s3_key,
+                    "storage_key": s3_key,
+                    "image_reference": image_url,
+                    "clinics": ["all"],
+                    "doctor_types": ["all"],
+                    "doctors": ["all"],
+                    "visibility_settings": {
+                        "clinics": ["all"],
+                        "doctor_types": ["all"],
+                        "doctors": ["all"]
+                    }
+                }
+                logger.info(f"⚡ [FAST IMAGE PARSE] Standalone image '{file_name}' uploaded to MinIO in < 0.1s ({image_url})")
+                return ParseResult(pages=[page_data], method="fast")
 
             extracted_text = ""
             extracted_meta = {
@@ -917,7 +952,7 @@ class DocumentParser:
     # -------------------------------------------------------------------------
     # MAIN ENTRY POINT
     # -------------------------------------------------------------------------
-    def parse_file(self, file_path: str) -> Optional[ParseResult]:
+    def parse_file(self, file_path: str, fast_mode: bool = False) -> Optional[ParseResult]:
         """
         Smart parse: tries fast extraction first for docx, doc, pptx, ppt, txt, pdf, xlsx, xls, csv.
         Falls back to Docling OCR for scanned PDFs & image files.
@@ -961,7 +996,7 @@ class DocumentParser:
                     result = self._parse_with_docling(file_path)
             elif ext in [".png", ".jpg", ".jpeg", ".webp"]:
                 logger.info(f"🖼️ Standalone image extraction & MinIO upload: {file_path}")
-                result = self._parse_standalone_image(file_path)
+                result = self._parse_standalone_image(file_path, fast_mode=fast_mode)
             else:
                 # Unknown extension → try Docling as universal fallback
                 logger.info(f"🔬 Docling universal parse for {ext}: {file_path}")

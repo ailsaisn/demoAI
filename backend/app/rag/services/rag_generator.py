@@ -41,7 +41,7 @@ class OpenAIAdapter(BaseLLMAdapter):
             raise ValueError("API key is not configured in settings, database, or environment.")
         from langchain_openai import ChatOpenAI
         target_model = model_name or settings.openai_model_name
-        logger.info(f"Initializing OpenAI-compatible LLM Adapter: model='{target_model}', base_url='{base_url or 'default'}'")
+        logger.debug(f"Initializing OpenAI-compatible LLM Adapter: model='{target_model}', base_url='{base_url or 'default'}'")
         
         # Configurable temperature from settings / env var LLM_GENERATION_TEMPERATURE.
         # CRITICAL MEDICAL DOMAIN NOTE:
@@ -50,7 +50,7 @@ class OpenAIAdapter(BaseLLMAdapter):
         # or hallucinations in sensitive clinical claims, pricing, SKUs, and active ingredient dosages.
         # The default remains strictly 0.0 for maximum determinism and consistency.
         gen_temperature = float(getattr(settings, "llm_generation_temperature", 0.0))
-        logger.info(f"Configuring LLM generation temperature: {gen_temperature} (Default: 0.0, Recommended Clinical Range: 0.0-0.2)")
+        logger.debug(f"Configuring LLM generation temperature: {gen_temperature} (Default: 0.0, Recommended Clinical Range: 0.0-0.2)")
 
         kwargs = {
             "model": target_model,

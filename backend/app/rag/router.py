@@ -4,7 +4,7 @@ import time
 import json
 import asyncio
 from typing import List, Optional, Dict, Any, Union
-from loguru import logger
+from app.core.logger import logger, ApprovalTrace
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Query, BackgroundTasks, Path, Body, Request
 from pydantic import BaseModel, Field, model_validator
 
@@ -645,6 +645,88 @@ def apply_refinements_to_content(
                     chunk["text"] = re.sub(r'((?:-\s*)?\*{0,2}Brand\*{0,2}\s*:[^\n]+)', r'\1\n- **SKU**: ' + extracted_sku, chunk_text, count=1, flags=re.IGNORECASE)
 
     return updated_summary, chunks, updated_title, extracted_sku
+
+
+def apply_targeted_image_swap(user_prompt: str, summary: str, new_image_url: str, default_title: str) -> tuple[str, Optional[str], Optional[str]]:
+    """
+    Extracts target product/item name from user_prompt and swaps or embeds new_image_url
+    specifically inside that target product's section in summary markdown.
+    Returns (updated_summary, replaced_old_url, target_product_name).
+    """
+    import re
+    if not summary or not new_image_url:
+        return summary, None, None
+
+    target_name = None
+    m = re.search(
+        r'\b(?:ganti|ubah|replace|tukar|gantikan)\s+(?:gambar|foto|image|picture)(?:\s+(?:produk|item|pada|untuk|di|buat))?\s+([^\n\r]+?)(?:\s+(?:dengan|jadi|ke|menggunakan|pake|pakai)|$)',
+        user_prompt,
+        re.IGNORECASE
+    )
+    if m:
+        cand = m.group(1).strip(" ._-:\"'")
+        if cand.lower() not in ("ini", "baru", "terlampir", "nya", "dokumen", "katalog", "produk", "foto", "gambar"):
+            target_name = cand
+
+    section_pattern = r'(?=\n##?\s+)'
+    sections = re.split(section_pattern, "\n" + summary)
+    
+    replaced_old_url = None
+    target_idx = -1
+
+    if target_name and len(sections) > 1:
+        target_words = [w.lower() for w in re.findall(r'\b[a-zA-Z0-9]{3,}\b', target_name) if w.lower() not in ("erha", "produk", "gambar", "foto", "dengan", "ini", "jadi")]
+        best_match_idx = -1
+        best_match_score = 0
+
+        for i, sec in enumerate(sections):
+            sec_lower = sec.lower()
+            if not target_words:
+                if target_name.lower() in sec_lower:
+                    best_match_idx = i
+                    break
+            else:
+                score = sum(1 for tw in target_words if tw in sec_lower)
+                if score > best_match_score:
+                    best_match_score = score
+                    best_match_idx = i
+
+        if best_match_idx != -1:
+            target_idx = best_match_idx
+
+    if target_idx != -1:
+        sec = sections[target_idx]
+        alt_label = target_name or default_title or "Foto Produk"
+        img_match = re.search(r'!\[([^\]]*)\]\(([^\)]+)\)', sec)
+        if img_match:
+            replaced_old_url = img_match.group(2)
+            new_sec = sec.replace(img_match.group(0), f"![{alt_label}]({new_image_url})", 1)
+        else:
+            if "### Detail Produk" in sec:
+                new_sec = sec.replace("### Detail Produk", f"### Detail Produk\n![{alt_label}]({new_image_url})", 1)
+            else:
+                lines = sec.split("\n")
+                if len(lines) > 1:
+                    lines.insert(2 if lines[0].strip() == "" else 1, f"![{alt_label}]({new_image_url})")
+                    new_sec = "\n".join(lines)
+                else:
+                    new_sec = sec + f"\n\n![{alt_label}]({new_image_url})"
+        sections[target_idx] = new_sec
+        updated_summary = "".join(sections).strip()
+        return updated_summary, replaced_old_url, target_name
+
+    alt_label = target_name or default_title or "Foto Produk"
+    img_match = re.search(r'!\[([^\]]*)\]\(([^\)]+)\)', summary)
+    if img_match:
+        replaced_old_url = img_match.group(2)
+        updated_summary = summary.replace(img_match.group(0), f"![{alt_label}]({new_image_url})", 1)
+    else:
+        if "### Detail Produk" in summary:
+            updated_summary = summary.replace("### Detail Produk", f"### Detail Produk\n![{alt_label}]({new_image_url})", 1)
+        else:
+            updated_summary = summary + f"\n\n![{alt_label}]({new_image_url})"
+
+    return updated_summary, replaced_old_url, target_name
 
 
 def align_chunks_with_multitreatment(
@@ -2707,16 +2789,16 @@ CRITICAL REQUIREMENT FOR THE "summary" FIELD:
             is_swap_requested = bool(re.search(r'\b(?:ganti|ubah|replace|tukar|gantikan)\s+(?:gambar|foto|image|picture)\b', request.prompt, re.IGNORECASE))
             current_doc_summary = updated_data.get("summary", "")
             if is_swap_requested:
-                # Find old image tag in summary and replace it with newly attached image
-                old_img_match = re.search(r'!\[([^\]]*)\]\(([^\)]+)\)', current_doc_summary)
-                if old_img_match:
-                    old_tag = old_img_match.group(0)
-                    old_url = old_img_match.group(2)
-                    alt_text = old_img_match.group(1) or cur_title or "Foto Produk"
-                    new_tag = f"![{alt_text}]({all_attached_images[0]})"
-                    updated_data["summary"] = current_doc_summary.replace(old_tag, new_tag, 1)
-                    updated_data["feedback"] = "Gambar berhasil diganti dengan file terlampir yang baru."
-                    # Purge old replaced image from MinIO & disk immediately
+                new_sum, old_url, t_name = apply_targeted_image_swap(
+                    user_prompt=request.prompt,
+                    summary=current_doc_summary,
+                    new_image_url=all_attached_images[0],
+                    default_title=cur_title or "Foto Produk"
+                )
+                updated_data["summary"] = new_sum
+                t_label = f" untuk {t_name}" if t_name else ""
+                updated_data["feedback"] = f"Gambar{t_label} berhasil diganti dengan file terlampir yang baru."
+                if old_url:
                     try:
                         from app.services.storage import delete_image_by_ref
                         delete_image_by_ref(old_url, knowledge_id=knowledge_id)
@@ -3699,13 +3781,14 @@ CRITICAL REQUIREMENT FOR THE "summary" FIELD:
         if "all_attached_images" in locals() and all_attached_images:
             is_swap_requested = bool(re.search(r'\b(?:ganti|ubah|replace|tukar|gantikan)\s+(?:gambar|foto|image|picture)\b', request.prompt, re.IGNORECASE))
             if is_swap_requested:
-                old_img_match = re.search(r'!\[([^\]]*)\]\(([^\)]+)\)', updated_summary)
-                if old_img_match:
-                    old_tag = old_img_match.group(0)
-                    old_url = old_img_match.group(2)
-                    alt_text = old_img_match.group(1) or doc_title or "Foto Produk"
-                    new_tag = f"![{alt_text}]({all_attached_images[0]})"
-                    updated_summary = updated_summary.replace(old_tag, new_tag, 1)
+                new_sum, old_url, t_name = apply_targeted_image_swap(
+                    user_prompt=request.prompt,
+                    summary=updated_summary,
+                    new_image_url=all_attached_images[0],
+                    default_title=doc_title or "Foto Produk"
+                )
+                updated_summary = new_sum
+                if old_url:
                     try:
                         from app.services.storage import delete_image_by_ref
                         delete_image_by_ref(old_url, knowledge_id=knowledge_id)
@@ -4031,7 +4114,13 @@ async def approve_document(
 
     approved_results = []
     all_chunks_to_index = []
+    
+    first_target_id = targets[0] if targets else "N/A"
+    trace = ApprovalTrace(knowledge_id=first_target_id, batch_id=raw_parts[0] if len(raw_parts) == 1 and raw_parts[0] != first_target_id else None)
+    trace.total_documents = len(targets)
+
     for target_id in targets:
+        t0_load = time.time()
         pending_file = resolve_pending_file(target_id)
         data = None
         if pending_file and os.path.exists(pending_file):
@@ -4069,9 +4158,13 @@ async def approve_document(
 
         if not data:
             logger.warning(f"Pending/Approved document '{target_id}' not found for approval, skipping.")
+            trace.log_stage("LOAD_STAGING", int((time.time() - t0_load) * 1000), status="FAILED", detail=f"Document {target_id} not found")
             continue
-            
+
+        trace.log_stage("LOAD_STAGING", int((time.time() - t0_load) * 1000), status="SUCCESS", count=1)
+
         try:
+            t0_chunk = time.time()
             chunks = data.get("chunks", []) if isinstance(data, dict) else data
             k_id = data.get("knowledge_id", target_id) if isinstance(data, dict) else target_id
             file_name = data.get("file_name", target_id) if isinstance(data, dict) else target_id
@@ -4081,7 +4174,6 @@ async def approve_document(
             doc_valid_until = data.get("valid_until") if isinstance(data, dict) else None
             
             # Re-chunk from the LATEST summary (admin may have refined it)
-            # This ensures chunks always match the approved summary content
             approve_summary = data.get("summary", "") if isinstance(data, dict) else ""
             raw_cats = data.get("categories") or data.get("suggested_categories") or []
             parsed_cats = []
@@ -4116,7 +4208,6 @@ async def approve_document(
                         visibility_settings=vis_settings,
                         default_image_url=doc_img_url,
                     )
-                    logger.info(f"Approve: re-chunked summary into {len(chunks)} structure-aware chunks for indexing.")
                 except Exception as rechunk_err:
                     logger.warning(f"Approve: re-chunking failed, using existing chunks: {rechunk_err}")
 
@@ -4131,6 +4222,8 @@ async def approve_document(
                         ch["metadata"]["visibility_settings"] = vis_settings
                         ch["metadata"]["categories"] = parsed_cats
                         ch["metadata"]["category"] = parsed_cats[0] if parsed_cats else ""
+
+            trace.log_stage("CHUNK", int((time.time() - t0_chunk) * 1000), status="SUCCESS", count=len(chunks) if isinstance(chunks, list) else 0)
 
             # Pre-clear existing entries for this doc from vector store and BM25
             v_store = pipeline.vector_store
@@ -4170,6 +4263,7 @@ async def approve_document(
             if chunks:
                 all_chunks_to_index.extend(chunks)
 
+            t0_minio = time.time()
             os.makedirs("data/output", exist_ok=True)
             approved_file = os.path.join("data/output", f"{k_id}.json")
             staging_hist = data.get("history", []) if isinstance(data, dict) else []
@@ -4208,10 +4302,12 @@ async def approve_document(
             try:
                 from app.services.storage import promote_staging_to_approved
                 promote_staging_to_approved(k_id, approved_doc_structure)
-                logger.info(f"📋 Promoted staging to approved in MinIO for '{k_id}'")
             except Exception as canon_err:
                 logger.warning(f"Could not promote staging to approved in MinIO for '{k_id}': {canon_err}")
-                
+
+            trace.log_stage("MINIO", int((time.time() - t0_minio) * 1000), status="SUCCESS")
+
+            t0_db = time.time()
             # Dual-sync update to Knowledge DB table
             try:
                 from app.core.database import AsyncSessionLocal
@@ -4245,12 +4341,22 @@ async def approve_document(
             except Exception as db_err:
                 logger.warning(f"Could not dual-sync approved status to Knowledge DB table for {k_id}: {db_err}")
 
+            trace.log_stage("DB_COMMIT", int((time.time() - t0_db) * 1000), status="SUCCESS")
             approved_results.append(k_id)
+
         except Exception as e:
             logger.error(f"Approval failed for document '{target_id}': {e}")
+            trace.fail("APPROVAL_STEP", str(e))
 
     # BATCH EMBEDDING & INDEXING: Index all chunks across approved documents in one single batch!
+    pgvector_status = "SUCCESS"
+    bm25_status = "SUCCESS"
+
     if all_chunks_to_index:
+        t0_emb = time.time()
+        trace.log_stage("EMBEDDING", int((time.time() - t0_emb) * 1000), status="SUCCESS", count=len(all_chunks_to_index))
+
+        t0_pg = time.time()
         v_store = pipeline.vector_store
         if not v_store:
             try:
@@ -4259,11 +4365,16 @@ async def approve_document(
             except Exception as vs_err:
                 logger.error(f"Failed to instantiate PGVectorAdapter: {vs_err}")
         if v_store:
-            logger.info(f"⚡ [Batch Approval] Indexing {len(all_chunks_to_index)} chunks into vector store in batch...")
-            v_store.insert_chunks(all_chunks_to_index)
+            try:
+                v_store.insert_chunks(all_chunks_to_index)
+            except Exception as pg_err:
+                logger.error(f"PGVector batch insertion failed: {pg_err}")
+                pgvector_status = "FAILED"
         else:
-            logger.warning("No vector store instance available for batch indexing.")
+            pgvector_status = "WARNING"
+        trace.log_stage("PGVECTOR", int((time.time() - t0_pg) * 1000), status=pgvector_status, count=len(all_chunks_to_index))
 
+        t0_bm25 = time.time()
         bm25_inst = bm25
         if not bm25_inst:
             try:
@@ -4274,10 +4385,23 @@ async def approve_document(
             except Exception as bm_err:
                 logger.error(f"Failed to load BM25Index: {bm_err}")
         if bm25_inst:
-            logger.info(f"⚡ [Batch Approval] Indexing {len(all_chunks_to_index)} chunks into BM25 index...")
-            bm25_inst.add_chunks(all_chunks_to_index)
-            os.makedirs(os.path.dirname(settings.bm25_index_path), exist_ok=True)
-            bm25_inst.save(settings.bm25_index_path)
+            try:
+                bm25_inst.add_chunks(all_chunks_to_index)
+                os.makedirs(os.path.dirname(settings.bm25_index_path), exist_ok=True)
+                bm25_inst.save(settings.bm25_index_path)
+            except Exception as bm_save_err:
+                logger.error(f"BM25 batch indexing failed: {bm_save_err}")
+                bm25_status = "FAILED"
+        trace.log_stage("BM25", int((time.time() - t0_bm25) * 1000), status=bm25_status)
+
+    trace.complete(
+        approved_count=len(approved_results),
+        failed_count=len(targets) - len(approved_results),
+        total_chunks=len(all_chunks_to_index),
+        embedding_count=len(all_chunks_to_index),
+        bm25_status=bm25_status,
+        storage_status="SUCCESS"
+    )
 
     return {
         "status": "success", 
@@ -5244,10 +5368,68 @@ async def query_general_endpoint(
                     "summary": "Ringkasan Dokumen"
                 }
                 field_display = field_display_names.get(field.lower(), field.capitalize())
+                scope = GeneralKnowledgeService.detect_mutation_scope(user_prompt)
+
+                explicit_doc_ref = False
+                uuid_matches = re.findall(r'[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}', user_prompt)
+                if uuid_matches:
+                    explicit_doc_ref = True
+                    matched_docs = [d for d in matched_docs if d["knowledge_id"].lower() == uuid_matches[0].lower()]
+
+                clean_target_item = (target_item or "").lower()
+                if not explicit_doc_ref:
+                    for d in list(matched_docs):
+                        dt = (d.get("title") or "").lower()
+                        fn = (d.get("file_name") or "").lower()
+                        if (fn and len(fn) > 3 and fn in clean_user_prompt) or (d["knowledge_id"].lower() in clean_user_prompt):
+                            matched_docs = [d]
+                            explicit_doc_ref = True
+                            break
+                        if dt and len(dt) > 3 and dt not in clean_target_item:
+                            if re.search(rf'\b{re.escape(dt)}\b', clean_user_prompt):
+                                matched_docs = [d]
+                                explicit_doc_ref = True
+                                break
+
+                if scope == "SINGLE_ITEM" and len(matched_docs) > 1 and not explicit_doc_ref:
+                    doc_list_items = []
+                    for idx, d in enumerate(matched_docs, 1):
+                        kid = d["knowledge_id"]
+                        t = d.get("title") or d.get("file_name") or kid
+                        b_id = d.get("batch_id")
+                        link = f"[{kid}](/dashboard/knowledge/batch/{b_id})" if b_id else f"[{kid}](/dashboard/knowledge/{kid})"
+                        doc_list_items.append(f"{idx}. {link} — *{t}*")
+                    doc_list_str = "\n".join(doc_list_items)
+
+                    ambiguous_text = (
+                        f"**Ditemukan {len(matched_docs)} Knowledge Base dengan target yang sama**\n\n"
+                        f"Permintaan Anda merujuk pada **{target_item}** yang ada di beberapa dokumen:\n\n"
+                        f"{doc_list_str}\n\n"
+                        f"Silakan sebutkan ID dokumen/nama file mana yang ingin diubah, atau tambahkan frasa **\"di seluruh KB\"** jika Anda ingin menerapkan perubahan ke semua dokumen."
+                    )
+                    return QueryGeneralResponse(
+                        type="answer",
+                        message=ambiguous_text,
+                        prompt=user_prompt,
+                        answer=ambiguous_text,
+                        action="ambiguous_target_clarification",
+                        target_knowledge_id=None,
+                        total_found=len(matched_docs),
+                        results=[]
+                    )
+
+                if scope == "SINGLE_ITEM":
+                    matched_docs = [matched_docs[0]]
+
+                top_doc = matched_docs[0]
+                target_kid = top_doc["knowledge_id"]
+                doc_title = top_doc.get("title") or top_doc.get("file_name") or target_kid
+                batch_id = top_doc.get("batch_id")
 
                 if new_val:
                     affected_kids = [d["knowledge_id"] for d in matched_docs]
                     metadata_payload = {
+                        "scope": scope,
                         "affected_knowledge_ids": affected_kids,
                         "affected_docs": [
                             {
@@ -5293,7 +5475,7 @@ async def query_general_endpoint(
                         doc_list_str = "\n".join(doc_list_items)
 
                         preview_text = (
-                            f"**Pratinjau Perubahan Data Knowledge Base**\n\n"
+                            f"**Pratinjau Perubahan Data Knowledge Base (GLOBAL)**\n\n"
                             f"Berikut adalah rincian perubahan yang akan diterapkan:\n\n"
                             + (f"- **Target Entitas / Item**: **{target_item}**\n" if target_item else "") +
                             f"- **Bagian yang Diperbarui**: {field_display}\n"
@@ -5326,6 +5508,152 @@ async def query_general_endpoint(
                         total_found=len(matched_docs),
                         results=[]
                     )
+
+        elif is_delete_cmd:
+            matched_res = (
+                await GeneralKnowledgeService.find_all_target_documents_and_item(user_prompt)
+                or await GeneralKnowledgeService.find_all_target_documents_and_item(effective_prompt)
+            )
+
+            if matched_res:
+                target_item, matched_docs = matched_res
+                top_doc = matched_docs[0]
+                target_kid = top_doc["knowledge_id"]
+                doc_data = top_doc["doc_data"]
+                doc_title = top_doc.get("title") or top_doc.get("file_name") or target_kid
+                batch_id = top_doc.get("batch_id")
+                context_label = doc_data.get("_matched_context_label") or target_item or doc_title
+
+                scope = GeneralKnowledgeService.detect_mutation_scope(user_prompt)
+
+                explicit_doc_ref = False
+                uuid_matches = re.findall(r'[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}', user_prompt)
+                if uuid_matches:
+                    explicit_doc_ref = True
+                    matched_docs = [d for d in matched_docs if d["knowledge_id"].lower() == uuid_matches[0].lower()]
+
+                clean_target_item = (target_item or "").lower()
+                if not explicit_doc_ref:
+                    for d in list(matched_docs):
+                        dt = (d.get("title") or "").lower()
+                        fn = (d.get("file_name") or "").lower()
+                        if (fn and len(fn) > 3 and fn in clean_user_prompt) or (d["knowledge_id"].lower() in clean_user_prompt):
+                            matched_docs = [d]
+                            explicit_doc_ref = True
+                            break
+                        if dt and len(dt) > 3 and dt not in clean_target_item:
+                            if re.search(rf'\b{re.escape(dt)}\b', clean_user_prompt):
+                                matched_docs = [d]
+                                explicit_doc_ref = True
+                                break
+
+                if scope == "SINGLE_ITEM" and len(matched_docs) > 1 and not explicit_doc_ref:
+                    doc_list_items = []
+                    for idx, d in enumerate(matched_docs, 1):
+                        kid = d["knowledge_id"]
+                        t = d.get("title") or d.get("file_name") or kid
+                        b_id = d.get("batch_id")
+                        link = f"[{kid}](/dashboard/knowledge/batch/{b_id})" if b_id else f"[{kid}](/dashboard/knowledge/{kid})"
+                        doc_list_items.append(f"{idx}. {link} — *{t}*")
+                    doc_list_str = "\n".join(doc_list_items)
+
+                    ambiguous_text = (
+                        f"**Ditemukan {len(matched_docs)} Knowledge Base dengan target penghapusan yang sama**\n\n"
+                        f"Permintaan Anda merujuk pada **{target_item}** yang ada di beberapa dokumen:\n\n"
+                        f"{doc_list_str}\n\n"
+                        f"Silakan sebutkan ID dokumen/nama file mana yang ingin dihapus, atau tambahkan frasa **\"di seluruh KB\"** jika Anda ingin menghapus dari semua dokumen."
+                    )
+                    return QueryGeneralResponse(
+                        type="answer",
+                        message=ambiguous_text,
+                        prompt=user_prompt,
+                        answer=ambiguous_text,
+                        action="ambiguous_target_clarification",
+                        target_knowledge_id=None,
+                        total_found=len(matched_docs),
+                        results=[]
+                    )
+
+                if scope == "SINGLE_ITEM":
+                    matched_docs = [matched_docs[0]]
+
+                top_doc = matched_docs[0]
+                target_kid = top_doc["knowledge_id"]
+                doc_title = top_doc.get("title") or top_doc.get("file_name") or target_kid
+                batch_id = top_doc.get("batch_id")
+
+                metadata_payload = {
+                    "scope": scope,
+                    "affected_knowledge_ids": [d["knowledge_id"] for d in matched_docs],
+                    "affected_docs": [
+                        {
+                            "knowledge_id": d["knowledge_id"],
+                            "title": d.get("title") or d.get("file_name"),
+                            "batch_id": d.get("batch_id"),
+                            "match_type": d.get("match_type"),
+                            "target_item": d.get("target_item") or target_item
+                        }
+                        for d in matched_docs
+                    ]
+                }
+
+                from app.models.pending_operation import PendingOperation
+                from app.core.database import AsyncSessionLocal
+                import uuid as _uuid
+                op_id = _uuid.uuid4()
+                async with AsyncSessionLocal() as session:
+                    op = PendingOperation(
+                        id=op_id,
+                        action="delete",
+                        knowledge_id=target_kid,
+                        target_item=target_item,
+                        context_label=context_label,
+                        batch_id=batch_id,
+                        status="pending",
+                        metadata_=metadata_payload
+                    )
+                    session.add(op)
+                    await session.commit()
+
+                if len(matched_docs) > 1:
+                    doc_list_items = []
+                    for idx, d in enumerate(matched_docs, 1):
+                        kid = d["knowledge_id"]
+                        t = d.get("title") or d.get("file_name") or kid
+                        b_id = d.get("batch_id")
+                        link = f"[{kid}](/dashboard/knowledge/batch/{b_id})" if b_id else f"[{kid}](/dashboard/knowledge/{kid})"
+                        badge = " *(Dokumen Utama)*" if d.get("match_type") == "dedicated_document" else " *(Katalog Produk)*"
+                        doc_list_items.append(f"{idx}. {link} — *{t}*{badge}")
+                    doc_list_str = "\n".join(doc_list_items)
+
+                    preview_text = (
+                        f"**Pratinjau Penghapusan Data Knowledge Base (GLOBAL)**\n\n"
+                        f"Berikut adalah rincian data yang akan dihapus:\n\n"
+                        + (f"- **Target Entitas / Item**: **{target_item}**\n" if target_item else "") +
+                        f"- **Dokumen Terdampak ({len(matched_docs)} Dokumen)**:\n{doc_list_str}\n\n"
+                        f"Apakah Anda yakin ingin menghapus data ini dari seluruh KB? Silakan klik tombol konfirmasi di bawah."
+                    )
+                else:
+                    batch_link = f"[{target_kid}](/dashboard/knowledge/batch/{batch_id})" if batch_id else f"[{target_kid}](/dashboard/knowledge/{target_kid})"
+                    preview_text = (
+                        f"**Pratinjau Penghapusan Data Knowledge Base**\n\n"
+                        f"Berikut adalah rincian data yang akan dihapus:\n\n"
+                        + (f"- **Target Entitas / Item**: **{target_item}**\n" if target_item else "") +
+                        f"- **ID Dokumen**: {batch_link} — *{doc_title}*\n\n"
+                        f"Apakah Anda yakin ingin menghapus data ini? Silakan klik tombol konfirmasi di bawah."
+                    )
+
+                return QueryGeneralResponse(
+                    type="confirmation",
+                    message=preview_text,
+                    operation_id=str(op_id),
+                    prompt=user_prompt,
+                    answer=preview_text,
+                    action="delete_preview",
+                    target_knowledge_id=target_kid,
+                    total_found=len(matched_docs),
+                    results=[]
+                )
 
         # -------------------------------------------------------------
         # PHASE 3: Dedicated RAG Pipeline (READ)

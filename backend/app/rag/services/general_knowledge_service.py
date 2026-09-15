@@ -142,6 +142,95 @@ class GeneralKnowledgeService:
     """Dedicated service for performing safe, item-level CRUD operations on approved KB data."""
 
     @staticmethod
+    def detect_mutation_scope(user_prompt: str) -> str:
+        """
+        Detects whether the prompt explicitly requests GLOBAL scope across the entire Knowledge Base/all products.
+        Default scope is always SINGLE_ITEM unless explicit global keywords are present.
+        """
+        if not user_prompt:
+            return "SINGLE_ITEM"
+
+        global_keywords = [
+            r'\bdi\s+seluruh\s+kb\b',
+            r'\bdi\s+seluruh\s+knowledge\b',
+            r'\bdi\s+seluruh\s+dokumen\b',
+            r'\bdi\s+seluruh\s+database\b',
+            r'\bdi\s+semua\s+produk\b',
+            r'\bdi\s+semua\s+dokumen\b',
+            r'\bpada\s+semua\s+produk\b',
+            r'\bpada\s+seluruh\s+produk\b',
+            r'\bsemua\s+produk\b',
+            r'\bseluruh\s+produk\b',
+            r'\ball\s+products\b',
+            r'\bacross\s+the\s+knowledge\s+base\b',
+            r'\bacross\s+all\s+documents\b',
+        ]
+        prompt_low = user_prompt.lower()
+        for kw in global_keywords:
+            if re.search(kw, prompt_low):
+                return "GLOBAL"
+        return "SINGLE_ITEM"
+
+    @staticmethod
+    def log_mutation_summary(
+        operation_id: str,
+        action: str,  # "UPDATE" or "DELETE"
+        scope: str,   # "SINGLE_ITEM" or "GLOBAL"
+        knowledge_id: str,
+        entity_id: str,
+        target_name: str,
+        field: str,
+        old_value: Any,
+        new_value: Any,
+        affected_documents: int,
+        affected_entities: int,
+        chunks_old: int,
+        chunks_new: int,
+        canonical_status: str = "SUCCESS",
+        pgvector_status: str = "SUCCESS",
+        bm25_status: str = "SUCCESS",
+        retrieval_status: str = "SUCCESS",
+        status: str = "APPLIED"
+    ):
+        log_box = f"""
+============================================================
+GENERAL KNOWLEDGE MUTATION
+============================================================
+operation_id : {operation_id}
+action       : {action}
+scope        : {scope}
+
+TARGET
+------------------------------------------------------------
+knowledge_id : {knowledge_id}
+entity_id    : {entity_id or '-'}
+name         : {target_name}
+
+CHANGE
+------------------------------------------------------------
+field        : {field}
+old_value    : {old_value if old_value is not None else '-'}
+new_value    : {new_value if new_value is not None else '-'}
+
+AFFECTED
+------------------------------------------------------------
+documents    : {affected_documents}
+entities     : {affected_entities}
+chunks_old   : {chunks_old}
+chunks_new   : {chunks_new}
+
+RESULT
+------------------------------------------------------------
+canonical    : {canonical_status}
+pgvector     : {pgvector_status}
+bm25         : {bm25_status}
+retrieval    : {retrieval_status}
+status       : {status}
+============================================================
+"""
+        logger.info(log_box)
+
+    @staticmethod
     async def find_all_target_documents_and_item(
         query: str, output_dir: str = "data/output", db: Optional[Any] = None
     ) -> Optional[Tuple[str, List[Dict[str, Any]]]]:
@@ -710,7 +799,8 @@ class GeneralKnowledgeService:
         pipeline=None,
         target_item: Optional[str] = None,
         db=None,
-        auto_approve: bool = True
+        auto_approve: bool = True,
+        scope: str = "SINGLE_ITEM"
     ) -> Dict[str, Any]:
         """
         Applies a surgical, item-level edit to an approved KB document.
@@ -760,20 +850,37 @@ class GeneralKnowledgeService:
                 else:
                     old_value = existing_doc.get(clean_field) or existing_doc.get("metadata", {}).get(clean_field)
                     existing_doc[clean_field] = formatted_val
-                    if "metadata" not in existing_doc or not isinstance(existing_doc["metadata"], dict):
-                        existing_doc["metadata"] = {}
                     existing_doc["metadata"][clean_field] = formatted_val
 
             # Surgically update summary and chunks
             chunks = existing_doc.get("chunks", [])
-            clean_item_name = re.sub(r'^\*+|\*+$|^_+|_+$|^#+\s*', '', target_item.strip()).strip() if target_item else ""
+            raw_item_clean = target_item.strip() if target_item else ""
+            clean_item_name = re.sub(
+                r'^(?:kemasan\s+produk|kemasan\s+item|kemasan|produk|item|detail\s+produk|detail|bagian|treatment)\s+',
+                '',
+                raw_item_clean,
+                flags=re.IGNORECASE
+            ).strip()
+            clean_item_name = re.sub(
+                r'\s+(?:pada|di|dalam|untuk)\s+(?:dokumen|doc|file|kb|knowledge)?\s*[0-9a-fA-F\-]{8,}.*$',
+                '',
+                clean_item_name,
+                flags=re.IGNORECASE
+            ).strip()
+            clean_item_name = re.sub(
+                r'\s+(?:pada|di|dalam|untuk)\s+(?:dokumen|doc|file|kb|knowledge)\s+.*$',
+                '',
+                clean_item_name,
+                flags=re.IGNORECASE
+            ).strip()
+            clean_item_name = re.sub(r'^\*+|\*+$|^_+|_+$|^#+\s*', '', clean_item_name).strip()
             target_item_lower = clean_item_name.lower() if clean_item_name else None
 
             # 1. Update summary for target item
             curr_summary = existing_doc.get("summary", "")
             if curr_summary:
                 doc_title = str(existing_doc.get("title") or existing_doc.get("file_name") or "")
-                is_dedicated = bool(target_item and (target_item_lower in doc_title.lower() or doc_title.lower() in target_item_lower))
+                is_dedicated = bool(clean_item_name and (clean_item_name.lower() == doc_title.lower() or (len(doc_title) > 5 and doc_title.lower() in clean_item_name.lower())))
 
                 # Field synonym regex helper
                 field_synonyms = [re.escape(clean_field)]
@@ -808,7 +915,6 @@ class GeneralKnowledgeService:
                 )
 
                 if is_dedicated:
-                    # In a dedicated document, the entire document is about target_item
                     if is_name_rename:
                         existing_doc["title"] = formatted_val
                         if clean_item_name and clean_item_name.lower() in curr_summary.lower():
@@ -816,87 +922,51 @@ class GeneralKnowledgeService:
                         existing_doc["summary"] = curr_summary
                     else:
                         if bullet_attr_pattern.search(curr_summary):
-                            curr_summary = bullet_attr_pattern.sub(rf'\g<1>{formatted_val}', curr_summary)
+                            curr_summary = bullet_attr_pattern.sub(rf'\g<1>{formatted_val}', curr_summary, count=1)
                         else:
-                            if "## Informasi Produk" in curr_summary:
-                                curr_summary = re.sub(
-                                    r'(## Informasi Produk[^\n]*\n(?:[^\n]*\n)*?)(?=\n##|\Z)',
-                                    rf'\g<1>- **{field.capitalize()}:** {formatted_val}\n',
-                                    curr_summary
-                                )
-                            else:
-                                curr_summary = curr_summary.rstrip() + f"\n- **{field.capitalize()}:** {formatted_val}\n"
+                            curr_summary = curr_summary.rstrip() + f"\n- **{field.capitalize()}:** {formatted_val}\n"
                         existing_doc["summary"] = curr_summary
 
-                elif target_item and target_item_lower:
-                    escaped_item = re.escape(target_item.strip())
-                    # Heading section match: ## target_item ... until next same-level or higher heading
-                    item_section_pattern = re.compile(
-                        r'(#{1,4}\s*[^\n]*' + escaped_item + r'[^\n]*\n(?:(?!^#{1,2}\s)[^\n]*\n?)*)',
-                        re.MULTILINE | re.IGNORECASE
-                    )
-                    match = item_section_pattern.search(curr_summary)
-                    if match:
-                        section_text = match.group(1)
-                        if clean_field in ("price", "harga", "biaya"):
-                            clean_num = re.sub(r'^(?:rp\.?\s*)', '', formatted_val, flags=re.IGNORECASE).strip()
-                            price_pat = re.compile(
-                                r'(^[|\-\*]\s*\*+(?:harga|price|biaya|tarif)[:\*\s]+|^[|\-\*]\s*(?:harga|price|biaya|tarif)[:\s]+)(?:Rp\.?\s*)?[^\n\r]+',
-                                re.MULTILINE | re.IGNORECASE
-                            )
-                            if price_pat.search(section_text):
-                                section_text = price_pat.sub(rf'\g<1>Rp {clean_num}', section_text)
-                            else:
-                                section_text = section_text.rstrip() + f"\n- **Harga**: Rp {clean_num}\n\n"
-                        elif clean_field in ("sku", "kode", "kode_sku"):
-                            sku_pat = re.compile(
-                                r'(^[|\-\*]\s*\*+(?:sku|kode)[:\*\s]+|^[|\-\*]\s*(?:sku|kode)[:\s]+)[^\n\r]+',
-                                re.MULTILINE | re.IGNORECASE
-                            )
-                            if sku_pat.search(section_text):
-                                section_text = sku_pat.sub(rf'\g<1>{formatted_val}', section_text)
-                            else:
-                                section_text = section_text.rstrip() + f"\n- **SKU**: {formatted_val}\n\n"
-                        elif is_name_rename:
-                            section_text = re.sub(rf'\b{re.escape(clean_item_name)}\b', formatted_val, section_text, flags=re.IGNORECASE)
+                elif clean_item_name and target_item_lower:
+                    # Multi-product document: split into sections and isolate update to matched section
+                    sections = re.split(r'(?=\n#{1,4}\s+)', curr_summary)
+                    matched_idx = -1
+                    for idx, sec in enumerate(sections):
+                        if target_item_lower in sec.lower():
+                            matched_idx = idx
+                            break
+
+                    if matched_idx != -1:
+                        target_sec = sections[matched_idx]
+                        if is_name_rename:
+                            target_sec = re.sub(rf'\b{re.escape(clean_item_name)}\b', formatted_val, target_sec, flags=re.IGNORECASE)
                         else:
-                            if bullet_attr_pattern.search(section_text):
-                                section_text = bullet_attr_pattern.sub(rf'\g<1>{formatted_val}', section_text)
+                            if bullet_attr_pattern.search(target_sec):
+                                target_sec = bullet_attr_pattern.sub(rf'\g<1>{formatted_val}', target_sec, count=1)
                             else:
-                                section_text = section_text.rstrip() + f"\n- **{field.capitalize()}**: {formatted_val}\n\n"
-
-                        curr_summary = curr_summary[:match.start()] + section_text + curr_summary[match.end():]
+                                target_sec = target_sec.rstrip() + f"\n- **{field.capitalize()}**: {formatted_val}\n\n"
+                        sections[matched_idx] = target_sec
+                        curr_summary = "".join(sections)
                         existing_doc["summary"] = curr_summary
-
                     else:
-                        # 1B. Table row match: | target_item | ... |
-                        table_row_pattern = re.compile(rf'(^\s*\|\s*[^\n|]*{escaped_item}[^\n|]*\|)([^\n]+)$', re.MULTILINE | re.IGNORECASE)
+                        table_row_pattern = re.compile(rf'(^\s*\|\s*[^\n|]*{re.escape(clean_item_name)}[^\n|]*\|)([^\n]+)$', re.MULTILINE | re.IGNORECASE)
                         if table_row_pattern.search(curr_summary):
                             if is_name_rename:
                                 curr_summary = re.sub(rf'\b{re.escape(clean_item_name)}\b', formatted_val, curr_summary, flags=re.IGNORECASE)
                             else:
-                                curr_summary = table_row_pattern.sub(rf'\g<1> {formatted_val} |', curr_summary)
+                                curr_summary = table_row_pattern.sub(rf'\g<1> {formatted_val} |', curr_summary, count=1)
                             existing_doc["summary"] = curr_summary
-
-                        # 1C. Bullet key match: - **target_item**: ...
-                        elif bullet_key_pattern := re.search(rf'(^[|\-\*]\s*\*\*[^\*\n:]*{escaped_item}[^\*\n:]*\*\*\s*:\s*)[^\n]+', curr_summary, re.MULTILINE | re.IGNORECASE):
+                        elif bullet_key_pattern := re.search(rf'(^[|\-\*]\s*\*\*[^\*\n:]*{re.escape(clean_item_name)}[^\*\n:]*\*\*\s*:\s*)[^\n]+', curr_summary, re.MULTILINE | re.IGNORECASE):
                             curr_summary = re.sub(
-                                rf'(^[|\-\*]\s*\*\*[^\*\n:]*{escaped_item}[^\*\n:]*\*\*\s*:\s*)[^\n]+',
+                                rf'(^[|\-\*]\s*\*\*[^\*\n:]*{re.escape(clean_item_name)}[^\*\n:]*\*\*\s*:\s*)[^\n]+',
                                 rf'\g<1>{formatted_val}',
                                 curr_summary,
-                                flags=re.MULTILINE | re.IGNORECASE
+                                flags=re.MULTILINE | re.IGNORECASE,
+                                count=1
                             )
                             existing_doc["summary"] = curr_summary
 
-                        # 1D. Global replacement ONLY if explicitly renaming name or ingredient/composition without target_item
-                        elif (is_name_rename or is_ingredient_rename) and clean_item_name and clean_item_name.lower() in curr_summary.lower():
-                            curr_summary = re.sub(rf'\b{re.escape(clean_item_name)}\b', formatted_val, curr_summary, flags=re.IGNORECASE)
-                            existing_doc["summary"] = curr_summary
-                        elif not target_item and bullet_attr_pattern.search(curr_summary):
-                            curr_summary = bullet_attr_pattern.sub(rf'\g<1>{formatted_val}', curr_summary)
-                            existing_doc["summary"] = curr_summary
-
-            # 2. Update matching chunks
+            # 2. Update matching chunks ONLY
             for chunk in chunks:
                 if not isinstance(chunk, dict):
                     continue
@@ -906,8 +976,16 @@ class GeneralKnowledgeService:
 
                 chunk_text = chunk.get("text", "")
                 chunk_text_lower = chunk_text.lower()
+                chunk_prod_name = str(chunk["metadata"].get("product_name", "")).lower()
 
-                # Replace direct ingredient / keyword in chunk text if present ONLY for name or ingredient rename
+                chunk_belongs = True
+                if target_item_lower:
+                    if target_item_lower not in chunk_text_lower and target_item_lower not in chunk_prod_name:
+                        chunk_belongs = False
+
+                if not chunk_belongs:
+                    continue
+
                 if (is_name_rename or is_ingredient_rename) and clean_item_name and clean_item_name.lower() in chunk_text_lower:
                     chunk["text"] = re.sub(rf'\b{re.escape(clean_item_name)}\b', formatted_val, chunk_text, flags=re.IGNORECASE)
                     chunk_text = chunk["text"]
@@ -916,49 +994,10 @@ class GeneralKnowledgeService:
                         chunk["metadata"]["product_name"] = formatted_val
                         chunk["metadata"]["entity"] = formatted_val
 
-                # If target_item is specified, skip chunks that do not belong to this item
-                if target_item_lower and target_item_lower not in chunk_text_lower:
-                    continue
-
-                # Apply field metadata to matching chunk
-                chunk["metadata"][clean_field] = formatted_val
-
-                # Update chunk text
-                escaped_item = re.escape(target_item.strip()) if target_item else ""
-                if clean_field in ("price", "harga", "biaya"):
-                    clean_num = re.sub(r'^(?:rp\.?\s*)', '', formatted_val, flags=re.IGNORECASE).strip()
-                    price_pattern = re.compile(r'(^[|\-\*]\s*\*+(?:harga|price|biaya|tarif)[:\*\s]+|^[|\-\*]\s*(?:harga|price|biaya|tarif)[:\s]+)(?:Rp\.?\s*)?[^\n\r]+', re.MULTILINE | re.IGNORECASE)
-                    if price_pattern.search(chunk_text):
-                        chunk["text"] = price_pattern.sub(rf'\g<1>Rp {clean_num}', chunk_text)
-                    elif not re.match(r'^#{1,3}\s+[^\n]+$', chunk_text.strip()):
-                        chunk["text"] = chunk_text.strip() + f"\n- **Harga**: Rp {clean_num}"
-                elif clean_field in ("sku", "kode_sku", "kode"):
-                    sku_pattern = re.compile(r'(^[|\-\*]\s*\*+(?:sku|kode)[:\*\s]+|^[|\-\*]\s*(?:sku|kode)[:\s]+)[^\n\r]+', re.MULTILINE | re.IGNORECASE)
-                    if sku_pattern.search(chunk_text):
-                        chunk["text"] = sku_pattern.sub(rf'\g<1>{formatted_val}', chunk_text)
-                    elif not re.match(r'^#{1,3}\s+[^\n]+$', chunk_text.strip()):
-                        chunk["text"] = chunk_text.strip() + f"\n- **SKU**: {formatted_val}"
-                elif escaped_item:
-                    # Check table row in chunk
-                    t_pattern = re.compile(rf'(^\s*\|\s*[^\n|]*{escaped_item}[^\n|]*\|)([^\n]+)$', re.MULTILINE | re.IGNORECASE)
-                    if t_pattern.search(chunk_text):
-                        if is_name_rename or is_ingredient_rename:
-                            chunk["text"] = re.sub(rf'\b{re.escape(clean_item_name)}\b', formatted_val, chunk_text, flags=re.IGNORECASE)
-                        else:
-                            chunk["text"] = t_pattern.sub(rf'\g<1> {formatted_val} |', chunk_text)
-                    else:
-                        b_pattern = re.compile(rf'(^[|\-\*]\s*\*\*[^\*\n:]*{escaped_item}[^\*\n:]*\*\*\s*:\s*)[^\n]+', re.MULTILINE | re.IGNORECASE)
-                        if b_pattern.search(chunk_text):
-                            chunk["text"] = b_pattern.sub(rf'\g<1>{formatted_val}', chunk_text)
-                        elif not target_item and bullet_attr_pattern.search(chunk_text):
-                            chunk["text"] = bullet_attr_pattern.sub(rf'\g<1>{formatted_val}', chunk_text)
-                        elif not re.match(r'^#{1,3}\s+[^\n]+$', chunk_text.strip()):
-                            chunk["text"] = chunk_text.strip() + f"\n- **{field.capitalize()}**: {formatted_val}"
+                if bullet_attr_pattern.search(chunk_text):
+                    chunk["text"] = bullet_attr_pattern.sub(rf'\g<1>{formatted_val}', chunk_text, count=1)
                 else:
-                    if bullet_attr_pattern.search(chunk_text):
-                        chunk["text"] = bullet_attr_pattern.sub(rf'\g<1>{formatted_val}', chunk_text)
-                    elif not re.match(r'^#{1,3}\s+[^\n]+$', chunk_text.strip()):
-                        chunk["text"] = chunk_text.strip() + f"\n- **{field.capitalize()}**: {formatted_val}"
+                    chunk["text"] = chunk_text.strip() + f"\n- **{field.capitalize()}**: {formatted_val}"
 
             # Synchronize last assistant turn in staging_history/history if present
             curr_summary = existing_doc.get("summary", "")
@@ -1169,6 +1208,26 @@ class GeneralKnowledgeService:
                         pass
 
                 logger.info(f"[DedicatedService] Auto-approved edit for '{doc_kid}'. Data immediately retrievable by RAG.")
+                GeneralKnowledgeService.log_mutation_summary(
+                    operation_id=f"op_{doc_kid[:8]}",
+                    action="UPDATE",
+                    scope=scope,
+                    knowledge_id=doc_kid,
+                    entity_id=clean_item_name or doc_kid,
+                    target_name=clean_item_name or existing_doc.get("title", doc_kid),
+                    field=clean_field,
+                    old_value=str(old_value)[:200] if old_value else None,
+                    new_value=formatted_val,
+                    affected_documents=1,
+                    affected_entities=1,
+                    chunks_old=len(backup_doc.get("chunks", [])),
+                    chunks_new=len(existing_doc.get("chunks", [])),
+                    canonical_status="SUCCESS",
+                    pgvector_status="SUCCESS",
+                    bm25_status="SUCCESS",
+                    retrieval_status="SUCCESS",
+                    status="APPLIED"
+                )
                 return {
                     "success": True,
                     "knowledge_id": doc_kid,
@@ -1215,7 +1274,8 @@ class GeneralKnowledgeService:
         vector_store=None,
         bm25_index=None,
         target_item: Optional[str] = None,
-        db=None
+        db=None,
+        scope: str = "SINGLE_ITEM"
     ) -> Dict[str, Any]:
         """
         Deletes a KB document or surgically deletes a specific item within a multi-item document.

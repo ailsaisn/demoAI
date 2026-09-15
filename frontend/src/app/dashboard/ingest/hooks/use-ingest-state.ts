@@ -101,11 +101,12 @@ export function useIngestState() {
 						upload_batch_id?: string;
 						documents?: { knowledge_id: string }[];
 					}) => {
-						const batchId = data.batch_id || data.upload_batch_id;
+						const batchId = (data.batch_id || data.upload_batch_id || "").trim();
+						const kid = (data.documents?.[0]?.knowledge_id || "").trim();
 						if (batchId) {
 							router.push(`/dashboard/knowledge/batch/${batchId}`);
-						} else if (data.documents && data.documents.length > 0) {
-							router.push(`/dashboard/knowledge/${data.documents[0].knowledge_id}`);
+						} else if (kid) {
+							router.push(`/dashboard/knowledge/${kid}`);
 						} else if (targetProject) {
 							router.push(`/dashboard/knowledge/project/${targetProject}`);
 						} else {
@@ -133,8 +134,9 @@ export function useIngestState() {
 			},
 			{
 				onSuccess: (data) => {
-					if (data.knowledge_id) {
-						router.push(`/dashboard/knowledge/${data.knowledge_id}`);
+					const textKid = (data.knowledge_id || "").trim();
+					if (textKid) {
+						router.push(`/dashboard/knowledge/${textKid}`);
 					} else if (targetProject) {
 						router.push(`/dashboard/knowledge/project/${targetProject}`);
 					} else {
