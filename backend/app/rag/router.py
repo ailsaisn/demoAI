@@ -1257,15 +1257,18 @@ Your tasks:
        ### Detail Produk
        ![Nama Produk Lengkap](URL_GAMBAR)
        - **Nama Produk**: Nama Produk Lengkap
-       - **SKU**: Nomor SKU (jika ada, misal: ERHA-TRU-001)
-       - **Brand**: ERHA
-       - **Kategori**: Kategori Produk (misal: Sabun Wajah Jerawat)
-       - **Ukuran**: 100 g
-       - **Harga**: Rp ... (jika ada)
-       - **Deskripsi**: Penjelasan singkat manfaat dan kegunaan produk.
+       - **Brand**: Brand Produk (hanya jika ada di dokumen)
+       - **Kategori**: Kategori Produk (hanya jika ada di dokumen)
+       - **Ukuran**: Ukuran/Netto (hanya jika ada di dokumen)
+       - **Harga**: Harga Produk (hanya jika ada di dokumen)
+       - **Deskripsi**: Penjelasan singkat manfaat dan kegunaan produk (jika ada).
        ```
      * NEVER separate product catalogs into a plain text table with photos dumped at the bottom. Keep each photo directly inside its corresponding `### Detail Produk` block.
-     * If a product has no image in the source document, omit the image tag for that product block (or put no image), but still format it as a `### Detail Produk` block with key-value bullet points.
+     * If a product has no image in the source document, omit the image tag for that product block, but still format it as a `### Detail Produk` block with key-value bullet points.
+   - STRICT ZERO-HALLUCINATION & FACTUAL ACCURACY RULE FOR PRODUCT ATTRIBUTES (CRITICAL):
+     * SKU RULE: ONLY include the `- **SKU**: [Nomor SKU]` line IF AND ONLY IF an explicit SKU code or number is written in the source document. If NO SKU code/number is explicitly written in the source document, YOU MUST COMPLETELY OMIT THE `- **SKU**:` LINE ENTIRELY! DO NOT INVENT, FABRICATE, GENERATE, OR GUESS ANY SKU CODE (e.g. NEVER create ERHA-ACNE-001, ERHA-TRU-001, or any random code).
+     * ATTRIBUTE ACCURACY: ONLY include attribute bullet lines (`Brand`, `Kategori`, `Ukuran`, `Harga`, `Deskripsi`) for values that are EXPLICITLY present in the source document. Do NOT invent missing values or fabricate categories.
+     * NON-PRODUCT DOCUMENTS RULE: If the document is a Technical Design Document, SOP, FAQ, operational manual, or general report (NOT a product catalog): DO NOT format content into `### Detail Produk` blocks. Use clean, standard Markdown headings (`##`, `###`) reflecting the actual document sections.
    - EXCEL & SPREADSHEET TABLE PRESERVATION:
      * For non-product SPREADSHEET / CSV files: PRESERVE AND KEEP TABLES AS MARKDOWN (`| Col 1 | Col 2 |`).
      * IMAGE CAPTION & LEGEND PLACEMENT: For images inside or associated with tables/sections, place the markdown image tag `![Alt Text](IMAGE_URL)` cleanly, and place any caption, legend, or description text DIRECTLY BELOW the image tag.
@@ -1279,7 +1282,7 @@ Your tasks:
        
        ![Deskripsi Gambar](IMAGE_URL)
        
-   - GROUNDING RULE: Preserve all factual details (product names, active ingredients, usage steps, warnings, prices, SKUs) from the raw content, but adhere strictly to any modifications, exclusions, or additions requested in the ADMIN INGESTION INSTRUCTION.
+   - GROUNDING RULE: Preserve all factual details from the raw content, but adhere strictly to any modifications, exclusions, or additions requested in the ADMIN INGESTION INSTRUCTION.
 2. **DETECT METADATA**:
    - title: Short, clean professional document title inferred from content and admin instruction (without file extension or "Knowledge Base" prefixes).
    - document_type: "PRODUCT" | "TREATMENT" | "PROMOTIONAL" | "SOP" | "GENERAL"
@@ -2621,12 +2624,13 @@ EDITING GUIDELINES:
      ### Detail Produk
      ![Nama Produk Lengkap](URL_GAMBAR)
      - **Nama Produk**: Nama Produk Lengkap
-     - **Brand**: ERHA
-     - **Kategori**: Kategori Produk (misal: Sabun Wajah Jerawat)
-     - **Ukuran**: 100 g
-     - **Harga**: Rp ... (jika ada)
+     - **Brand**: Brand Produk (hanya jika ada)
+     - **Kategori**: Kategori Produk (hanya jika ada)
+     - **Ukuran**: Ukuran/Netto (hanya jika ada)
+     - **Harga**: Harga Produk (hanya jika ada)
      - **Deskripsi**: Penjelasan manfaat dan kegunaan produk.
      ```
+   - STRICT ZERO-HALLUCINATION RULE: ONLY include `- **SKU**:` IF AND ONLY IF an explicit SKU code/number is stated in the source document or explicitly instructed by Admin. NEVER fabricate SKU numbers (e.g. do NOT invent ERHA-ACNE-001).
    - Intelligently embed each image into its most relevant section or product block.
    - NEVER create any "Asset Media dari File Terlampir" heading or list of raw media assets at the end of the summary. Embed the attached image URL ONLY where it belongs.
 3. **DELETION OF SECTIONS, PRODUCTS & IMAGES RULE**:
