@@ -30,22 +30,22 @@ except ImportError:
 
 def _images_bucket() -> str:
     """Bucket for embedded images extracted from documents."""
-    return os.getenv("S3_BUCKET") or settings.S3_BUCKET or "images"
+    return os.getenv("S3_BUCKET") or settings.S3_BUCKET or "skin-clinic-chatbot-dev"
 
 
 def _docs_bucket() -> str:
-    """Bucket for original uploaded documents and canonical JSON."""
-    return os.getenv("S3_DOCUMENTS_BUCKET") or settings.S3_DOCUMENTS_BUCKET or "knowledge-documents"
+    """Bucket for original uploaded documents and canonical JSON. Defaults to S3_BUCKET."""
+    return os.getenv("S3_DOCUMENTS_BUCKET") or getattr(settings, "S3_DOCUMENTS_BUCKET", None) or _images_bucket()
 
 
 def _staging_bucket() -> str:
-    """Bucket for staging/pending JSON documents under review."""
-    return os.getenv("S3_STAGING_BUCKET") or getattr(settings, "S3_STAGING_BUCKET", "staging") or "staging"
+    """Bucket for staging/pending JSON documents under review. Defaults to S3_BUCKET."""
+    return os.getenv("S3_STAGING_BUCKET") or getattr(settings, "S3_STAGING_BUCKET", None) or _images_bucket()
 
 
 def _approved_bucket() -> str:
-    """Bucket for approved/published canonical JSON documents."""
-    return os.getenv("S3_APPROVED_BUCKET") or getattr(settings, "S3_APPROVED_BUCKET", "approved") or "approved"
+    """Bucket for approved/published canonical JSON documents. Defaults to S3_BUCKET."""
+    return os.getenv("S3_APPROVED_BUCKET") or getattr(settings, "S3_APPROVED_BUCKET", None) or _images_bucket()
 
 
 # ─── S3 Client & Error Diagnostics Tracker ─────────────────────────────────────
@@ -298,15 +298,11 @@ def _build_static_image_url(bucket_name: str, s3_key: str) -> str:
 
 
 def ensure_all_buckets() -> None:
-    """Initialize all buckets at application startup."""
-    _ensure_images_bucket()
-    _ensure_docs_bucket()
-    _ensure_staging_bucket()
-    _ensure_approved_bucket()
-    logger.info(
-        f"Storage buckets initialized: '{_images_bucket()}', "
-        f"'{_docs_bucket()}', '{_staging_bucket()}', '{_approved_bucket()}'"
-    )
+    """Initialize all buckets at application startup (deduplicated for single-bucket mode)."""
+    buckets_to_ensure = set([_images_bucket(), _docs_bucket(), _staging_bucket(), _approved_bucket()])
+    for b in buckets_to_ensure:
+        _ensure_bucket_private(b)
+    logger.info(f"Storage bucket(s) initialized: {', '.join(sorted(buckets_to_ensure))}")
     # Sync any pre-existing local disk pending/output files into MinIO source of truth
     sync_existing_local_to_minio()
 
@@ -363,12 +359,19 @@ def is_valid_storage_asset(s3_key_or_url: str) -> bool:
             if os.path.exists(local_path) and os.path.isfile(local_path):
                 return True
 
-    # 2. Check MinIO S3 object storage
+    # 2. Check S3 object storage
     try:
         client = _get_client()
         if client:
-            client.head_object(Bucket=_images_bucket(), Key=clean_key)
-            return True
+            s3_candidates = [clean_key]
+            if not clean_key.startswith("images/"):
+                s3_candidates.append(f"images/{clean_key}")
+            for cand in s3_candidates:
+                try:
+                    client.head_object(Bucket=_images_bucket(), Key=cand)
+                    return True
+                except Exception:
+                    continue
     except Exception:
         pass
 
@@ -678,7 +681,8 @@ def get_s3_object_stream(s3_key: str, chunk_size: int = 65536) -> tuple:
         else:
             candidates.append(f"images/{clean_key}")
 
-        for bucket in [_images_bucket(), _docs_bucket(), _staging_bucket(), _approved_bucket()]:
+        unique_search_buckets = list(dict.fromkeys([_images_bucket(), _docs_bucket(), _staging_bucket(), _approved_bucket()]))
+        for bucket in unique_search_buckets:
             for cand in candidates:
                 try:
                     resp = client.get_object(Bucket=bucket, Key=cand)
@@ -750,7 +754,8 @@ def get_s3_object_data(s3_key: str) -> tuple:
         else:
             candidates.append(f"images/{clean_key}")
 
-        for bucket in [_images_bucket(), _docs_bucket(), _staging_bucket(), _approved_bucket()]:
+        unique_search_buckets = list(dict.fromkeys([_images_bucket(), _docs_bucket(), _staging_bucket(), _approved_bucket()]))
+        for bucket in unique_search_buckets:
             for cand in candidates:
                 try:
                     resp = client.get_object(Bucket=bucket, Key=cand)
@@ -1095,16 +1100,18 @@ def upload_canonical_json(document_id: str, canonical_data: dict) -> dict:
 
 def upload_staging_json(knowledge_id: str, data: dict) -> dict:
     """
-    Uploads staging JSON to MinIO bucket 'staging' as source of truth.
+    Uploads staging JSON to S3 bucket 'staging' (or prefix 'staging/' in single-bucket mode) as source of truth.
     Mirrors to local disk cache 'data/pending/{knowledge_id}.json'.
     """
-    s3_key = f"{knowledge_id}.json"
     bucket_name = _staging_bucket()
+    # In single-bucket mode, prefix with staging/ to avoid root collisions
+    is_single_bucket = (bucket_name == _images_bucket())
+    s3_key = f"staging/{knowledge_id}.json" if is_single_bucket else f"{knowledge_id}.json"
 
     # Mirror to local disk cache
     try:
         os.makedirs("data/pending", exist_ok=True)
-        local_path = os.path.join("data/pending", s3_key)
+        local_path = os.path.join("data/pending", f"{knowledge_id}.json")
         with open(local_path, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2, ensure_ascii=False)
     except Exception as e:
@@ -1131,29 +1138,30 @@ def upload_staging_json(knowledge_id: str, data: dict) -> dict:
 
 def get_staging_json(knowledge_id: str) -> Optional[dict]:
     """
-    Retrieves staging JSON from MinIO 'staging' bucket (source of truth).
-    If found in MinIO, updates/refreshes local disk cache in 'data/pending/{knowledge_id}.json'.
-    Falls back to local disk if MinIO is offline or object not found in MinIO.
+    Retrieves staging JSON from S3 'staging' bucket/prefix (source of truth).
+    If found in S3, updates/refreshes local disk cache in 'data/pending/{knowledge_id}.json'.
+    Falls back to local disk if S3 is offline or object not found.
     """
-    s3_key = f"{knowledge_id}.json"
     bucket_name = _staging_bucket()
     client = _get_client()
 
     if client:
-        try:
-            resp = client.get_object(Bucket=bucket_name, Key=s3_key)
-            raw = resp["Body"].read().decode("utf-8")
-            data = json.loads(raw)
-            # Update local disk cache
+        candidate_keys = [f"staging/{knowledge_id}.json", f"{knowledge_id}.json", f"staging/{knowledge_id}_parsed.json", f"{knowledge_id}_parsed.json"]
+        for s3_key in candidate_keys:
             try:
-                os.makedirs("data/pending", exist_ok=True)
-                with open(os.path.join("data/pending", s3_key), "w", encoding="utf-8") as f:
-                    f.write(raw)
+                resp = client.get_object(Bucket=bucket_name, Key=s3_key)
+                raw = resp["Body"].read().decode("utf-8")
+                data = json.loads(raw)
+                # Update local disk cache
+                try:
+                    os.makedirs("data/pending", exist_ok=True)
+                    with open(os.path.join("data/pending", f"{knowledge_id}.json"), "w", encoding="utf-8") as f:
+                        f.write(raw)
+                except Exception:
+                    pass
+                return data
             except Exception:
-                pass
-            return data
-        except Exception:
-            pass
+                continue
 
     # Fallback to local disk cache
     for candidate in [
@@ -1172,17 +1180,18 @@ def get_staging_json(knowledge_id: str) -> Optional[dict]:
 
 def upload_approved_json(knowledge_id: str, data: dict) -> dict:
     """
-    Uploads approved JSON to MinIO bucket 'approved' as source of truth.
+    Uploads approved JSON to S3 bucket 'approved' (or prefix 'approved/' in single-bucket mode) as source of truth.
     Mirrors to local disk cache 'data/output/{knowledge_id}.json'.
     Also maintains backward compatibility with canonical JSON in docs bucket.
     """
-    s3_key = f"{knowledge_id}.json"
     bucket_name = _approved_bucket()
+    is_single_bucket = (bucket_name == _images_bucket())
+    s3_key = f"approved/{knowledge_id}.json" if is_single_bucket else f"{knowledge_id}.json"
 
     # Mirror to local disk cache
     try:
         os.makedirs("data/output", exist_ok=True)
-        local_path = os.path.join("data/output", s3_key)
+        local_path = os.path.join("data/output", f"{knowledge_id}.json")
         with open(local_path, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2, ensure_ascii=False)
     except Exception as e:
@@ -1214,29 +1223,36 @@ def upload_approved_json(knowledge_id: str, data: dict) -> dict:
 
 def get_approved_json(knowledge_id: str) -> Optional[dict]:
     """
-    Retrieves approved JSON from MinIO 'approved' bucket (source of truth).
-    If found in MinIO, updates/refreshes local disk cache in 'data/output/{knowledge_id}.json'.
-    Falls back to local disk if MinIO is offline.
+    Retrieves approved JSON from S3 'approved' bucket/prefix (source of truth).
+    If found in S3, updates/refreshes local disk cache in 'data/output/{knowledge_id}.json'.
+    Falls back to local disk if S3 is offline.
     """
-    s3_key = f"{knowledge_id}.json"
     bucket_name = _approved_bucket()
     client = _get_client()
 
     if client:
-        try:
-            resp = client.get_object(Bucket=bucket_name, Key=s3_key)
-            raw = resp["Body"].read().decode("utf-8")
-            data = json.loads(raw)
-            # Update local disk cache
+        candidate_keys = [
+            f"approved/{knowledge_id}.json",
+            f"canonical/{knowledge_id}/document.json",
+            f"{knowledge_id}.json",
+            f"approved/{knowledge_id}_parsed.json",
+            f"{knowledge_id}_parsed.json"
+        ]
+        for s3_key in candidate_keys:
             try:
-                os.makedirs("data/output", exist_ok=True)
-                with open(os.path.join("data/output", s3_key), "w", encoding="utf-8") as f:
-                    f.write(raw)
+                resp = client.get_object(Bucket=bucket_name, Key=s3_key)
+                raw = resp["Body"].read().decode("utf-8")
+                data = json.loads(raw)
+                # Update local disk cache
+                try:
+                    os.makedirs("data/output", exist_ok=True)
+                    with open(os.path.join("data/output", f"{knowledge_id}.json"), "w", encoding="utf-8") as f:
+                        f.write(raw)
+                except Exception:
+                    pass
+                return data
             except Exception:
-                pass
-            return data
-        except Exception:
-            pass
+                continue
 
     # Fallback to local disk cache
     for candidate in [
@@ -1256,8 +1272,8 @@ def get_approved_json(knowledge_id: str) -> Optional[dict]:
 def promote_staging_to_approved(knowledge_id: str, data: dict) -> dict:
     """
     Promotes document from staging to approved:
-    1. Uploads to MinIO 'approved' bucket and writes 'data/output/{knowledge_id}.json'.
-    2. Deletes from MinIO 'staging' bucket and deletes 'data/pending/{knowledge_id}.json'.
+    1. Uploads to S3 'approved' bucket/prefix and writes 'data/output/{knowledge_id}.json'.
+    2. Deletes from S3 'staging' bucket/prefix and deletes 'data/pending/{knowledge_id}.json'.
     """
     res = upload_approved_json(knowledge_id, data)
     delete_staging_json(knowledge_id)
@@ -1265,25 +1281,32 @@ def promote_staging_to_approved(knowledge_id: str, data: dict) -> dict:
 
 
 def delete_staging_json(knowledge_id: str) -> None:
-    """Deletes staging JSON from MinIO 'staging' bucket and local pending cache."""
+    """Deletes staging JSON from S3 'staging' bucket/prefix and local pending cache."""
     client = _get_client()
     bucket = _staging_bucket()
     if client:
-        for s3_k in [f"{knowledge_id}.json", f"{knowledge_id}_parsed.json"]:
+        candidate_keys = [
+            f"staging/{knowledge_id}.json",
+            f"{knowledge_id}.json",
+            f"staging/{knowledge_id}_parsed.json",
+            f"{knowledge_id}_parsed.json"
+        ]
+        for s3_k in candidate_keys:
             try:
                 client.delete_object(Bucket=bucket, Key=s3_k)
-                logger.info(f"Deleted staging JSON '{s3_k}' from MinIO '{bucket}'")
+                logger.info(f"Deleted staging JSON '{s3_k}' from S3 '{bucket}'")
             except Exception as e:
-                logger.debug(f"Failed to delete staging JSON from MinIO: {e}")
+                logger.debug(f"Failed to delete staging JSON '{s3_k}' from S3: {e}")
         try:
             paginator = client.get_paginator('list_objects_v2')
-            for page in paginator.paginate(Bucket=bucket, Prefix=str(knowledge_id)):
-                for obj in page.get('Contents', []):
-                    try:
-                        client.delete_object(Bucket=bucket, Key=obj['Key'])
-                        logger.info(f"Deleted staging object '{obj['Key']}' from MinIO '{bucket}'")
-                    except Exception:
-                        pass
+            for prefix_cand in [f"staging/{knowledge_id}", str(knowledge_id)]:
+                for page in paginator.paginate(Bucket=bucket, Prefix=prefix_cand):
+                    for obj in page.get('Contents', []):
+                        try:
+                            client.delete_object(Bucket=bucket, Key=obj['Key'])
+                            logger.info(f"Deleted staging object '{obj['Key']}' from S3 '{bucket}'")
+                        except Exception:
+                            pass
         except Exception:
             pass
 
@@ -1299,25 +1322,33 @@ def delete_staging_json(knowledge_id: str) -> None:
 
 
 def delete_approved_json(knowledge_id: str) -> None:
-    """Deletes approved JSON from MinIO 'approved' bucket and local output cache."""
+    """Deletes approved JSON from S3 'approved' bucket/prefix and local output cache."""
     client = _get_client()
     bucket = _approved_bucket()
     if client:
-        for s3_k in [f"{knowledge_id}.json", f"{knowledge_id}_parsed.json"]:
+        candidate_keys = [
+            f"approved/{knowledge_id}.json",
+            f"canonical/{knowledge_id}/document.json",
+            f"{knowledge_id}.json",
+            f"approved/{knowledge_id}_parsed.json",
+            f"{knowledge_id}_parsed.json"
+        ]
+        for s3_k in candidate_keys:
             try:
                 client.delete_object(Bucket=bucket, Key=s3_k)
-                logger.info(f"Deleted approved JSON '{s3_k}' from MinIO '{bucket}'")
+                logger.info(f"Deleted approved JSON '{s3_k}' from S3 '{bucket}'")
             except Exception as e:
-                logger.debug(f"Failed to delete approved JSON from MinIO: {e}")
+                logger.debug(f"Failed to delete approved JSON '{s3_k}' from S3: {e}")
         try:
             paginator = client.get_paginator('list_objects_v2')
-            for page in paginator.paginate(Bucket=bucket, Prefix=str(knowledge_id)):
-                for obj in page.get('Contents', []):
-                    try:
-                        client.delete_object(Bucket=bucket, Key=obj['Key'])
-                        logger.info(f"Deleted approved object '{obj['Key']}' from MinIO '{bucket}'")
-                    except Exception:
-                        pass
+            for prefix_cand in [f"approved/{knowledge_id}", f"canonical/{knowledge_id}", str(knowledge_id)]:
+                for page in paginator.paginate(Bucket=bucket, Prefix=prefix_cand):
+                    for obj in page.get('Contents', []):
+                        try:
+                            client.delete_object(Bucket=bucket, Key=obj['Key'])
+                            logger.info(f"Deleted approved object '{obj['Key']}' from S3 '{bucket}'")
+                        except Exception:
+                            pass
         except Exception:
             pass
 
