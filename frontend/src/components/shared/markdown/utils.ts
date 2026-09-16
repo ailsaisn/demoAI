@@ -18,11 +18,31 @@ export function resolveImageUrl(src?: string | null): string {
 	) {
 		return encodeURI(decodeURI(trimmed));
 	}
+
 	const backendBase = (process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api").replace(
 		/\/api\/?$/,
 		"",
 	);
-	const fullUrl = trimmed.startsWith("/") ? `${backendBase}${trimmed}` : `${backendBase}/${trimmed}`;
+
+	// Normalize storage / images paths to /api/storage/...
+	let normalizedPath = trimmed;
+	if (normalizedPath.startsWith("/api/storage/")) {
+		// already standard /api/storage/...
+	} else if (normalizedPath.startsWith("api/storage/")) {
+		normalizedPath = `/${normalizedPath}`;
+	} else if (normalizedPath.startsWith("/storage/")) {
+		normalizedPath = `/api${normalizedPath}`;
+	} else if (normalizedPath.startsWith("storage/")) {
+		normalizedPath = `/api/${normalizedPath}`;
+	} else if (normalizedPath.startsWith("/images/")) {
+		normalizedPath = `/api/storage${normalizedPath}`;
+	} else if (normalizedPath.startsWith("images/")) {
+		normalizedPath = `/api/storage/${normalizedPath}`;
+	} else if (!normalizedPath.startsWith("/")) {
+		normalizedPath = `/${normalizedPath}`;
+	}
+
+	const fullUrl = `${backendBase}${normalizedPath}`;
 	return encodeURI(decodeURI(fullUrl));
 }
 
@@ -133,6 +153,16 @@ export function stripInternalMetadata(text?: string | null): string {
 	);
 	cleaned = cleaned.replace(
 		/---\s*NEWLY ATTACHED SUPPLEMENTARY FILE:\s*['"]?[^'"\n]+['"]?\s*---[\s\S]*?---\s*END OF ATTACHED FILE CONTENT\s*---/gi,
+		"",
+	);
+	cleaned = cleaned.replace(
+		/\[(?:ATTACHED MEDIA ASSET URLS|ATTACHED IMAGE AVAILABLE|INSTRUCTION FOR IMAGE REPLACEMENT)[\s\S]*?\]/gi,
+		"",
+	);
+
+	// Strip raw attached media asset headers e.g. ### Asset Media dari File Terlampir:
+	cleaned = cleaned.replace(
+		/(?:###?|\*\*)\s*(?:Asset Media dari File Terlampir|Asset Media|Media Assets|File Terlampir)[^\n]*[\s\S]*?(?=\n#{1,3}\s+|\n\*\*[^*]+\*\*|$)/gi,
 		"",
 	);
 

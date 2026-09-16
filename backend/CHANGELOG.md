@@ -2,6 +2,36 @@
 
 All notable changes to the Arya Noble AI Chatbot Backend are documented in this file.
 
+## [1.4.0] - 2026-09-14
+
+### AWS S3 IRSA Authentication, Storage Diagnostics & Clean Relative Image Paths
+- **AWS S3 IRSA & IAM Credential Chain (`app/services/storage.py`, `app/core/config.py`)**:
+  - Implemented dynamic authentication detection for AWS EKS IRSA (`AWS_ROLE_ARN`, `AWS_WEB_IDENTITY_TOKEN_FILE`) without requiring static keys or secret configs.
+  - Made `S3_ENDPOINT_URL`, `S3_ACCESS_KEY`, and `S3_SECRET_KEY` optional to auto-detect AWS S3 virtual-hosted addressing vs local MinIO path-style addressing.
+  - Added resilient error handling around bucket initialization so IRSA roles without `CreateBucket`/`PutBucketPolicy` permissions initialize seamlessly.
+- **FastAPI Storage Diagnostic Endpoints (`app/api/routers/storage.py`)**:
+  - Added `GET /api/storage/debug/health` to probe authentication mode, AWS environment variables, and bucket connectivity/permissions (`s3:GetObject`, `s3:ListBucket`).
+  - Added `GET /api/storage/debug/diagnose?key=...` for step-by-step resolution tracing of specific image keys across S3 buckets and local disk.
+- **Clean Relative Image Paths & Formatting (`app/services/storage.py`, `app/rag/services/rag_generator.py`)**:
+  - Reverted forced absolute domain prefixes in markdown, normalizing image tags to clean, portable `/api/storage/images/...` endpoints.
+  - Frontend `resolveImageUrl` seamlessly binds `NEXT_PUBLIC_API_URL` to relative storage paths.
+
+---
+
+## [1.3.9] - 2026-09-11
+
+### Revert Category Settings to Unified Per-Knowledge Document Level
+- **Unified Knowledge Categories (`app/api/routers/knowledge.py`, `app/rag/router.py`, `app/rag/utils/summary_chunker.py`)**:
+  - Reverted category management from chunk-level / section-level selection back to document-level configuration.
+  - In `app/rag/router.py` (`approve_document`, `edit_approved_document`, `edit_pending_document`), removed custom per-section category preservation and ensured all chunks uniformly inherit document categories.
+  - In `app/rag/utils/summary_chunker.py`, simplified `_build_chunk_meta` so all structural chunks receive the full list of document categories uniformly.
+  - In `app/api/routers/knowledge.py`, removed chunk-level category aggregation and directly used `payload.categories` as the source of truth, cascading categories to all database chunk metadata.
+- **Frontend Category Settings (`category-settings.tsx`, `chat-preview.tsx`, `types.ts`)**:
+  - Replaced `SectionCategoriesEditor` with `CategorySettings` across all Knowledge detail, preview, pending, and approved editing screens.
+  - Removed per-chunk category derivation from `extractKnowledgeCategories`.
+
+---
+
 ## [1.3.8] - 2026-09-11
 
 ### General Chat Confirmation Standardization & English Default Messages

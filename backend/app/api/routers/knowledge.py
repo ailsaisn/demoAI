@@ -24,7 +24,12 @@ from app.schemas.knowledge import (
     GeneralChatSessionResponse, GeneralChatMessageItem, GeneralChatMessageSendRequest,
     BatchVisibilityUpdateRequest
 )
-from app.services.token_service import check_ingestion_quota, record_ingestion_token_usage
+from app.services.token_service import (
+    check_ingestion_quota,
+    record_ingestion_token_usage,
+    record_chat_token_usage
+)
+from app.core.token_counter import count_chat_prompt_tokens, count_chat_completion_tokens
 from datetime import datetime, timezone, timedelta
 
 from app.rag.deps import get_ingestion_pipeline, get_llm, get_bm25_index, get_vector_store, get_generation_pipeline
@@ -313,6 +318,20 @@ async def send_general_chat_message(
     )
     db.add(assistant_db_msg)
     await db.commit()
+
+    # Record token usage for the active user
+    in_tokens = count_chat_prompt_tokens(
+        user_query=payload.prompt,
+        history=history_payload
+    )
+    out_tokens = count_chat_completion_tokens(ai_res.answer or "")
+    await record_chat_token_usage(
+        db=db,
+        user_id=current_user.id,
+        branch_id=None,
+        input_tokens=in_tokens,
+        output_tokens=out_tokens
+    )
 
     return await get_general_chat_session(session_id, db, current_user)
 
@@ -1468,6 +1487,13 @@ async def upload_knowledge_file(
         output_tokens=200 * len(upload_list),
         documents_count=len(upload_list)
     )
+    await record_chat_token_usage(
+        db=db,
+        user_id=current_user.id,
+        branch_id=None,
+        input_tokens=estimated_doc_tokens,
+        output_tokens=200 * len(upload_list)
+    )
 
     ingest_res = await ingest_document(
         background_tasks=background_tasks,
@@ -1553,6 +1579,13 @@ async def ingest_knowledge_text_endpoint(
         input_tokens=estimated_tokens,
         output_tokens=150,
         documents_count=1
+    )
+    await record_chat_token_usage(
+        db=db,
+        user_id=current_user.id,
+        branch_id=None,
+        input_tokens=estimated_tokens,
+        output_tokens=150
     )
 
     pipeline = get_ingestion_pipeline(request)
@@ -1868,97 +1901,69 @@ async def edit_knowledge(
             except Exception:
                 pass
 
-    # If document is already APPROVED, handle promotion of pending refine draft or direct edit
-    if k_entry and k_entry.status == KnowledgeStatus.APPROVED:
-        # If a pending refinement draft exists from AI chat, merge draft contents
-        if p_file and os.path.exists(p_file):
-            try:
-                with open(p_file, "r", encoding="utf-8") as pf:
-                    p_data = json.load(pf)
-
-                # Get latest refined summary from pending draft or last assistant turn in history
-                refined_sum = p_data.get("summary", "")
-                hist = p_data.get("history") or p_data.get("edit_history") or []
-                if isinstance(hist, list):
-                    for turn in reversed(hist):
-                        if isinstance(turn, dict) and turn.get("role") == "assistant" and turn.get("content"):
-                            if len(turn["content"]) > 50 and "\n" in turn["content"]:
-                                refined_sum = turn["content"]
-                                break
-
-                # Use explicit payload summary only if user edited it; otherwise prefer refined_sum
-                if payload.summary and payload.summary.strip() and payload.summary != (k_entry.ai_summary or ""):
-                    final_summary = payload.summary
-                else:
-                    final_summary = refined_sum or p_data.get("summary", "") or (k_entry.ai_summary or "")
-
-                final_title = payload.title if (payload.title and payload.title.strip()) else p_data.get("title", k_entry.title)
-                # If chunks are explicitly modified, derive bottom-up unique categories
-                if payload.chunks and len(payload.chunks) > 0:
-                    derived_cats = []
-                    for ch in payload.chunks:
-                        c_list = ch.get("metadata", {}).get("categories", []) or ([ch.get("metadata", {}).get("category")] if ch.get("metadata", {}).get("category") else [])
-                        for c in c_list:
-                            if c and str(c).strip() and str(c).strip() not in derived_cats:
-                                derived_cats.append(str(c).strip())
-                    final_categories = derived_cats if derived_cats else (payload.categories if payload.categories else p_data.get("categories", p_data.get("suggested_categories", [])))
-                else:
-                    final_categories = payload.categories if (payload.categories is not None and len(payload.categories) > 0) else p_data.get("categories", p_data.get("suggested_categories", []))
-
-                final_vis = payload.visibility_settings if payload.visibility_settings else p_data.get("visibility_settings")
-
-                merged_req = EditApprovedDocumentRequest(
-                    summary=final_summary,
-                    title=final_title,
-                    categories=final_categories,
-                    visibility_settings=final_vis,
-                    chunks=payload.chunks
-                )
-            except Exception as read_p_err:
-                logger.warning(f"Failed to read staging draft for approved edit: {read_p_err}")
-                merged_req = payload
-        else:
-            merged_req = payload
-
-        res = await edit_approved_document(
-            knowledge_id=str(knowledge_id),
-            request=merged_req,
-            pipeline=pipeline,
-            bm25=bm25,
-            vector_store=vector_store
-        )
-
+    # 1. Update or create staging draft in data/pending/{knowledge_id}.json with latest payload & refined draft content
+    staged_data = {}
+    if p_file and os.path.exists(p_file):
         try:
-            from app.services.storage import upload_canonical_json
-            upload_canonical_json(str(knowledge_id), res)
-        except Exception:
-            pass
-
-        # Cleanup staging draft file once approved changes are committed
+            with open(p_file, "r", encoding="utf-8") as pf:
+                staged_data = json.load(pf)
+        except Exception as read_p_err:
+            logger.warning(f"Failed to read staging draft for edit: {read_p_err}")
+    elif a_file and os.path.exists(a_file):
         try:
-            from app.services.storage import delete_staging_json
-            delete_staging_json(str(knowledge_id))
-        except Exception:
-            if p_file and os.path.exists(p_file):
-                try:
-                    os.remove(p_file)
-                except Exception:
-                    pass
+            with open(a_file, "r", encoding="utf-8") as af:
+                staged_data = json.load(af)
+        except Exception as read_a_err:
+            logger.warning(f"Failed to read approved JSON for edit: {read_a_err}")
+
+    # Determine final summary, title, categories, visibility, and chunks
+    staged_sum = staged_data.get("summary", "")
+    hist = staged_data.get("history") or staged_data.get("edit_history") or []
+    if isinstance(hist, list):
+        for turn in reversed(hist):
+            if isinstance(turn, dict) and turn.get("role") == "assistant" and turn.get("content"):
+                if len(turn["content"]) > 50 and "\n" in turn["content"]:
+                    staged_sum = turn["content"]
+                    break
+
+    if payload.summary and payload.summary.strip() and payload.summary != (k_entry.ai_summary or ""):
+        final_summary = payload.summary
     else:
-        # Document is pending approval
-        if p_file:
-            res = await edit_pending_document(
-                knowledge_id=str(knowledge_id),
-                request=payload
-            )
-        else:
-            res = await edit_approved_document(
-                knowledge_id=str(knowledge_id),
-                request=payload,
-                pipeline=pipeline,
-                bm25=bm25,
-                vector_store=vector_store
-            )
+        final_summary = staged_sum or staged_data.get("summary", "") or (k_entry.ai_summary if k_entry else "")
+
+    final_title = (payload.title.strip() if (payload.title and payload.title.strip()) else None) or staged_data.get("title") or (k_entry.title if k_entry else "Knowledge Document")
+    final_categories = payload.categories if (payload.categories is not None and len(payload.categories) > 0) else staged_data.get("categories", staged_data.get("suggested_categories", []))
+    final_vis = payload.visibility_settings.model_dump() if payload.visibility_settings else staged_data.get("visibility_settings", {"clinics": ["all"], "doctor_types": ["all"], "doctors": ["all"]})
+    final_chunks = payload.chunks if (payload.chunks is not None and len(payload.chunks) > 0) else staged_data.get("chunks")
+
+    # Update staged_data dictionary
+    staged_data["knowledge_id"] = str(knowledge_id)
+    staged_data["title"] = final_title
+    staged_data["summary"] = final_summary
+    staged_data["categories"] = final_categories
+    staged_data["suggested_categories"] = final_categories
+    staged_data["visibility_settings"] = final_vis
+    if final_chunks:
+        staged_data["chunks"] = final_chunks
+
+    # Save to data/pending/{knowledge_id}.json so approve_document can promote it
+    os.makedirs("data/pending", exist_ok=True)
+    pending_file = os.path.join("data/pending", f"{knowledge_id}.json")
+    with open(pending_file, "w", encoding="utf-8") as pf:
+        json.dump(staged_data, pf, indent=4, ensure_ascii=False)
+
+    try:
+        from app.services.storage import upload_staging_json
+        upload_staging_json(str(knowledge_id), staged_data)
+    except Exception:
+        pass
+
+    # 2. Execute full RAG approval/promotion pipeline: promote JSON to output/ & MinIO, update PostgreSQL DB, re-index PGVector & BM25
+    res = await approve_document(
+        knowledge_id=str(knowledge_id),
+        pipeline=pipeline,
+        bm25=bm25
+    )
 
     # Sync updates back to the PostgreSQL DB row for both approved and pending documents
     if k_entry:
@@ -1997,8 +2002,9 @@ async def edit_knowledge(
             elif res.get("chunks"):
                 k_entry.metadata_["chunks"] = res["chunks"]
 
-            # Cascade current visibility settings to all DB chunks
+            # Cascade current visibility settings and document categories to all DB chunks
             current_vis = k_entry.metadata_.get("visibility_settings") or {"clinics": ["all"], "doctor_types": ["all"], "doctors": ["all"]}
+            current_cats = k_entry.metadata_.get("categories") or []
             if isinstance(k_entry.metadata_.get("chunks"), list):
                 for ch in k_entry.metadata_["chunks"]:
                     if isinstance(ch, dict):
@@ -2008,6 +2014,8 @@ async def edit_knowledge(
                         ch["metadata"]["doctor_types"] = current_vis.get("doctor_types", ["all"])
                         ch["metadata"]["doctors"] = current_vis.get("doctors", ["all"])
                         ch["metadata"]["visibility_settings"] = current_vis
+                        ch["metadata"]["categories"] = current_cats
+                        ch["metadata"]["category"] = current_cats[0] if current_cats else ""
 
             if res.get("image_urls") and "image_urls" not in k_entry.metadata_:
                 k_entry.metadata_["image_urls"] = res["image_urls"]
@@ -2160,17 +2168,19 @@ async def refine_knowledge(
                 media_note = ""
                 replace_guidance = ""
                 if all_attached_images:
-                    media_lines = [f"![Asset Gambar {i+1}]({url})" for i, url in enumerate(all_attached_images)]
-                    media_note = f"\n\n### Asset Media dari File Terlampir:\n" + "\n\n".join(media_lines) + "\n"
+                    media_lines = [f"- Attached Image {i+1}: {url}" for i, url in enumerate(all_attached_images)]
                     primary_img = all_attached_images[0]
-                    replace_guidance = (
-                        f"\n[INSTRUCTION FOR IMAGE REPLACEMENT: If the admin instruction asks to change, swap, or update an image for a product or section, "
-                        f"you MUST embed the EXACT URL '{primary_img}' in that product's table cell or heading. DO NOT output placeholder text like 'URL_GAMBAR' or 'new_image'.]\n"
+                    media_note = (
+                        f"\n\n[ATTACHED MEDIA ASSET URLS FOR THIS TURN:\n"
+                        + "\n".join(media_lines)
+                        + f"\nCRITICAL INSTRUCTION: If the admin instruction adds a product or section, embed the exact URL '{primary_img}' inside that product's '### Detail Produk' block as ![Product Name]({primary_img}). "
+                        f"If updating/replacing an image, swap the old image tag with ![Product Name]({primary_img}). DO NOT output placeholder text like 'URL_GAMBAR' or 'new_image'. "
+                        f"NEVER create an 'Asset Media' heading or append raw media asset lists at the end of the summary.]\n"
                     )
 
                 file_note = (
                     f"\n\n[SUPPLEMENTARY ATTACHED FILE CONTENT: '{attached_file_name}']\n"
-                    f"{content_snippet}{media_note}{replace_guidance}\n"
+                    f"{content_snippet}{media_note}\n"
                     f"[END OF ATTACHED FILE CONTENT]"
                 )
                 payload.prompt = f"{payload.prompt}\n{file_note}" if payload.prompt else file_note
@@ -2451,6 +2461,22 @@ async def refine_knowledge(
     except Exception as sync_err:
         logger.warning(f"Failed to sync refined knowledge to DB row: {sync_err}")
 
+    # Record token usage for refinement turn
+    refine_prompt = payload.prompt or ""
+    in_tokens = count_chat_prompt_tokens(
+        user_query=refine_prompt,
+        history=[{"role": m.role, "content": m.content} for m in payload.history or []]
+    )
+    refined_out = str(res.get("summary") or res.get("answer") or "") if isinstance(res, dict) else ""
+    out_tokens = count_chat_completion_tokens(refined_out)
+    await record_chat_token_usage(
+        db=db,
+        user_id=current_user.id,
+        branch_id=None,
+        input_tokens=in_tokens,
+        output_tokens=out_tokens
+    )
+
     return res
 
 @router.put("/{knowledge_id}/project", response_model=KnowledgeResponse)
@@ -2548,6 +2574,7 @@ async def delete_knowledge(
     file_name = knowledge.file_name if knowledge else None
     d_meta = knowledge.metadata_ if knowledge and isinstance(knowledge.metadata_, dict) else {}
     ai_summary = knowledge.ai_summary if knowledge else ""
+    batch_id = str(d_meta.get("batch_id") or "").strip()
 
     pipeline = get_ingestion_pipeline(request)
     bm25 = get_bm25_index(request)
@@ -2563,6 +2590,8 @@ async def delete_knowledge(
 
     # 3. Collect all identifier variants for secondary fail-safe multi-key purge
     identifiers_to_purge = {kid_str, f"{kid_str}_parsed", f"{kid_str}.json", f"{kid_str}_parsed.json"}
+    if batch_id:
+        identifiers_to_purge.update({batch_id, f"{batch_id}_parsed", f"{batch_id}.json", f"{batch_id}_parsed.json"})
     if file_name:
         base_name, _ = os.path.splitext(file_name)
         identifiers_to_purge.update({
@@ -2596,7 +2625,8 @@ async def delete_knowledge(
                         if isinstance(f_data, dict):
                             doc_kid = str(f_data.get("knowledge_id", ""))
                             doc_fname = str(f_data.get("file_name", ""))
-                            if doc_kid == kid_str or (file_name and doc_fname.lower() == file_name.lower()):
+                            doc_bid = str(f_data.get("batch_id") or (f_data.get("metadata") or {}).get("batch_id") or "")
+                            if doc_kid == kid_str or (batch_id and doc_bid == batch_id) or (file_name and doc_fname.lower() == file_name.lower()):
                                 should_delete = True
                     except Exception:
                         pass
@@ -2613,7 +2643,7 @@ async def delete_knowledge(
         from app.services.storage import delete_knowledge_images_and_assets
         delete_knowledge_images_and_assets(
             kid_str,
-            doc_data={"summary": ai_summary, "metadata": d_meta, "image_urls": d_meta.get("image_urls", [])}
+            doc_data={"summary": ai_summary, "metadata": d_meta, "batch_id": batch_id, "image_urls": d_meta.get("image_urls", [])}
         )
     except Exception as s3_del_err:
         logger.debug(f"MinIO secondary delete note for {kid_str}: {s3_del_err}")

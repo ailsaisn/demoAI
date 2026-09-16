@@ -130,23 +130,7 @@ export function extractKnowledgeCategories(doc?: KnowledgeResponse | null): stri
 	const meta = doc.metadata as Record<string, unknown>;
 	const catSet = new Set<string>();
 
-	// 1. Per-section categories from chunks
-	const chunks = (meta.chunks as KnowledgeChunkItem[]) || [];
-	if (Array.isArray(chunks)) {
-		for (const ch of chunks) {
-			const chMeta = ch?.metadata as Record<string, unknown> | undefined;
-			const chCats = chMeta?.categories || (chMeta?.category ? [chMeta.category] : []);
-			if (Array.isArray(chCats)) {
-				for (const c of chCats) {
-					if (typeof c === "string" && c.trim()) {
-						catSet.add(c.trim());
-					}
-				}
-			}
-		}
-	}
-
-	// 2. Direct categories
+	// 1. Direct categories
 	const directCats = meta.categories;
 	if (Array.isArray(directCats)) {
 		for (const c of directCats) {
@@ -164,7 +148,7 @@ export function extractKnowledgeCategories(doc?: KnowledgeResponse | null): stri
 		}
 	}
 
-	// 3. Suggested categories
+	// 2. Suggested categories
 	const suggestedCats = meta.suggested_categories;
 	if (Array.isArray(suggestedCats)) {
 		for (const c of suggestedCats) {

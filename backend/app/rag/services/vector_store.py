@@ -190,17 +190,30 @@ class PGVectorAdapter(BaseVectorStoreAdapter):
         try:
             logger.info(f"Deleting chunks for identifier: {identifier}")
             from sqlalchemy import text
+            src_str = str(identifier).strip()
+            clean_id = src_str.replace("_parsed.json", "").replace(".json", "").replace(".pdf", "").strip()
+            
             with self.Session() as session:
                 result = session.execute(text(f"""
                     DELETE FROM {self.collection_name}
                     WHERE source_file = :src
                        OR source_file ILIKE :src_like
+                       OR source_file ILIKE :clean_like
                        OR metadata ->> 'knowledge_id' = :src
+                       OR metadata ->> 'knowledge_id' = :clean_id
                        OR metadata ->> 'file_name' = :src
-                """), {"src": str(identifier), "src_like": f"%{identifier}%"})
+                       OR metadata ->> 'file_name' ILIKE :clean_like
+                       OR metadata ->> 'title' = :src
+                       OR metadata ->> 'title' ILIKE :clean_like
+                """), {
+                    "src": src_str,
+                    "src_like": f"%{src_str}%",
+                    "clean_id": clean_id,
+                    "clean_like": f"%{clean_id}%"
+                })
                 session.commit()
                 deleted_rows = result.rowcount
-            logger.info(f"Successfully deleted {deleted_rows} chunks for {identifier} from PGVector.")
+            logger.info(f"Successfully deleted {deleted_rows} chunks for '{identifier}' from PGVector.")
         except Exception as e:
             logger.error(f"Failed to delete chunks for {identifier}: {e}")
             raise

@@ -1,7 +1,7 @@
 "use client";
 
 import { authKeys } from "@/app/login/api/keys";
-import { IdleTimeoutDialog } from "@/components/auth/idle-timeout-dialog";
+import { IdleTimeoutDialog } from "@/components/auth";
 import { api } from "@/lib/axios";
 import type { UserResponse } from "@/lib/types";
 import { useQueryClient } from "@tanstack/react-query";

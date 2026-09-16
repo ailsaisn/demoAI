@@ -24,8 +24,16 @@ export function DoctorDetailsSheet({
 	const [isAdjustLimitOpen, setIsAdjustLimitOpen] = useState(false);
 
 	const { data: configs } = useConfigs();
-	const isGlobalLimitActive =
+	const isMasterActive =
 		configs?.find((c) => c.key === "GLOBAL_TOKEN_LIMIT_ACTIVE")?.value === "true";
+	const isSpdveGlobalActive =
+		isMasterActive && configs?.find((c) => c.key === "GLOBAL_SPKK_LIMIT_ACTIVE")?.value === "true";
+	const isGpGlobalActive =
+		isMasterActive && configs?.find((c) => c.key === "GLOBAL_GP_LIMIT_ACTIVE")?.value === "true";
+
+	const isBranchGlobalActive =
+		isMasterActive && configs?.find((c) => c.key === "GLOBAL_BRANCH_LIMIT_ACTIVE")?.value === "true";
+	const globalBranchLimit = configs?.find((c) => c.key === "GLOBAL_TOKEN_LIMIT")?.value || "3000000";
 	const spdveLimit = configs?.find((c) => c.key === "TOKEN_LIMIT_SPKK")?.value || "500000";
 	const gpPlusLimit = configs?.find((c) => c.key === "TOKEN_LIMIT_GP")?.value || "250000";
 
@@ -34,12 +42,14 @@ export function DoctorDetailsSheet({
 	const isSpDVE =
 		drTypeUpper.includes("SPKK") || drTypeUpper.includes("SPDVE") || drTypeUpper.includes("SPDV");
 	const isGP = drTypeUpper.includes("GP") || drTypeUpper.includes("UMUM");
+	const isGlobalLimitActive = isSpDVE ? isSpdveGlobalActive : isGP ? isGpGlobalActive : false;
 	const effectiveGlobalLimit = isSpDVE ? Number(spdveLimit) : isGP ? Number(gpPlusLimit) : 0;
 
-	const assignedBranchLimit =
+	const rawAssignedBranchLimit =
 		doctor?.branches && doctor.branches.length > 0
 			? Math.max(...doctor.branches.map((b) => b.token_limit ?? 0))
 			: 0;
+	const assignedBranchLimit = isBranchGlobalActive ? Number(globalBranchLimit) : rawAssignedBranchLimit;
 
 	const hasCustomLimit =
 		doctor?.token_limit !== null && doctor?.token_limit !== undefined && doctor.token_limit > 0;
@@ -47,7 +57,7 @@ export function DoctorDetailsSheet({
 		? doctor.token_limit!
 		: isGlobalLimitActive
 			? effectiveGlobalLimit
-			: (doctor?.token_limit ?? assignedBranchLimit);
+			: assignedBranchLimit;
 	const tokensUsed = doctor?.tokens_used ?? 0;
 	const tokensRemaining = Math.max(0, effectiveLimit - tokensUsed);
 
@@ -119,7 +129,7 @@ export function DoctorDetailsSheet({
 												{doctor.dr_type || "-"}
 											</span>
 											{isGlobalLimitActive && !hasCustomLimit && (
-												<span className="text-[11px] bg-blue-50 text-blue-600 px-2 py-0.5 rounded-full font-medium border border-blue-100">
+												<span className="text-[11px] bg-blue-50 text-blue-600 px-2 py-0.5 rounded-md font-medium border border-blue-100">
 													{isSpDVE
 														? "SpDVE Global Quota"
 														: isGP
@@ -128,7 +138,7 @@ export function DoctorDetailsSheet({
 												</span>
 											)}
 											{isGlobalLimitActive && hasCustomLimit && (
-												<span className="text-[11px] bg-emerald-50 text-emerald-700 px-2 py-0.5 rounded-full font-medium border border-emerald-200">
+												<span className="text-[11px] bg-emerald-50 text-emerald-700 px-2 py-0.5 rounded-md font-medium border border-emerald-200">
 													Custom Override
 												</span>
 											)}
@@ -142,7 +152,7 @@ export function DoctorDetailsSheet({
 												{tokensUsed.toLocaleString()} tokens
 											</span>
 											{!hasCustomLimit && !isGlobalLimitActive && (
-												<span className="text-[11px] bg-zinc-100 text-zinc-600 px-2 py-0.5 rounded-full font-medium">
+												<span className="text-[11px] bg-zinc-100 text-zinc-600 px-2 py-0.5 rounded-md font-medium">
 													Drawing from Branch Pool
 												</span>
 											)}
@@ -169,7 +179,7 @@ export function DoctorDetailsSheet({
 													<span className="text-black-500 font-normal">tokens</span>
 												</span>
 												{isGlobalLimitActive && !hasCustomLimit && (
-													<span className="text-[11px] bg-blue-50 text-blue-600 px-2 py-0.5 rounded-full font-medium border border-blue-100">
+													<span className="text-[11px] bg-blue-50 text-blue-600 px-2 py-0.5 rounded-md font-medium border border-blue-100">
 														{isSpDVE
 															? "SpDVE Global Quota"
 															: isGP
@@ -178,12 +188,12 @@ export function DoctorDetailsSheet({
 													</span>
 												)}
 												{isGlobalLimitActive && hasCustomLimit && (
-													<span className="text-[11px] bg-emerald-50 text-emerald-700 px-2 py-0.5 rounded-full font-medium border border-emerald-200">
+													<span className="text-[11px] bg-emerald-50 text-emerald-700 px-2 py-0.5 rounded-md font-medium border border-emerald-200">
 														Custom Override
 													</span>
 												)}
 												{!isGlobalLimitActive && !hasCustomLimit && (
-													<span className="text-[11px] bg-zinc-100 text-zinc-600 px-2 py-0.5 rounded-full font-medium">
+													<span className="text-[11px] bg-zinc-100 text-zinc-600 px-2 py-0.5 rounded-md font-medium">
 														Branch Pool (Used: {tokensUsed.toLocaleString()})
 													</span>
 												)}

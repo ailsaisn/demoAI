@@ -2,10 +2,16 @@
 
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import {
+	Dialog,
+	DialogContent,
+	DialogDescription,
+	DialogHeader,
+	DialogTitle,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { useDebounce } from "@/hooks/use-debounce";
-import { RiCheckLine, RiSearchLine } from "@remixicon/react";
+import { RiCheckLine, RiLoader4Line, RiSearchLine } from "@remixicon/react";
 import { useEffect, useState } from "react";
 import { useCategories } from "../../category/hooks/use-categories";
 import { UserResponse } from "../api/types";
@@ -76,6 +82,9 @@ export function DoctorManageKnowledgeDialog({
 					<DialogTitle className="text-base font-semibold text-foreground">
 						Manage Knowledge Base
 					</DialogTitle>
+					<DialogDescription className="sr-only">
+						Manage doctor knowledge category assignments
+					</DialogDescription>
 				</DialogHeader>
 
 				<div className="p-4 flex flex-col gap-3">
@@ -166,8 +175,12 @@ export function DoctorManageKnowledgeDialog({
 						onClick={handleSave}
 						disabled={updateCategories.isPending}
 					>
-						<RiCheckLine className="mr-1.5 h-4 w-4" />
-						Save Knowledge
+						{updateCategories.isPending ? (
+							<RiLoader4Line className="mr-1.5 h-4 w-4 animate-spin" />
+						) : (
+							<RiCheckLine className="mr-1.5 h-4 w-4" />
+						)}
+						{updateCategories.isPending ? "Saving..." : "Save Knowledge"}
 					</Button>
 				</div>
 			</DialogContent>

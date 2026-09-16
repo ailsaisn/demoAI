@@ -2,6 +2,7 @@
 
 import { useMemo } from "react";
 import Link from "next/link";
+import { usePathname } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import {
 	RiArrowUpSLine,
@@ -29,10 +30,15 @@ import { useCurrentUser } from "@/hooks/use-current-user";
 import { api } from "@/lib/axios";
 
 export function SidebarProfileMenu() {
+	const pathname = usePathname();
 	const { mutate: logout, isPending: isLoggingOut } = useLogout();
 	const { data: user } = useCurrentUser();
 	const { state } = useSidebar();
 	const isCollapsed = state === "collapsed";
+
+	const isNotificationsActive =
+		pathname === "/dashboard/notifications" ||
+		pathname.startsWith("/dashboard/notifications/");
 
 	const { data: feedbacks = [] } = useQuery<FeedbackNotification[]>({
 		queryKey: NOTIFICATION_KEYS.lists(),
@@ -61,12 +67,21 @@ export function SidebarProfileMenu() {
 		<SidebarMenu className="gap-2 group-data-[collapsible=icon]:gap-1">
 			<SidebarMenuItem>
 				<SidebarMenuButton
+					isActive={isNotificationsActive}
 					render={<Link href="/dashboard/notifications" />}
-					className="text-zinc-600 hover:text-blue-600 hover:bg-blue-50 font-medium group-data-[collapsible=icon]:justify-center"
+					className={
+						isNotificationsActive
+							? "bg-blue-50 text-blue-600 hover:bg-blue-100"
+							: "text-zinc-900"
+					}
 					tooltip={unreadCount > 0 ? `Notifications (${unreadCount} unread)` : "Notifications"}
 				>
 					<div className="relative flex items-center justify-center">
-						<RiNotification3Line className="size-4 shrink-0" />
+						<RiNotification3Line
+							className={`size-4 shrink-0 ${
+								isNotificationsActive ? "text-blue-600" : "text-zinc-500"
+							}`}
+						/>
 						{unreadCount > 0 && (
 							<span className="absolute -top-1 -right-1 size-2 rounded-full bg-red-500 ring-2 ring-white group-data-[collapsible=icon]:block hidden" />
 						)}

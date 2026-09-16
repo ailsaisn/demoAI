@@ -1,10 +1,9 @@
 import { api } from "@/lib/axios";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { branchKeys } from "../../configuration/api/keys";
-import { BranchResponse, BranchUpdate } from "../../configuration/api/types";
-
 import { userKeys } from "../../users/api/keys";
+import { branchKeys } from "../api/keys";
+import { BranchResponse, BranchUpdate } from "../api/types";
 
 export function useBranches() {
 	return useQuery<BranchResponse[]>({

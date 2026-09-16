@@ -15,10 +15,7 @@ import { Button } from "@/components/ui/button";
 import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import {
-	RiRobot2Line,
-	RiFileAddLine,
-} from "@remixicon/react";
+import { RiRobot2Line, RiFileAddLine } from "@remixicon/react";
 import { SidebarProfileMenu } from "./sidebar-profile-menu";
 
 import { useCurrentUser } from "@/hooks/use-current-user";

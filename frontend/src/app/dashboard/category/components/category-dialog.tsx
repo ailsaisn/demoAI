@@ -1,18 +1,20 @@
+"use client";
+
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
 	Dialog,
 	DialogContent,
+	DialogDescription,
 	DialogFooter,
 	DialogHeader,
 	DialogTitle,
 } from "@/components/ui/dialog";
+import { Field, FieldContent, FieldLabel, FieldTitle } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
-import { RiCheckLine } from "@remixicon/react";
-
-import { useState } from "react";
+import { RiCheckLine, RiLoader4Line } from "@remixicon/react";
 import { CategoryResponse } from "../api/types";
-import { useCreateCategory, useUpdateCategory } from "../hooks/use-categories";
+import { useCategoryForm } from "../hooks/use-category-form";
 
 interface CategoryDialogProps {
 	isOpen: boolean;
@@ -22,37 +24,12 @@ interface CategoryDialogProps {
 }
 
 export function CategoryDialog({ isOpen, onOpenChange, mode, category }: CategoryDialogProps) {
-	const isEdit = mode === "edit";
-	const title = isEdit ? "Category" : "Add New Category";
-	const buttonText = isEdit ? "Save Changes" : "Add Category";
-
-	const [name, setName] = useState(isEdit && category ? category.name : "");
-
-	const { mutate: createCategory, isPending: isCreating } = useCreateCategory();
-	const { mutate: updateCategory, isPending: isUpdating } = useUpdateCategory();
-
-	const isPending = isCreating || isUpdating;
-
-	const handleSubmit = (e: React.FormEvent) => {
-		e.preventDefault();
-		if (!name.trim()) return;
-
-		if (isEdit && category) {
-			updateCategory(
-				{ id: category.id, data: { name } },
-				{
-					onSuccess: () => onOpenChange(false),
-				},
-			);
-		} else {
-			createCategory(
-				{ name },
-				{
-					onSuccess: () => onOpenChange(false),
-				},
-			);
-		}
-	};
+	const { name, setName, title, buttonText, isEdit, isPending, handleSubmit } = useCategoryForm({
+		isOpen,
+		onOpenChange,
+		mode,
+		category,
+	});
 
 	return (
 		<Dialog open={isOpen} onOpenChange={onOpenChange}>
@@ -60,33 +37,44 @@ export function CategoryDialog({ isOpen, onOpenChange, mode, category }: Categor
 				<form onSubmit={handleSubmit}>
 					<DialogHeader className="p-4 border-b border-gray-100">
 						<DialogTitle className="text-base font-semibold text-foreground">{title}</DialogTitle>
+						<DialogDescription className="sr-only">
+							{isEdit ? "Edit existing category name" : "Add new knowledge category"}
+						</DialogDescription>
 					</DialogHeader>
 
 					<div className="p-4 flex flex-col gap-4">
 						{isEdit && category && (
-							<div className="flex flex-col gap-1.5">
-								<label className="text-xs font-medium text-zinc-700">Display</label>
-								<div>
-									<Badge variant="secondary" className="bg-gray-100 text-gray-700 rounded-md">
-										{category.name}
-									</Badge>
-								</div>
-							</div>
+							<Field>
+								<FieldLabel>
+									<FieldTitle className="text-xs font-medium text-zinc-700">Display</FieldTitle>
+								</FieldLabel>
+								<FieldContent>
+									<div>
+										<Badge variant="secondary" className="bg-gray-100 text-gray-700 rounded-md">
+											{category.name}
+										</Badge>
+									</div>
+								</FieldContent>
+							</Field>
 						)}
 
-						<div className="flex flex-col gap-1.5">
-							<label className="text-xs font-medium text-zinc-700">Category Name</label>
-							<div className="relative">
-								<Input
-									value={name}
-									onChange={(e) => setName(e.target.value)}
-									placeholder="Category Name"
-									className="w-full bg-white h-10 border-gray-200 rounded-lg focus-visible:ring-blue-500 text-sm"
-									disabled={isPending}
-									autoFocus
-								/>
-							</div>
-						</div>
+						<Field>
+							<FieldLabel>
+								<FieldTitle className="text-xs font-medium text-zinc-700">Category Name</FieldTitle>
+							</FieldLabel>
+							<FieldContent>
+								<div className="relative">
+									<Input
+										value={name}
+										onChange={(e) => setName(e.target.value)}
+										placeholder="Category Name"
+										className="border-gray-200 bg-white focus-visible:ring-blue-500 w-full h-10 rounded-lg text-sm"
+										disabled={isPending}
+										autoFocus
+									/>
+								</div>
+							</FieldContent>
+						</Field>
 					</div>
 
 					<DialogFooter className="p-4 border-t border-gray-100 flex items-center justify-end gap-2 bg-zinc-50/50">
@@ -104,8 +92,12 @@ export function CategoryDialog({ isOpen, onOpenChange, mode, category }: Categor
 							className="bg-blue-600 hover:bg-blue-700 text-white rounded-lg px-4 h-10 font-medium text-sm transition-colors cursor-pointer shadow-none disabled:opacity-50"
 							disabled={isPending || !name.trim()}
 						>
-							<RiCheckLine className="size-4 mr-1.5" />
-							{buttonText}
+							{isPending ? (
+								<RiLoader4Line className="size-4 mr-1.5 animate-spin" />
+							) : (
+								<RiCheckLine className="size-4 mr-1.5" />
+							)}
+							{isPending ? (isEdit ? "Saving..." : "Adding...") : buttonText}
 						</Button>
 					</DialogFooter>
 				</form>

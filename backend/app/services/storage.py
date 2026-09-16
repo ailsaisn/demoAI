@@ -48,10 +48,27 @@ def _approved_bucket() -> str:
     return os.getenv("S3_APPROVED_BUCKET") or getattr(settings, "S3_APPROVED_BUCKET", "approved") or "approved"
 
 
-# ─── S3 Client ─────────────────────────────────────────────────────────────────
+# ─── S3 Client & Error Diagnostics Tracker ─────────────────────────────────────
 
 _cached_client = None
 _last_client_check_time = 0
+_recent_storage_errors = []
+
+def _record_storage_error(operation: str, bucket: str, key: str, error: Exception) -> None:
+    """Records recent storage errors in memory so they can be inspected via /api/storage/debug/health without terminal logs."""
+    global _recent_storage_errors
+    err_entry = {
+        "timestamp": datetime.utcnow().isoformat() + "Z",
+        "operation": operation,
+        "bucket": bucket,
+        "key": key,
+        "error_type": type(error).__name__,
+        "error_message": str(error)
+    }
+    _recent_storage_errors.insert(0, err_entry)
+    if len(_recent_storage_errors) > 25:
+        _recent_storage_errors = _recent_storage_errors[:25]
+
 
 def _save_file_to_local_disk(content: bytes, filename: str, s3_key: str = None) -> None:
     """Saves binary content to local disk fallback directory only when MinIO is unavailable."""
@@ -73,18 +90,42 @@ def _save_file_to_local_disk(content: bytes, filename: str, s3_key: str = None) 
         logger.debug(f"Local disk fallback write exception for '{filename}': {e}")
 
 
+def _detect_auth_mode() -> tuple[str, bool, dict]:
+    """Detects whether environment is AWS IRSA, AWS IAM Role, Static Keys, or Local fallback."""
+    is_irsa = bool(os.getenv("AWS_ROLE_ARN") and os.getenv("AWS_WEB_IDENTITY_TOKEN_FILE"))
+    raw_endpoint = os.getenv("S3_ENDPOINT_URL") or getattr(settings, "S3_ENDPOINT_URL", None)
+    raw_access = os.getenv("S3_ACCESS_KEY") or getattr(settings, "S3_ACCESS_KEY", None)
+    raw_secret = os.getenv("S3_SECRET_KEY") or getattr(settings, "S3_SECRET_KEY", None)
+    
+    # AWS default IAM chain should only be preferred if:
+    # 1. Explicit AWS IRSA environment variables exist, OR
+    # 2. No custom endpoint is configured AND no custom access key is configured AND running in cloud environment
+    env_mode = (getattr(settings, "ENVIRONMENT", "") or os.getenv("ENVIRONMENT") or "").lower().strip()
+    is_aws_env = is_irsa or (not raw_endpoint and (not raw_access or raw_access == "minioadmin") and env_mode in ("staging", "production", "prod", "stage"))
+    
+    auth_desc = "AWS IRSA (Web Identity Token)" if is_irsa else ("AWS IAM Role / Default Chain" if is_aws_env else "Static Credentials (MinIO/Local)")
+    return auth_desc, is_aws_env, {
+        "is_irsa": is_irsa,
+        "is_aws_env": is_aws_env,
+        "endpoint": raw_endpoint,
+        "region": os.getenv("S3_REGION") or getattr(settings, "S3_REGION", "us-east-1"),
+        "has_access_key": bool(raw_access and raw_access != "minioadmin")
+    }
+
+
 def _get_client():
     """
-    Creates boto3 S3 client with automatic fallback across docker network (http://minio:9000)
-    and host localhost (http://localhost:9000), cached for performance.
-    If MinIO/S3 is unreachable, returns None cleanly to enable local storage fallback.
+    Creates boto3 S3 client supporting:
+    1. AWS IRSA (IAM Roles for Service Accounts) & standard AWS IAM credential provider chains.
+    2. Local MinIO fallback across docker network (http://minio:9000) and localhost (http://localhost:9000).
+    3. Seamless local disk fallback if storage is unreachable.
     """
     global _cached_client, _last_client_check_time
     now = time.time()
     if _cached_client is not None:
         return _cached_client if _cached_client is not False else None
 
-    # Don't retry list_buckets continuously if it failed recently (< 30s)
+    # Don't retry continuously if it failed recently (< 30s)
     if now - _last_client_check_time < 30 and _cached_client is False:
         return None
 
@@ -94,18 +135,55 @@ def _get_client():
         _cached_client = False
         return None
 
+    auth_desc, is_aws_env, meta = _detect_auth_mode()
+    region = meta["region"]
+
+    # 1. If running in AWS (IRSA or AWS IAM Role default chain)
+    if is_aws_env:
+        try:
+            client = boto3.client(
+                "s3",
+                region_name=region,
+                config=Config(
+                    signature_version="s3v4",
+                    s3={"addressing_style": "auto"},
+                    connect_timeout=3.0,
+                    read_timeout=15.0,
+                    retries={'max_attempts': 3}
+                )
+            )
+            # Verify credentials and connectivity before caching client
+            try:
+                client.list_buckets()
+            except Exception as test_err:
+                err_code = getattr(getattr(test_err, "response", {}), "get", lambda k, d=None: None)("Error", {}).get("Code", "")
+                if "AccessDenied" in str(test_err) or err_code in ("AccessDenied", "403"):
+                    # Credentials exist and AWS authenticated, but lack ListAllMyBuckets permission
+                    pass
+                else:
+                    # NoCredentialsError, connection failure, etc.
+                    raise test_err
+
+            _cached_client = client
+            logger.info(f"S3 Object Storage connected via {auth_desc} (Region: {region})")
+            return client
+        except Exception as e:
+            logger.warning(f"AWS S3 connection attempt failed via {auth_desc}: {e}")
+
+    # 2. Local / MinIO fallback with endpoint list and credentials
     endpoints = []
-    env_endpoint = os.getenv("S3_ENDPOINT_URL") or settings.S3_ENDPOINT_URL
+    env_endpoint = meta["endpoint"]
     if env_endpoint:
         endpoints.append(env_endpoint)
     for ep in ["http://minio:9000", "http://localhost:9000", "http://127.0.0.1:9000"]:
         if ep not in endpoints:
             endpoints.append(ep)
 
-    access_key = os.getenv("S3_ACCESS_KEY") or settings.S3_ACCESS_KEY or "minioadmin"
-    secret_key = os.getenv("S3_SECRET_KEY") or settings.S3_SECRET_KEY or "minioadmin"
-    region = os.getenv("S3_REGION") or settings.S3_REGION or "us-east-1"
-    use_path_style = settings.S3_USE_PATH_STYLE if hasattr(settings, "S3_USE_PATH_STYLE") else True
+    access_key = os.getenv("S3_ACCESS_KEY") or getattr(settings, "S3_ACCESS_KEY", None) or "minioadmin"
+    secret_key = os.getenv("S3_SECRET_KEY") or getattr(settings, "S3_SECRET_KEY", None) or "minioadmin"
+    use_path_style = getattr(settings, "S3_USE_PATH_STYLE", None)
+    if use_path_style is None:
+        use_path_style = True
 
     for endpoint_url in endpoints:
         try:
@@ -127,7 +205,7 @@ def _get_client():
             was_offline = (_cached_client is False)
             _cached_client = client
             if was_offline:
-                logger.info("🟢 MinIO connection restored! Triggering auto-sync of fallback local files to MinIO...")
+                logger.info("MinIO connection restored. Triggering auto-sync of fallback local files to MinIO...")
                 try:
                     sync_existing_local_to_minio(client=client)
                 except Exception as sync_e:
@@ -137,14 +215,14 @@ def _get_client():
             continue
 
     _cached_client = False
-    logger.info("MinIO S3 service offline or unreachable. Storage operating in seamless local disk mode.")
+    logger.info("MinIO/S3 service offline or unreachable. Storage operating in seamless local disk mode.")
     return None
 
 
 # ─── Bucket Initialization ────────────────────────────────────────────────────
 
 def _ensure_bucket_private(bucket_name: str) -> None:
-    """Ensures a MinIO bucket exists with PRIVATE access (no public read)."""
+    """Ensures a bucket exists with PRIVATE access (no public read)."""
     client = _get_client()
     if not client:
         return
@@ -152,25 +230,32 @@ def _ensure_bucket_private(bucket_name: str) -> None:
         try:
             client.head_bucket(Bucket=bucket_name)
         except Exception:
-            client.create_bucket(Bucket=bucket_name)
-            logger.info(f"Created MinIO bucket (private): '{bucket_name}'")
+            try:
+                client.create_bucket(Bucket=bucket_name)
+                logger.info(f"Created bucket (private): '{bucket_name}'")
+            except Exception as create_err:
+                logger.debug(f"Bucket create skipped or restricted for '{bucket_name}': {create_err}")
     except Exception as e:
-        logger.debug(f"Could not connect or ensure MinIO bucket '{bucket_name}': {e}")
+        logger.debug(f"Could not connect or ensure bucket '{bucket_name}': {e}")
 
 
 def _ensure_images_bucket() -> None:
-    """Ensures images bucket exists with PUBLIC-READ policy so URLs never expire."""
+    """Ensures images bucket exists with PUBLIC-READ policy when permitted."""
     bucket_name = _images_bucket()
     try:
         client = _get_client()
+        if not client:
+            return
         try:
             client.head_bucket(Bucket=bucket_name)
         except Exception:
-            client.create_bucket(Bucket=bucket_name)
-            logger.info(f"Created MinIO bucket: '{bucket_name}'")
+            try:
+                client.create_bucket(Bucket=bucket_name)
+                logger.info(f"Created bucket: '{bucket_name}'")
+            except Exception as create_err:
+                logger.debug(f"Bucket create skipped for '{bucket_name}': {create_err}")
 
-        # Set public read policy so browser/frontend can view images directly
-        # Images use STATIC URLs that never expire — not presigned URLs
+        # Set public read policy on MinIO if possible (gracefully ignored on AWS IAM)
         policy = {
             "Version": "2012-10-17",
             "Statement": [
@@ -187,7 +272,7 @@ def _ensure_images_bucket() -> None:
         except Exception:
             pass
     except Exception as e:
-        logger.warning(f"Could not ensure images bucket '{bucket_name}': {e}")
+        logger.debug(f"Could not ensure images bucket '{bucket_name}': {e}")
 
 
 def _ensure_docs_bucket() -> None:
@@ -207,27 +292,20 @@ def _ensure_approved_bucket() -> None:
 
 def _build_static_image_url(bucket_name: str, s3_key: str) -> str:
     """
-    Builds a static (non-expiring) image URL for the public-read images bucket.
-    Uses localhost:9000 for browser access (converts docker-internal minio:9000).
+    Builds a static image URL for the images bucket.
     """
-    # Always return browser-accessible URL
-    return f"http://localhost:9000/{bucket_name}/{s3_key}"
+    return f"/api/storage/{s3_key.lstrip('/')}"
 
 
 def ensure_all_buckets() -> None:
-    """Initialize all 4 buckets at application startup.
-    - images: PUBLIC-READ (static URLs, never expire)
-    - knowledge-documents: PRIVATE (presigned URLs only)
-    - staging: PRIVATE (staged/pending JSON documents)
-    - approved: PRIVATE (approved/published canonical JSON documents)
-    """
+    """Initialize all buckets at application startup."""
     _ensure_images_bucket()
     _ensure_docs_bucket()
     _ensure_staging_bucket()
     _ensure_approved_bucket()
     logger.info(
-        f"MinIO buckets initialized: '{_images_bucket()}' (public-read), "
-        f"'{_docs_bucket()}' (private), '{_staging_bucket()}' (private), '{_approved_bucket()}' (private)"
+        f"Storage buckets initialized: '{_images_bucket()}', "
+        f"'{_docs_bucket()}', '{_staging_bucket()}', '{_approved_bucket()}'"
     )
     # Sync any pre-existing local disk pending/output files into MinIO source of truth
     sync_existing_local_to_minio()
@@ -257,25 +335,68 @@ def _generate_presigned_url(bucket_name: str, s3_key: str, expires: int = 604800
         return f"http://localhost:9000/{bucket_name}/{s3_key}"
 
 
+def is_valid_storage_asset(s3_key_or_url: str) -> bool:
+    """
+    Verifies if an image asset exists on MinIO or local disk storage (returns False if 404 / missing).
+    """
+    if not s3_key_or_url or not isinstance(s3_key_or_url, str):
+        return False
+    
+    input_str = s3_key_or_url.strip()
+    if not input_str or input_str.lower() in ("none", "null", "undefined", "#", "url", "url_gambar", "image_url"):
+        return False
+    
+    clean_key = input_str
+    if "/api/storage/" in clean_key:
+        clean_key = clean_key.split("/api/storage/")[-1]
+    elif "/storage/" in clean_key:
+        clean_key = clean_key.split("/storage/")[-1]
+    clean_key = clean_key.lstrip("/")
+
+    # 1. Check local disk storage folders
+    fname = os.path.basename(clean_key)
+    clean_norm = os.path.normpath(clean_key)
+    search_folders = ["data/temp", "data/images", "data/uploads", "data/documents", "data/storage", "data/temp/images", "data/output/images", "data/output"]
+    for folder in search_folders:
+        for candidate in [clean_key, clean_norm, fname]:
+            local_path = os.path.normpath(os.path.join(folder, candidate))
+            if os.path.exists(local_path) and os.path.isfile(local_path):
+                return True
+
+    # 2. Check MinIO S3 object storage
+    try:
+        client = _get_client()
+        if client:
+            client.head_object(Bucket=_images_bucket(), Key=clean_key)
+            return True
+    except Exception:
+        pass
+
+    return False
+
+
 def _format_browser_url(raw_url: str = None, s3_key: str = "") -> str:
     """
-    Ensures image URL is accessible by the doctor's browser and external CIS clients across all network environments:
-    1. If S3_PUBLIC_URL is configured (e.g. 'https://domain.com/api/storage' or CDN), use that.
-    2. If raw_url is a valid external HTTP(S) URL (not internal minio:9000 or localhost:9000), use that.
-    3. Otherwise, returns universal relative backend proxy path '/api/storage/{s3_key}' streamed via FastAPI.
+    Ensures image URL is accessible across all network environments (Dashboard & Mock CIS cross-origin):
+    1. If raw_url is a valid external third-party HTTP(S) URL, preserve it.
+    2. If S3_PUBLIC_URL is explicitly configured, use that.
+    3. Otherwise, return absolute backend API endpoint URL 'http://localhost:8000/api/storage/{clean_key}'.
     """
     input_str = (s3_key or raw_url or "").strip()
     if not input_str:
         return ""
 
-    # If already a valid absolute external URL (not minio:9000 / internal localhost:9000)
     if input_str.startswith("http://") or input_str.startswith("https://"):
-        if not any(internal_host in input_str for internal_host in ["minio:9000", "localhost:9000", "127.0.0.1:9000"]):
-            return input_str
-        # Strip internal host to re-bind to S3_PUBLIC_URL or /api/storage
-        input_str = re.sub(r'^https?://[^/]+/(?:images/|knowledge-documents/|api/storage/)?', '', input_str)
+        if not any(internal_host in input_str for internal_host in ["minio:9000", "localhost:9000", "127.0.0.1:9000", "localhost:8000", "127.0.0.1:8000"]):
+            if "/api/storage/" in input_str:
+                input_str = input_str.split("/api/storage/")[-1]
+            elif "/storage/" in input_str:
+                input_str = input_str.split("/storage/")[-1]
+            else:
+                return input_str
+        else:
+            input_str = re.sub(r'^https?://[^/]+/(?:images/|knowledge-documents/|api/storage/)?', '', input_str)
 
-    # Clean leading slashes and relative proxy prefixes
     clean_key = input_str.lstrip("/")
     if clean_key.startswith("api/storage/"):
         clean_key = clean_key[len("api/storage/"):]
@@ -283,18 +404,7 @@ def _format_browser_url(raw_url: str = None, s3_key: str = "") -> str:
         clean_key = clean_key[len("storage/"):]
     clean_key = clean_key.lstrip("/")
 
-    s3_pub = getattr(settings, "S3_PUBLIC_URL", None)
-    if not s3_pub or not str(s3_pub).strip():
-        # Smart fail-safe: if DevOps forgot S3_PUBLIC_URL, determine official public domain based on ENVIRONMENT
-        # to ensure external CIS floating chat always receives valid absolute URLs.
-        env_mode = (getattr(settings, "ENVIRONMENT", "") or "").lower().strip()
-        if env_mode in ("staging", "stage"):
-            s3_pub = "https://dokterpedia-api-staging.aryanoble.web.id/api/storage"
-        elif env_mode in ("production", "prod"):
-            s3_pub = "https://dokterpedia-api.aryanoble.co.id/api/storage"
-        elif env_mode in ("development", "dev"):
-            s3_pub = "https://dokterpedia-api-dev.aryanoble.web.id/api/storage"
-
+    s3_pub = getattr(settings, "S3_PUBLIC_URL", None) or os.getenv("S3_PUBLIC_URL")
     if s3_pub and str(s3_pub).strip():
         base = str(s3_pub).strip()
         if base.startswith("S3_PUBLIC_URL="):
@@ -303,17 +413,18 @@ def _format_browser_url(raw_url: str = None, s3_key: str = "") -> str:
         if clean_key:
             return f"{base}/{clean_key}"
 
-    # Universal relative proxy path (for local development fallback)
+    # Default backend host for cross-origin widget compatibility (e.g. Mock CIS port 8001 -> port 8000)
+    backend_base = os.getenv("BACKEND_PUBLIC_URL") or "http://localhost:8000"
     if clean_key:
-        return f"/api/storage/{clean_key}"
+        return f"{backend_base}/api/storage/{clean_key}"
     return raw_url or ""
 
 
 
-def expand_image_urls_in_markdown(text: str) -> str:
+def expand_image_urls_in_markdown(text: str, verify_exists: bool = True) -> str:
     """
-    Scans markdown content and dynamically expands any relative or local image URLs (![alt](url))
-    into full absolute URLs using the configured S3_PUBLIC_URL.
+    Scans markdown content and dynamically normalizes image URLs (![alt](url)).
+    Purges broken 404 image tags completely if verify_exists is True.
     """
     if not text or not isinstance(text, str):
         return text or ""
@@ -321,10 +432,229 @@ def expand_image_urls_in_markdown(text: str) -> str:
     def _replace_md_img(match):
         alt = match.group(1)
         raw_url = match.group(2).strip()
+        if not raw_url or raw_url.lower() in ("none", "null", "undefined", "#", "url_gambar", "url"):
+            return ""
+
+        if verify_exists and not is_valid_storage_asset(raw_url):
+            logger.info(f"Purging 404 / missing image tag from response markdown: ![{alt}]({raw_url})")
+            return ""
+
         expanded_url = _format_browser_url(raw_url=raw_url, s3_key=raw_url)
         return f"![{alt}]({expanded_url})"
 
-    return re.sub(r'!\[([^\]]*)\]\(([^)]+)\)', _replace_md_img, text)
+    cleaned = re.sub(r'!\[([^\]]*)\]\(([^)]*)\)', _replace_md_img, text)
+    cleaned = re.sub(r'\n{3,}', '\n\n', cleaned).strip()
+    return cleaned
+
+
+
+def diagnose_s3_storage(key: Optional[str] = None) -> dict:
+    """
+    Comprehensive diagnostic probe for AWS IRSA / MinIO S3 object storage.
+    Inspects authentication mode, environment variables, bucket accessibility,
+    and performs a detailed trace for a specific asset key if provided.
+    """
+    auth_desc, is_aws_env, meta = _detect_auth_mode()
+    region = meta["region"]
+    
+    aws_env_info = {
+        "AWS_ROLE_ARN": os.getenv("AWS_ROLE_ARN") or None,
+        "AWS_WEB_IDENTITY_TOKEN_FILE": bool(os.getenv("AWS_WEB_IDENTITY_TOKEN_FILE")),
+        "AWS_REGION": os.getenv("AWS_REGION") or os.getenv("AWS_DEFAULT_REGION") or region,
+        "ENVIRONMENT": getattr(settings, "ENVIRONMENT", "development"),
+        "S3_ENDPOINT_URL": meta["endpoint"],
+        "S3_BUCKET": _images_bucket(),
+        "S3_DOCUMENTS_BUCKET": _docs_bucket(),
+        "S3_STAGING_BUCKET": _staging_bucket(),
+        "S3_APPROVED_BUCKET": _approved_bucket(),
+        "S3_PUBLIC_URL": getattr(settings, "S3_PUBLIC_URL", None),
+    }
+
+    client = _get_client()
+    s3_connected = client is not None
+    
+    unique_buckets = []
+    for b in [_images_bucket(), _docs_bucket(), _staging_bucket(), _approved_bucket()]:
+        if b and b not in unique_buckets:
+            unique_buckets.append(b)
+
+    bucket_probes = {}
+    if client:
+        for b in unique_buckets:
+            probe_result = {
+                "bucket": b,
+                "list_permission (s3:ListBucket)": "UNKNOWN",
+                "read_permission (s3:GetObject)": "UNKNOWN",
+                "status": "CHECKING"
+            }
+            sample_keys = []
+            try:
+                list_res = client.list_objects_v2(Bucket=b, MaxKeys=3)
+                obj_count = list_res.get("KeyCount", 0)
+                sample_keys = [o["Key"] for o in list_res.get("Contents", [])]
+                probe_result["list_permission (s3:ListBucket)"] = "GRANTED"
+                probe_result["sample_keys_found"] = sample_keys
+                probe_result["object_count_sample"] = obj_count
+            except Exception as list_err:
+                err_str = str(list_err)
+                if "AccessDenied" in err_str:
+                    probe_result["list_permission (s3:ListBucket)"] = "DENIED (AccessDenied: Missing s3:ListBucket)"
+                elif "NoSuchBucket" in err_str:
+                    probe_result["list_permission (s3:ListBucket)"] = "FAILED (NoSuchBucket: Bucket does not exist)"
+                else:
+                    probe_result["list_permission (s3:ListBucket)"] = f"ERROR: {err_str}"
+
+            # Probe s3:GetObject explicitly (using sample key or test probe key)
+            test_key = sample_keys[0] if sample_keys else ".permission_probe_test"
+            try:
+                get_resp = client.get_object(Bucket=b, Key=test_key)
+                if get_resp.get("Body"):
+                    get_resp["Body"].close()
+                probe_result["read_permission (s3:GetObject)"] = "GRANTED"
+            except Exception as get_err:
+                err_str = str(get_err)
+                if "AccessDenied" in err_str:
+                    probe_result["read_permission (s3:GetObject)"] = "DENIED (AccessDenied: Missing s3:GetObject)"
+                elif "NoSuchKey" in err_str:
+                    # In AWS S3, receiving NoSuchKey proves s3:GetObject permission is GRANTED!
+                    probe_result["read_permission (s3:GetObject)"] = "GRANTED (Verified via NoSuchKey response on probe key)"
+                elif "NoSuchBucket" in err_str:
+                    probe_result["read_permission (s3:GetObject)"] = "FAILED (NoSuchBucket)"
+                else:
+                    probe_result["read_permission (s3:GetObject)"] = f"ERROR: {err_str}"
+
+            # Summary diagnosis for this bucket
+            if probe_result["list_permission (s3:ListBucket)"] == "GRANTED" and "GRANTED" in probe_result["read_permission (s3:GetObject)"]:
+                probe_result["status"] = "HEALTHY"
+            elif "DENIED" in probe_result["read_permission (s3:GetObject)"]:
+                probe_result["status"] = "ACTION REQUIRED: Missing s3:GetObject permission. Ask DevOps to add s3:GetObject to the IRSA IAM role."
+            elif "DENIED" in probe_result["list_permission (s3:ListBucket)"]:
+                probe_result["status"] = "ACTION REQUIRED: Missing s3:ListBucket permission. Ask DevOps to add s3:ListBucket to the IRSA IAM role."
+            else:
+                probe_result["status"] = "DEGRADED"
+
+            bucket_probes[b] = probe_result
+
+    # Probe AWS STS Caller Identity if running on AWS
+    caller_identity = None
+    if client and HAS_BOTO3:
+        try:
+            sts_client = boto3.client("sts", region_name=region)
+            caller_identity = sts_client.get_caller_identity()
+        except Exception as sts_err:
+            caller_identity = {"status": "UNAVAILABLE", "error": str(sts_err)}
+
+    key_trace = None
+    if key:
+        clean_key = key.strip().lstrip("/")
+        if clean_key.startswith("api/storage/"):
+            clean_key = clean_key[len("api/storage/"):]
+        elif clean_key.startswith("storage/"):
+            clean_key = clean_key[len("storage/"):]
+        clean_key = clean_key.lstrip("/")
+
+        candidates = [clean_key]
+        if clean_key.startswith("images/"):
+            candidates.append(clean_key[len("images/"):])
+        else:
+            candidates.append(f"images/{clean_key}")
+
+        steps = []
+        found = False
+
+        if client:
+            for b in unique_buckets:
+                for cand in candidates:
+                    try:
+                        resp = client.get_object(Bucket=b, Key=cand)
+                        ctype = resp.get("ContentType", "image/png")
+                        clen = resp.get("ContentLength")
+                        steps.append({
+                            "type": "s3_direct",
+                            "bucket": b,
+                            "key": cand,
+                            "result": "FOUND",
+                            "content_type": ctype,
+                            "content_length": clen
+                        })
+                        found = True
+                        break
+                    except Exception as s3_err:
+                        steps.append({
+                            "type": "s3_direct",
+                            "bucket": b,
+                            "key": cand,
+                            "result": "FAILED",
+                            "error": str(s3_err)
+                        })
+                if found:
+                    break
+
+            # UUID prefix fallback
+            if not found:
+                hex_match = re.search(r'([0-9a-f]{32})_', clean_key)
+                if hex_match:
+                    hex_prefix = hex_match.group(1)
+                    for b in unique_buckets:
+                        for p_cand in [f"images/{hex_prefix}", hex_prefix]:
+                            try:
+                                list_res = client.list_objects_v2(Bucket=b, Prefix=p_cand, MaxKeys=1)
+                                contents = list_res.get("Contents", [])
+                                if contents:
+                                    fk = contents[0]["Key"]
+                                    steps.append({
+                                        "type": "s3_prefix_match",
+                                        "bucket": b,
+                                        "prefix": p_cand,
+                                        "matched_key": fk,
+                                        "result": "FOUND"
+                                    })
+                                    found = True
+                                    break
+                            except Exception as pref_err:
+                                steps.append({
+                                    "type": "s3_prefix_match",
+                                    "bucket": b,
+                                    "prefix": p_cand,
+                                    "result": "FAILED",
+                                    "error": str(pref_err)
+                                })
+                        if found:
+                            break
+
+        # Local disk check
+        local_steps = []
+        fname = os.path.basename(clean_key)
+        for folder in ["data/temp", "data/images", "data/uploads", "data/documents", "data/storage"]:
+            for cand in [clean_key, fname]:
+                lp = os.path.normpath(os.path.join(folder, cand))
+                exists = os.path.exists(lp) and os.path.isfile(lp)
+                local_steps.append({
+                    "path": lp,
+                    "exists": exists
+                })
+                if exists:
+                    found = True
+
+        key_trace = {
+            "queried_key": key,
+            "normalized_key": clean_key,
+            "overall_status": "FOUND" if found else "NOT_FOUND",
+            "s3_trace": steps,
+            "local_disk_trace": local_steps
+        }
+
+    return {
+        "status": "ok" if s3_connected else "degraded",
+        "auth_mode_detected": auth_desc,
+        "is_aws_environment": is_aws_env,
+        "s3_connected": s3_connected,
+        "aws_caller_identity": caller_identity,
+        "aws_environment": aws_env_info,
+        "bucket_probes": bucket_probes,
+        "recent_storage_errors": _recent_storage_errors,
+        "key_diagnosis": key_trace
+    }
 
 
 
@@ -369,6 +699,7 @@ def get_s3_object_stream(s3_key: str, chunk_size: int = 65536) -> tuple:
                     if "NoSuchKey" in err_str or "Not Found" in err_str or "404" in err_str:
                         logger.debug(f"S3 object '{cand}' not found in bucket '{bucket}': {e}")
                     else:
+                        _record_storage_error("get_s3_object_stream", bucket, cand, e)
                         logger.warning(f"Failed to fetch S3 object '{cand}' from bucket '{bucket}': {e}")
 
             # UUID Hex prefix fallback search if filename was slightly altered by LLM/Markdown formatter
@@ -431,6 +762,7 @@ def get_s3_object_data(s3_key: str) -> tuple:
                     if "NoSuchKey" in err_str or "Not Found" in err_str or "404" in err_str:
                         logger.debug(f"S3 object '{cand}' not found in bucket '{bucket}': {e}")
                     else:
+                        _record_storage_error("get_s3_object_data", bucket, cand, e)
                         logger.warning(f"Failed to fetch S3 object '{cand}' from bucket '{bucket}': {e}")
 
             # UUID Hex prefix fallback search
@@ -1104,6 +1436,11 @@ def sync_existing_local_to_minio(client=None) -> dict:
                         logger.debug(f"Could not remove synced fallback file {full_path}: {rm_e}")
                 except Exception as upload_e:
                     logger.warning(f"Failed to sync fallback file '{fname}' to MinIO: {upload_e}")
+                    # If credentials or connection fails, invalidate client and stop syncing loop
+                    if "credentials" in str(upload_e).lower() or "endpoint" in str(upload_e).lower():
+                        global _cached_client
+                        _cached_client = False
+                        return {"staging": synced_staging, "approved": synced_approved, "storage": synced_storage, "status": "offline"}
 
     if synced_staging > 0 or synced_approved > 0 or synced_storage > 0:
         logger.info(f"🔄 Synced local files to MinIO: {synced_staging} staging, {synced_approved} approved, {synced_storage} storage migrated.")
@@ -1182,6 +1519,7 @@ def delete_image_by_ref(raw_ref: str, knowledge_id: Optional[str] = None) -> boo
     """
     Sanitizes and deletes a single image reference from MinIO images bucket
     and local disk fallback storage.
+    Supports full URLs, relative paths, full S3 keys, and filename substrings.
     """
     if not raw_ref or not isinstance(raw_ref, str):
         return False
@@ -1203,18 +1541,38 @@ def delete_image_by_ref(raw_ref: str, knowledge_id: Optional[str] = None) -> boo
     clean = clean.lstrip("/")
     fname = os.path.basename(clean)
 
-    if not fname or len(fname) < 4:
+    if not fname or len(fname) < 3:
         return False
 
     success = False
-    # Delete from MinIO images bucket
+    # 1. Delete direct key candidates from MinIO images bucket
     if client:
-        for s3_candidate in [f"images/{fname}", clean, fname]:
+        candidates = {f"images/{fname}", clean, fname}
+        for s3_candidate in candidates:
             try:
                 client.delete_object(Bucket=images_bucket, Key=s3_candidate)
                 success = True
             except Exception as e:
                 logger.debug(f"MinIO delete image '{s3_candidate}' note: {e}")
+
+        # 2. If fname might be a suffix without the random UUID prefix (e.g. 'photo.jpg')
+        # Scan images bucket for keys ending with or containing the unique filename (if filename >= 6 chars)
+        if len(fname) >= 6:
+            try:
+                paginator = client.get_paginator('list_objects_v2')
+                for page in paginator.paginate(Bucket=images_bucket, Prefix="images/"):
+                    for obj in page.get('Contents', []):
+                        k = obj.get('Key', '')
+                        if k.endswith(f"_{fname}") or k == fname or k.endswith(f"/{fname}"):
+                            try:
+                                client.delete_object(Bucket=images_bucket, Key=k)
+                                success = True
+                                logger.info(f"🗑️ Deleted MinIO image matched suffix '{k}'")
+                            except Exception as del_err:
+                                logger.debug(f"Failed deleting matched key '{k}': {del_err}")
+            except Exception as scan_err:
+                logger.debug(f"MinIO pattern scan error for '{fname}': {scan_err}")
+
         log_kid = f" for doc '{knowledge_id}'" if knowledge_id else ""
         logger.info(f"🗑️ Deleted MinIO image '{fname}'{log_kid}")
 
@@ -1352,7 +1710,7 @@ def extract_image_keys_from_doc_data(doc_data: dict) -> set:
 def delete_knowledge_images_and_assets(knowledge_id: str, doc_data: Optional[dict] = None) -> dict:
     """
     Comprehensively deletes all MinIO objects and local fallback files associated with a knowledge document:
-    1. All embedded images in MinIO 'images' bucket.
+    1. All embedded images in MinIO 'images' bucket (via explicit refs and active S3 pattern scanner).
     2. All original documents and canonical JSON in MinIO 'knowledge-documents' bucket.
     3. Staging and approved JSONs in MinIO 'staging' and 'approved' buckets.
     4. Local disk fallback files in data/images, data/storage, data/temp, data/uploads.
@@ -1360,10 +1718,16 @@ def delete_knowledge_images_and_assets(knowledge_id: str, doc_data: Optional[dic
     kid_str = str(knowledge_id).strip()
     client = _get_client()
     docs_bucket = _docs_bucket()
+    images_bucket = _images_bucket()
 
     all_image_refs = set()
+    batch_ids = set()
+
     if doc_data and isinstance(doc_data, dict):
         all_image_refs.update(extract_image_keys_from_doc_data(doc_data))
+        b_id = doc_data.get("batch_id") or (doc_data.get("metadata") or {}).get("batch_id")
+        if b_id and isinstance(b_id, str):
+            batch_ids.add(b_id.strip())
 
     # Also check staging and approved JSON from MinIO or disk if doc_data wasn't fully populated
     for getter in [get_staging_json, get_approved_json]:
@@ -1371,11 +1735,14 @@ def delete_knowledge_images_and_assets(knowledge_id: str, doc_data: Optional[dic
             m_doc = getter(kid_str)
             if m_doc and isinstance(m_doc, dict):
                 all_image_refs.update(extract_image_keys_from_doc_data(m_doc))
+                b_id = m_doc.get("batch_id") or (m_doc.get("metadata") or {}).get("batch_id")
+                if b_id and isinstance(b_id, str):
+                    batch_ids.add(b_id.strip())
         except Exception:
             pass
 
     # Check local JSON cache if doc_data wasn't fully populated
-    for folder in ["data/output", "data/pending", "data/temp"]:
+    for folder in ["data/output", "data/pending", "data/temp", "data/approved"]:
         for cand in [f"{kid_str}.json", f"{kid_str}_parsed.json"]:
             cand_path = os.path.join(folder, cand)
             if os.path.exists(cand_path):
@@ -1384,11 +1751,16 @@ def delete_knowledge_images_and_assets(knowledge_id: str, doc_data: Optional[dic
                         cached_doc = json.load(fp)
                     if isinstance(cached_doc, dict):
                         all_image_refs.update(extract_image_keys_from_doc_data(cached_doc))
+                        b_id = cached_doc.get("batch_id") or (cached_doc.get("metadata") or {}).get("batch_id")
+                        if b_id and isinstance(b_id, str):
+                            batch_ids.add(b_id.strip())
                 except Exception:
                     pass
 
     deleted_images = []
     seen_fnames = set()
+
+    # 1. Delete explicit image references
     for ref in all_image_refs:
         clean = str(ref).strip()
         if "/api/storage/" in clean:
@@ -1404,35 +1776,63 @@ def delete_knowledge_images_and_assets(knowledge_id: str, doc_data: Optional[dic
             if delete_image_by_ref(fname, knowledge_id=kid_str):
                 deleted_images.append(fname)
 
-    # Clean MinIO knowledge-documents bucket (originals & canonical)
-    if client and kid_str:
+    # 2. Comprehensive S3 Scanner on images bucket for any images tagged with kid_str or batch_id
+    if client and (kid_str or batch_ids):
         try:
-            # 1. Delete canonical JSON
-            client.delete_object(Bucket=docs_bucket, Key=f"canonical/{kid_str}/document.json")
-        except Exception:
-            pass
-
-        try:
-            # 2. Delete original upload files in originals/.../{kid_str}/...
+            match_identifiers = {kid_str} | batch_ids
             paginator = client.get_paginator('list_objects_v2')
-            for page in paginator.paginate(Bucket=docs_bucket, Prefix="originals/"):
+            for page in paginator.paginate(Bucket=images_bucket):
                 for obj in page.get('Contents', []):
                     key = obj.get('Key', '')
-                    if f"/{kid_str}/" in key:
+                    matched = False
+                    for ident in match_identifiers:
+                        if ident and len(ident) >= 6 and ident in key:
+                            matched = True
+                            break
+                    if matched and key not in seen_fnames:
+                        seen_fnames.add(key)
                         try:
-                            client.delete_object(Bucket=docs_bucket, Key=key)
-                            logger.info(f"🗑️ Deleted original document '{key}' from MinIO '{docs_bucket}'")
-                        except Exception as err:
-                            logger.debug(f"Could not delete original document '{key}': {err}")
-        except Exception as e:
-            logger.debug(f"Error purging originals for '{kid_str}': {e}")
+                            client.delete_object(Bucket=images_bucket, Key=key)
+                            deleted_images.append(key)
+                            logger.info(f"🗑️ Purged matched MinIO image '{key}' for doc '{kid_str}'")
+                        except Exception as del_err:
+                            logger.debug(f"Failed deleting matched MinIO image '{key}': {del_err}")
+        except Exception as scan_err:
+            logger.debug(f"Error scanning images bucket for '{kid_str}': {scan_err}")
 
-    # Clean staging & approved JSON in MinIO
-    try:
-        delete_staging_json(kid_str)
-        delete_approved_json(kid_str)
-    except Exception:
-        pass
+    # Clean MinIO knowledge-documents bucket (originals & canonical)
+    if client and (kid_str or batch_ids):
+        all_ids_to_clean = {kid_str} | batch_ids
+        for target_id in all_ids_to_clean:
+            if not target_id:
+                continue
+            try:
+                # 1. Delete canonical JSON
+                client.delete_object(Bucket=docs_bucket, Key=f"canonical/{target_id}/document.json")
+            except Exception:
+                pass
+
+            try:
+                # 2. Delete original upload files in originals/.../{target_id}/...
+                paginator = client.get_paginator('list_objects_v2')
+                for page in paginator.paginate(Bucket=docs_bucket, Prefix="originals/"):
+                    for obj in page.get('Contents', []):
+                        key = obj.get('Key', '')
+                        if f"/{target_id}/" in key or f"_{target_id}_" in key:
+                            try:
+                                client.delete_object(Bucket=docs_bucket, Key=key)
+                                logger.info(f"🗑️ Deleted original document '{key}' from MinIO '{docs_bucket}'")
+                            except Exception as err:
+                                logger.debug(f"Could not delete original document '{key}': {err}")
+            except Exception as e:
+                logger.debug(f"Error purging originals for '{target_id}': {e}")
+
+            # Clean staging & approved JSON in MinIO
+            try:
+                delete_staging_json(target_id)
+                delete_approved_json(target_id)
+            except Exception:
+                pass
 
     return {
         "knowledge_id": kid_str,

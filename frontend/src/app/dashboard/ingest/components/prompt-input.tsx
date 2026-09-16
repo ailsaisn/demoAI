@@ -1,83 +1,17 @@
 "use client";
 
-import * as React from "react";
-import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 import {
-	RiFilePdf2Line,
-	RiFileWord2Line,
-	RiFileExcel2Line,
-	RiFilePpt2Line,
-	RiImage2Line,
-	RiFileTextLine,
-	RiCloseLine,
 	RiAttachmentLine,
-	RiUploadCloud2Line,
 	RiCornerDownLeftLine,
 	RiLoader4Line,
+	RiUploadCloud2Line,
 } from "@remixicon/react";
-import {
-	Attachment,
-	AttachmentMedia,
-	AttachmentContent,
-	AttachmentTitle,
-	AttachmentActions,
-	AttachmentAction,
-} from "@/components/ui/attachment";
-import { toast } from "sonner";
-
-const ACCEPTED_FILE_EXTENSIONS = [
-	".docx",
-	".pptx",
-	".xlsx",
-	".pdf",
-	".txt",
-	".csv",
-	".png",
-	".jpg",
-	".jpeg",
-	".webp",
-];
-const ACCEPT_STRING = ACCEPTED_FILE_EXTENSIONS.join(",");
-
-function validateAndFilterFiles(files: File[]): File[] {
-	const validFiles: File[] = [];
-	for (const file of files) {
-		const lowerName = file.name.toLowerCase();
-		if (lowerName.endsWith(".doc") || lowerName.endsWith(".ppt") || lowerName.endsWith(".xls")) {
-			toast.error(
-				`Legacy format detected in "${file.name}". Please save as .docx, .pptx, or .xlsx before uploading.`,
-			);
-			continue;
-		}
-		const isSupportedExt = ACCEPTED_FILE_EXTENSIONS.some((ext) => lowerName.endsWith(ext));
-		const isImageMime = file.type.startsWith("image/");
-		const isDocMime =
-			file.type === "application/pdf" ||
-			file.type === "text/plain" ||
-			file.type === "text/csv" ||
-			file.type.includes("openxmlformats");
-
-		if (!isSupportedExt && !isImageMime && !isDocMime) {
-			toast.error(
-				`Unsupported file format: "${file.name}". Supported formats: .docx, .pptx, .xlsx, .pdf, .txt, .csv, and images.`,
-			);
-			continue;
-		}
-
-		// If pasted from clipboard without proper extension, normalize filename
-		if (isImageMime && !isSupportedExt) {
-			const ext = file.type.split("/")[1] || "png";
-			const normalizedFile = new File([file], `pasted_image_${Date.now()}.${ext}`, {
-				type: file.type,
-			});
-			validFiles.push(normalizedFile);
-		} else {
-			validFiles.push(file);
-		}
-	}
-	return validFiles;
-}
+import * as React from "react";
+import { usePromptAttachments } from "../hooks/use-prompt-attachments";
+import { ACCEPT_STRING } from "../utils/prompt-input-utils";
+import { PromptAttachmentList } from "./prompt-attachment-list";
 
 export interface PromptInputProps extends React.HTMLAttributes<HTMLDivElement> {
 	onSend?: (value: string, category: string | undefined, files: File[]) => boolean | void;
@@ -117,117 +51,19 @@ export function PromptInput({
 	const isControlled = value !== undefined;
 	const [uncontrolledValue, setUncontrolledValue] = React.useState(defaultValue);
 	const inputValue = isControlled ? value : uncontrolledValue;
-	const [attachedFiles, setAttachedFiles] = React.useState<File[]>([]);
-	const [isDragging, setIsDragging] = React.useState(false);
-	const dragCounter = React.useRef(0);
 
-	const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-		const files = e.target.files;
-		if (files && files.length > 0) {
-			const filtered = validateAndFilterFiles(Array.from(files));
-			if (filtered.length > 0) {
-				setAttachedFiles((prev) => [...prev, ...filtered]);
-			}
-		}
-	};
-
-	const handleDragEnter = (e: React.DragEvent<HTMLDivElement>) => {
-		e.preventDefault();
-		e.stopPropagation();
-		if (disabled) return;
-
-		if (e.dataTransfer.types && Array.from(e.dataTransfer.types).includes("Files")) {
-			dragCounter.current += 1;
-			setIsDragging(true);
-		}
-	};
-
-	const handleDragLeave = (e: React.DragEvent<HTMLDivElement>) => {
-		e.preventDefault();
-		e.stopPropagation();
-		if (disabled) return;
-
-		dragCounter.current -= 1;
-		if (dragCounter.current <= 0) {
-			dragCounter.current = 0;
-			setIsDragging(false);
-		}
-	};
-
-	const handleDragOver = (e: React.DragEvent<HTMLDivElement>) => {
-		e.preventDefault();
-		e.stopPropagation();
-		if (disabled) return;
-
-		if (e.dataTransfer) {
-			e.dataTransfer.dropEffect = "copy";
-		}
-	};
-
-	const handleDrop = (e: React.DragEvent<HTMLDivElement>) => {
-		e.preventDefault();
-		e.stopPropagation();
-		if (disabled) return;
-
-		dragCounter.current = 0;
-		setIsDragging(false);
-
-		if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
-			const filtered = validateAndFilterFiles(Array.from(e.dataTransfer.files));
-			if (filtered.length > 0) {
-				setAttachedFiles((prev) => [...prev, ...filtered]);
-			}
-		}
-	};
-
-	const handlePaste = (e: React.ClipboardEvent) => {
-		if (disabled) return;
-		if (e.clipboardData.files && e.clipboardData.files.length > 0) {
-			e.preventDefault();
-			const filtered = validateAndFilterFiles(Array.from(e.clipboardData.files));
-			if (filtered.length > 0) {
-				setAttachedFiles((prev) => [...prev, ...filtered]);
-			}
-		}
-	};
-
-	const getFileIconAndColor = (filename?: string | null) => {
-		if (!filename)
-			return { Icon: RiFileTextLine, bgColor: "bg-blue-50", textColor: "text-blue-600" };
-		const ext = filename.split(".").pop()?.toLowerCase() || "";
-		switch (ext) {
-			case "pdf":
-				return { Icon: RiFilePdf2Line, bgColor: "bg-red-50", textColor: "text-red-600" };
-			case "doc":
-			case "docx":
-				return { Icon: RiFileWord2Line, bgColor: "bg-blue-50", textColor: "text-blue-600" };
-			case "xls":
-			case "xlsx":
-			case "csv":
-				return { Icon: RiFileExcel2Line, bgColor: "bg-emerald-50", textColor: "text-emerald-600" };
-			case "ppt":
-			case "pptx":
-			case "pps":
-			case "ppsx":
-			case "pot":
-			case "potx":
-			case "odp":
-				return { Icon: RiFilePpt2Line, bgColor: "bg-orange-50", textColor: "text-orange-600" };
-			case "png":
-			case "jpg":
-			case "jpeg":
-			case "gif":
-			case "webp":
-				return { Icon: RiImage2Line, bgColor: "bg-purple-50", textColor: "text-purple-600" };
-			case "txt":
-			default:
-				return { Icon: RiFileTextLine, bgColor: "bg-blue-50", textColor: "text-blue-600" };
-		}
-	};
-
-	const removeFile = (indexToRemove: number) => {
-		setAttachedFiles((prev) => prev.filter((_, index) => index !== indexToRemove));
-	};
+	const {
+		attachedFiles,
+		isDragging,
+		handleFileChange,
+		handleDragEnter,
+		handleDragLeave,
+		handleDragOver,
+		handleDrop,
+		handlePaste,
+		removeFile,
+		clearAttachedFiles,
+	} = usePromptAttachments({ disabled });
 
 	const textareaRef = React.useRef<HTMLTextAreaElement>(null);
 
@@ -242,7 +78,7 @@ export function PromptInput({
 			}
 			onValueChange?.("");
 			if (currentFiles.length === 0) {
-				setAttachedFiles([]);
+				clearAttachedFiles();
 			}
 			if (textareaRef.current) {
 				textareaRef.current.style.height = "auto";
@@ -264,9 +100,7 @@ export function PromptInput({
 		const handleGlobalKeyDown = (e: KeyboardEvent) => {
 			const target = e.target as HTMLElement | null;
 			const isInputActive =
-				target?.tagName === "INPUT" ||
-				target?.tagName === "TEXTAREA" ||
-				target?.isContentEditable;
+				target?.tagName === "INPUT" || target?.tagName === "TEXTAREA" || target?.isContentEditable;
 			if (e.key === "/" && !isInputActive && !disabled) {
 				e.preventDefault();
 				textareaRef.current?.focus();
@@ -299,73 +133,19 @@ export function PromptInput({
 						<RiUploadCloud2Line className="size-5" />
 					</div>
 					<div className="flex flex-col items-center gap-0.5">
-						<span className="text-xs font-semibold text-zinc-900">
-							Drop files here to attach
-						</span>
-						<span className="text-[11px] text-zinc-500">
-							Release to add files to your prompt
-						</span>
+						<span className="text-xs font-semibold text-zinc-900">Drop files here to attach</span>
+						<span className="text-[11px] text-zinc-500">Release to add files to your prompt</span>
 					</div>
 				</div>
 			)}
 
 			{/* Attached Files Preview with Interactive Progress Bar */}
-			{attachedFiles.length > 0 && (
-				<div className="flex gap-2 mb-2.5 overflow-x-auto pb-1.5 custom-scrollbar">
-					{attachedFiles.map((file, idx) => {
-						const { Icon, bgColor, textColor } = getFileIconAndColor(file.name);
-						return (
-							<Attachment
-								key={idx}
-								className={cn(
-									"bg-white border border-zinc-200 shadow-none p-2 min-w-44 max-w-64 shrink-0 rounded-lg transition-all",
-									isLoading && "border-blue-300 bg-blue-50/20",
-								)}
-							>
-								<AttachmentMedia className={cn(bgColor, textColor, "rounded-lg p-2 shrink-0")}>
-									{isLoading ? (
-										<RiLoader4Line className="w-5 h-5 animate-spin text-blue-600" />
-									) : (
-										<Icon className="w-5 h-5" />
-									)}
-								</AttachmentMedia>
-								<AttachmentContent className="overflow-hidden min-w-0 pr-1 flex-1">
-									<AttachmentTitle className="text-[13px] font-medium text-zinc-950 truncate block">
-										{file.name}
-									</AttachmentTitle>
-									<div className="flex items-center justify-between gap-1 text-[11px] text-zinc-500 mt-0.5">
-										<span>{(file.size / 1024).toFixed(1)} KB</span>
-										{isLoading && uploadProgress !== undefined && (
-											<span className="font-semibold text-blue-600">
-												{uploadProgress > 0 ? `${uploadProgress}%` : "Uploading..."}
-											</span>
-										)}
-									</div>
-									{isLoading && uploadProgress !== undefined && (
-										<div className="w-full h-1 bg-blue-100 rounded-full overflow-hidden mt-1.5">
-											<div
-												className="h-full bg-blue-600 transition-all duration-150 rounded-full"
-												style={{ width: `${Math.max(8, uploadProgress)}%` }}
-											/>
-										</div>
-									)}
-								</AttachmentContent>
-								{!isLoading && (
-									<AttachmentActions>
-										<AttachmentAction
-											variant="ghost"
-											className="hover:bg-zinc-100 text-zinc-500 hover:text-zinc-950 ml-1 rounded-md"
-											onClick={() => removeFile(idx)}
-										>
-											<RiCloseLine className="w-4 h-4" />
-										</AttachmentAction>
-									</AttachmentActions>
-								)}
-							</Attachment>
-						);
-					})}
-				</div>
-			)}
+			<PromptAttachmentList
+				files={attachedFiles}
+				isLoading={isLoading}
+				uploadProgress={uploadProgress}
+				onRemoveFile={removeFile}
+			/>
 
 			{/* Input Area */}
 			<div className="mb-2">

@@ -178,7 +178,7 @@ async def _upsert_single_doctor(db: AsyncSession, data: Dict[str, Any]) -> User:
             user_type_code=user_type_code,
             ecosystem=ecosystem,
             type=UserType.DOCTOR,
-            token_limit=0
+            token_limit=None
         )
         if is_inactive:
             user.deleted_at = datetime.now(timezone.utc)

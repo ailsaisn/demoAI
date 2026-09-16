@@ -72,7 +72,6 @@ import { cleanMessageTurn } from "@/components/shared/markdown/utils";
 import { toast } from "sonner";
 import { ApprovalActions } from "./approval-actions";
 import { CategorySettings } from "./category-settings";
-import { SectionCategoriesEditor } from "./section-categories-editor";
 import { TitleSettings } from "./title-settings";
 import { VisibilitySettings as VisibilitySettingsUI } from "./visibility-settings";
 import { ProcessingPipelineCard } from "./processing-pipeline-card";
@@ -94,7 +93,7 @@ interface ChatPreviewProps {
 	categories?: string[];
 	onChangeCategories?: (newCategories: string[]) => void;
 	chunks?: KnowledgeChunkItem[];
-	onChangeChunks?: (newChunks: KnowledgeChunkItem[]) => void;
+	onChangeChunks?: (chunks: KnowledgeChunkItem[]) => void;
 	visibilitySettings?: IVisibilitySettings;
 	onChangeVisibilitySettings?: (settings: IVisibilitySettings) => void;
 	title?: string;
@@ -276,7 +275,6 @@ export function ChatPreview({
 	categories = [],
 	onChangeCategories,
 	chunks = [],
-	onChangeChunks,
 	visibilitySettings,
 	onChangeVisibilitySettings,
 	title,
@@ -339,14 +337,14 @@ export function ChatPreview({
 		onChangeSummary?.(val);
 	};
 
-	const handleStartManualEdit = (currentDisplayContent: string) => {
-		const initialText = localSummary || currentDisplayContent;
-		setBackupManualSummary(initialText);
-		if (!localSummary) {
-			setLocalSummary(initialText);
-		}
-		setIsManualEditing(true);
-	};
+	// const handleStartManualEdit = (currentDisplayContent: string) => {
+	// 	const initialText = localSummary || currentDisplayContent;
+	// 	setBackupManualSummary(initialText);
+	// 	if (!localSummary) {
+	// 		setLocalSummary(initialText);
+	// 	}
+	// 	setIsManualEditing(true);
+	// };
 
 	const handleCancelManualEdit = () => {
 		setLocalSummary(backupManualSummary);
@@ -1019,6 +1017,14 @@ export function ChatPreview({
 		}
 	};
 
+	const formatFileSize = (bytes?: number | null) => {
+		if (!bytes || bytes <= 0) return "0 B";
+		if (bytes >= 1024 * 1024 * 1024) return (bytes / (1024 * 1024 * 1024)).toFixed(1) + " GB";
+		if (bytes >= 1024 * 1024) return (bytes / (1024 * 1024)).toFixed(1) + " MB";
+		if (bytes >= 1024) return (bytes / 1024).toFixed(1) + " KB";
+		return bytes + " B";
+	};
+
 	const scrollToBottomAndFocus = () => {
 		setTimeout(() => {
 			if (viewportRef.current) {
@@ -1227,27 +1233,14 @@ export function ChatPreview({
 				(isEditMode && knowledgeStatus === "APPROVED") ||
 				knowledgeStatus === "PENDING");
 
-		const hasMultipleChunks = chunks && chunks.length > 1;
-
 		const content = (
 			<div className={`flex flex-col gap-4 w-full mt-4 ${!shouldShow ? "hidden" : ""}`}>
-				{hasMultipleChunks ? (
-					<SectionCategoriesEditor
-						chunks={chunks}
-						onChangeChunks={onChangeChunks}
-						categories={categories}
-						onChangeCategories={onChangeCategories}
-						isEditMode={isEditMode || knowledgeStatus === "PENDING"}
-						showSaveActions={isEditMode}
-					/>
-				) : (
-					<CategorySettings
-						categories={categories}
-						onChangeCategories={(c) => onChangeCategories?.(c)}
-						isEditMode={isEditMode || knowledgeStatus === "PENDING"}
-						showSaveActions={isEditMode}
-					/>
-				)}
+				<CategorySettings
+					categories={categories}
+					onChangeCategories={(c) => onChangeCategories?.(c)}
+					isEditMode={isEditMode || knowledgeStatus === "PENDING"}
+					showSaveActions={isEditMode}
+				/>
 				{visibilitySettings && onChangeVisibilitySettings && (
 					<VisibilitySettingsUI
 						settings={visibilitySettings}
@@ -1575,9 +1568,7 @@ export function ChatPreview({
 					<span className="inline-flex items-center px-2 py-0.5 rounded-md text-[11px] font-semibold bg-amber-50 text-amber-800 border border-amber-200/80">
 						Action Required
 					</span>
-					<span className="font-normal text-zinc-600">
-						Confirm to apply proposed changes
-					</span>
+					<span className="font-normal text-zinc-600">Confirm to apply proposed changes</span>
 				</div>
 				<div className="flex items-center gap-2">
 					<Button
@@ -1629,8 +1620,8 @@ export function ChatPreview({
 						{index === firstAssistantIndex && headerNode}
 						{index === firstAssistantIndex && renderConfidenceScore()}
 
-						{/* Primary Manual Edit Trigger Button matching action bar style */}
-						<div className="flex items-center justify-end mb-3">
+						{/* Primary Manual Edit Trigger Button (hidden for now) */}
+						{/* <div className="flex items-center justify-end mb-3">
 							<Button
 								type="button"
 								size="sm"
@@ -1641,7 +1632,7 @@ export function ChatPreview({
 								<RiEdit2Line className="size-3.5" />
 								Manual Edit
 							</Button>
-						</div>
+						</div> */}
 
 						<MarkdownContent content={displayContent} />
 						{renderOperationActions(msg)}
@@ -1918,7 +1909,8 @@ export function ChatPreview({
 													{failureErrorMsg}
 												</p>
 												<p className="text-[11px] text-zinc-600 leading-relaxed">
-													Please check if the file is password-protected, corrupted, or re-upload the document in a standard format (PDF, DOCX, XLSX, TXT, Images).
+													Please check if the file is password-protected, corrupted, or re-upload
+													the document in a standard format (PDF, DOCX, XLSX, TXT, Images).
 												</p>
 
 												<div className="flex flex-wrap items-center gap-2 pt-1">
@@ -2285,7 +2277,7 @@ export function ChatPreview({
 												{file.name}
 											</AttachmentTitle>
 											<AttachmentDescription className="text-[11px] text-zinc-500">
-												{(file.size / 1024).toFixed(1)} KB
+												{formatFileSize(file.size)}
 											</AttachmentDescription>
 										</AttachmentContent>
 										<AttachmentActions>

@@ -40,6 +40,7 @@ class BranchResponse(BranchBase):
     used: int = 0
     remaining: int = 0
     tokens_used: Optional[int] = 0
+    has_custom_limit: Optional[bool] = False
     
     doctors: Optional[List[BranchDoctorResponse]] = []
     

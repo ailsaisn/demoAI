@@ -210,23 +210,36 @@ export function UserStaffProfileSheet({
 									</Field>
 
 									{!isEditing && (
-										<Field>
-											<FieldLabel>
-												<FieldTitle>Date & Time Created</FieldTitle>
-											</FieldLabel>
-											<FieldContent>
-												<span className="text-sm text-gray-900">
-													{new Date(staff.created_at).toLocaleString("en-US", {
-														year: "numeric",
-														month: "numeric",
-														day: "numeric",
-														hour: "numeric",
-														minute: "numeric",
-														hour12: true,
-													})}
-												</span>
-											</FieldContent>
-										</Field>
+										<>
+											<Field>
+												<FieldLabel>
+													<FieldTitle>Tokens Used This Month</FieldTitle>
+												</FieldLabel>
+												<FieldContent>
+													<span className="text-sm text-gray-900 font-medium">
+														{(staff.tokens_used ?? 0).toLocaleString()} tokens
+													</span>
+												</FieldContent>
+											</Field>
+
+											<Field>
+												<FieldLabel>
+													<FieldTitle>Date & Time Created</FieldTitle>
+												</FieldLabel>
+												<FieldContent>
+													<span className="text-sm text-gray-900">
+														{new Date(staff.created_at).toLocaleString("en-US", {
+															year: "numeric",
+															month: "numeric",
+															day: "numeric",
+															hour: "numeric",
+															minute: "numeric",
+															hour12: true,
+														})}
+													</span>
+												</FieldContent>
+											</Field>
+										</>
 									)}
 								</div>
 							</div>

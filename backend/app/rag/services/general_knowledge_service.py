@@ -27,24 +27,26 @@ from app.rag.services.rag_retriever import parse_date_safely
 
 
 def resolve_approved_file(knowledge_id: str, output_dir: str = "data/output") -> Optional[str]:
-    """Resolves the physical JSON file path for an approved document, hydrating from MinIO/DB if needed."""
+    """Resolves the physical JSON file path for an approved document, hydrating from MinIO if needed."""
     if not knowledge_id:
         return None
+
     k_id = str(knowledge_id).strip()
 
-    # Try exact paths first
+    # 1. Try exact paths
     direct_paths = [
+        k_id,
         os.path.join(output_dir, f"{k_id}.json"),
         os.path.join(output_dir, f"{k_id}_parsed.json"),
         os.path.join("backend", output_dir, f"{k_id}.json"),
         os.path.join("backend", output_dir, f"{k_id}_parsed.json"),
     ]
     for p in direct_paths:
-        if os.path.exists(p):
+        if os.path.exists(p) and os.path.isfile(p):
             return p
 
-    # Search in directory
-    for folder in [output_dir, os.path.join("backend", output_dir)]:
+    # 2. Search in directories
+    for folder in [output_dir, "data/pending", os.path.join("backend", output_dir), os.path.join("backend", "data/pending")]:
         if os.path.exists(folder):
             for f in os.listdir(folder):
                 if f.endswith(".json") and f != "bm25_index.pkl":
@@ -53,16 +55,16 @@ def resolve_approved_file(knowledge_id: str, output_dir: str = "data/output") ->
                         with open(f_path, "r", encoding="utf-8") as fp:
                             doc = json.load(fp)
                         if isinstance(doc, dict):
-                            doc_id = str(doc.get("knowledge_id", ""))
-                            doc_title = str(doc.get("title", ""))
-                            file_name = str(doc.get("file_name", ""))
+                            doc_id = str(doc.get("knowledge_id") or doc.get("id") or "")
+                            doc_title = str(doc.get("title") or "")
+                            file_name = str(doc.get("file_name") or "")
                             f_no_ext = f.replace(".json", "").replace("_parsed", "")
                             if k_id.lower() in (doc_id.lower(), doc_title.lower(), file_name.lower(), f_no_ext.lower(), f.lower()):
                                 return f_path
                     except Exception as err:
                         logger.debug(f"[DedicatedService] Error scanning file {f}: {err}")
 
-    # MinIO Source of Truth Hydration fallback
+    # 3. MinIO Hydration fallback
     clean_p = os.path.join(output_dir, f"{k_id}.json")
     try:
         from app.services.storage import get_approved_json
@@ -75,41 +77,61 @@ def resolve_approved_file(knowledge_id: str, output_dir: str = "data/output") ->
     except Exception as e:
         logger.debug(f"[DedicatedService] MinIO approved hydration note: {e}")
 
-    # PostgreSQL Database Hydration fallback
+    # 4. PostgreSQL Database Hydration fallback
     try:
-        from app.core.database import engine
+        import asyncio
+        import concurrent.futures
+        from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
         from sqlalchemy import text
-        with engine.connect() as conn:
-            row = conn.execute(
-                text("SELECT id, title, file_name, ai_summary, metadata FROM knowledge WHERE id::text = :k_id AND status = 'APPROVED' AND deleted_at IS NULL LIMIT 1"),
-                {"k_id": k_id}
-            ).fetchone()
-            if not row:
-                row = conn.execute(
-                    text("SELECT id, title, file_name, ai_summary, metadata FROM knowledge WHERE (LOWER(title) = LOWER(:k_id) OR LOWER(file_name) = LOWER(:k_id)) AND status = 'APPROVED' AND deleted_at IS NULL LIMIT 1"),
-                    {"k_id": k_id}
-                ).fetchone()
+        from app.core.config import settings
 
-            if row:
-                row_id, title, fname, summary, meta_val = row[0], row[1], row[2], row[3], row[4]
-                m_dict = meta_val if isinstance(meta_val, dict) else (json.loads(meta_val) if isinstance(meta_val, str) else {})
-                doc = {
-                    "knowledge_id": str(row_id),
-                    "batch_id": m_dict.get("batch_id"),
-                    "file_name": fname or str(row_id),
-                    "title": title or fname or str(row_id),
-                    "status": "Approved",
-                    "summary": summary or "",
-                    "chunks": m_dict.get("chunks", []),
-                    "images": m_dict.get("images", []),
-                    "image_urls": m_dict.get("image_urls", []),
-                    "categories": m_dict.get("categories", []),
-                    "visibility_settings": m_dict.get("visibility_settings", {})
-                }
-                os.makedirs(output_dir, exist_ok=True)
-                with open(clean_p, "w", encoding="utf-8") as fp:
-                    json.dump(doc, fp, indent=4, ensure_ascii=False)
-                return clean_p
+        async def _fetch_from_db():
+            temp_engine = create_async_engine(settings.DATABASE_URL)
+            try:
+                async with AsyncSession(temp_engine) as session:
+                    res = await session.execute(
+                        text("SELECT id, title, file_name, ai_summary, metadata FROM knowledge WHERE (id::text = :k_id OR LOWER(title) = LOWER(:k_id) OR LOWER(file_name) = LOWER(:k_id)) AND status = 'APPROVED' AND deleted_at IS NULL LIMIT 1"),
+                        {"k_id": k_id}
+                    )
+                    return res.fetchone()
+            finally:
+                await temp_engine.dispose()
+
+        def _worker():
+            return asyncio.run(_fetch_from_db())
+
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+
+        if loop and loop.is_running():
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                row = pool.submit(_worker).result()
+        else:
+            row = asyncio.run(_fetch_from_db())
+
+        if row:
+            row_id, title, fname, summary, meta_val = row[0], row[1], row[2], row[3], row[4]
+            m_dict = meta_val if isinstance(meta_val, dict) else (json.loads(meta_val) if isinstance(meta_val, str) else {})
+            doc = {
+                "knowledge_id": str(row_id),
+                "batch_id": m_dict.get("batch_id"),
+                "file_name": fname or str(row_id),
+                "title": title or fname or str(row_id),
+                "status": "Approved",
+                "summary": summary or "",
+                "chunks": m_dict.get("chunks", []),
+                "images": m_dict.get("images", []),
+                "image_urls": m_dict.get("image_urls", []),
+                "categories": m_dict.get("categories", []),
+                "visibility_settings": m_dict.get("visibility_settings", {})
+            }
+            os.makedirs(output_dir, exist_ok=True)
+            clean_p = os.path.join(output_dir, f"{row_id}.json")
+            with open(clean_p, "w", encoding="utf-8") as fp:
+                json.dump(doc, fp, indent=4, ensure_ascii=False)
+            return clean_p
     except Exception as db_e:
         logger.debug(f"[DedicatedService] DB hydration fallback note: {db_e}")
 
@@ -118,6 +140,95 @@ def resolve_approved_file(knowledge_id: str, output_dir: str = "data/output") ->
 
 class GeneralKnowledgeService:
     """Dedicated service for performing safe, item-level CRUD operations on approved KB data."""
+
+    @staticmethod
+    def detect_mutation_scope(user_prompt: str) -> str:
+        """
+        Detects whether the prompt explicitly requests GLOBAL scope across the entire Knowledge Base/all products.
+        Default scope is always SINGLE_ITEM unless explicit global keywords are present.
+        """
+        if not user_prompt:
+            return "SINGLE_ITEM"
+
+        global_keywords = [
+            r'\bdi\s+seluruh\s+kb\b',
+            r'\bdi\s+seluruh\s+knowledge\b',
+            r'\bdi\s+seluruh\s+dokumen\b',
+            r'\bdi\s+seluruh\s+database\b',
+            r'\bdi\s+semua\s+produk\b',
+            r'\bdi\s+semua\s+dokumen\b',
+            r'\bpada\s+semua\s+produk\b',
+            r'\bpada\s+seluruh\s+produk\b',
+            r'\bsemua\s+produk\b',
+            r'\bseluruh\s+produk\b',
+            r'\ball\s+products\b',
+            r'\bacross\s+the\s+knowledge\s+base\b',
+            r'\bacross\s+all\s+documents\b',
+        ]
+        prompt_low = user_prompt.lower()
+        for kw in global_keywords:
+            if re.search(kw, prompt_low):
+                return "GLOBAL"
+        return "SINGLE_ITEM"
+
+    @staticmethod
+    def log_mutation_summary(
+        operation_id: str,
+        action: str,  # "UPDATE" or "DELETE"
+        scope: str,   # "SINGLE_ITEM" or "GLOBAL"
+        knowledge_id: str,
+        entity_id: str,
+        target_name: str,
+        field: str,
+        old_value: Any,
+        new_value: Any,
+        affected_documents: int,
+        affected_entities: int,
+        chunks_old: int,
+        chunks_new: int,
+        canonical_status: str = "SUCCESS",
+        pgvector_status: str = "SUCCESS",
+        bm25_status: str = "SUCCESS",
+        retrieval_status: str = "SUCCESS",
+        status: str = "APPLIED"
+    ):
+        log_box = f"""
+============================================================
+GENERAL KNOWLEDGE MUTATION
+============================================================
+operation_id : {operation_id}
+action       : {action}
+scope        : {scope}
+
+TARGET
+------------------------------------------------------------
+knowledge_id : {knowledge_id}
+entity_id    : {entity_id or '-'}
+name         : {target_name}
+
+CHANGE
+------------------------------------------------------------
+field        : {field}
+old_value    : {old_value if old_value is not None else '-'}
+new_value    : {new_value if new_value is not None else '-'}
+
+AFFECTED
+------------------------------------------------------------
+documents    : {affected_documents}
+entities     : {affected_entities}
+chunks_old   : {chunks_old}
+chunks_new   : {chunks_new}
+
+RESULT
+------------------------------------------------------------
+canonical    : {canonical_status}
+pgvector     : {pgvector_status}
+bm25         : {bm25_status}
+retrieval    : {retrieval_status}
+status       : {status}
+============================================================
+"""
+        logger.info(log_box)
 
     @staticmethod
     async def find_all_target_documents_and_item(
@@ -688,7 +799,8 @@ class GeneralKnowledgeService:
         pipeline=None,
         target_item: Optional[str] = None,
         db=None,
-        auto_approve: bool = True
+        auto_approve: bool = True,
+        scope: str = "SINGLE_ITEM"
     ) -> Dict[str, Any]:
         """
         Applies a surgical, item-level edit to an approved KB document.
@@ -702,6 +814,7 @@ class GeneralKnowledgeService:
             with open(approved_file, "r", encoding="utf-8") as f:
                 existing_doc = json.load(f)
 
+            backup_doc = json.loads(json.dumps(existing_doc))
             doc_kid = str(existing_doc.get("knowledge_id") or knowledge_id)
             old_value = None
             clean_field = (field or "").strip().lower()
@@ -737,20 +850,37 @@ class GeneralKnowledgeService:
                 else:
                     old_value = existing_doc.get(clean_field) or existing_doc.get("metadata", {}).get(clean_field)
                     existing_doc[clean_field] = formatted_val
-                    if "metadata" not in existing_doc or not isinstance(existing_doc["metadata"], dict):
-                        existing_doc["metadata"] = {}
                     existing_doc["metadata"][clean_field] = formatted_val
 
             # Surgically update summary and chunks
             chunks = existing_doc.get("chunks", [])
-            clean_item_name = re.sub(r'^\*+|\*+$|^_+|_+$|^#+\s*', '', target_item.strip()).strip() if target_item else ""
+            raw_item_clean = target_item.strip() if target_item else ""
+            clean_item_name = re.sub(
+                r'^(?:kemasan\s+produk|kemasan\s+item|kemasan|produk|item|detail\s+produk|detail|bagian|treatment)\s+',
+                '',
+                raw_item_clean,
+                flags=re.IGNORECASE
+            ).strip()
+            clean_item_name = re.sub(
+                r'\s+(?:pada|di|dalam|untuk)\s+(?:dokumen|doc|file|kb|knowledge)?\s*[0-9a-fA-F\-]{8,}.*$',
+                '',
+                clean_item_name,
+                flags=re.IGNORECASE
+            ).strip()
+            clean_item_name = re.sub(
+                r'\s+(?:pada|di|dalam|untuk)\s+(?:dokumen|doc|file|kb|knowledge)\s+.*$',
+                '',
+                clean_item_name,
+                flags=re.IGNORECASE
+            ).strip()
+            clean_item_name = re.sub(r'^\*+|\*+$|^_+|_+$|^#+\s*', '', clean_item_name).strip()
             target_item_lower = clean_item_name.lower() if clean_item_name else None
 
             # 1. Update summary for target item
             curr_summary = existing_doc.get("summary", "")
             if curr_summary:
                 doc_title = str(existing_doc.get("title") or existing_doc.get("file_name") or "")
-                is_dedicated = bool(target_item and (target_item_lower in doc_title.lower() or doc_title.lower() in target_item_lower))
+                is_dedicated = bool(clean_item_name and (clean_item_name.lower() == doc_title.lower() or (len(doc_title) > 5 and doc_title.lower() in clean_item_name.lower())))
 
                 # Field synonym regex helper
                 field_synonyms = [re.escape(clean_field)]
@@ -777,77 +907,66 @@ class GeneralKnowledgeService:
                     re.MULTILINE | re.IGNORECASE
                 )
 
+                is_name_rename = clean_field in (
+                    "nama", "nama_produk", "title", "product_name", "treatment", "treatment_name", "judul"
+                )
+                is_ingredient_rename = not target_item and clean_field in (
+                    "kandungan", "komposisi", "ingredients", "key_ingredients", "key ingredients", "ingridients", "bahan"
+                )
+
                 if is_dedicated:
-                    # In a dedicated document, the entire document is about target_item
-                    if bullet_attr_pattern.search(curr_summary):
-                        curr_summary = bullet_attr_pattern.sub(rf'\g<1>{formatted_val}', curr_summary)
+                    if is_name_rename:
+                        existing_doc["title"] = formatted_val
+                        if clean_item_name and clean_item_name.lower() in curr_summary.lower():
+                            curr_summary = re.sub(rf'\b{re.escape(clean_item_name)}\b', formatted_val, curr_summary, flags=re.IGNORECASE)
+                        existing_doc["summary"] = curr_summary
                     else:
-                        if "## Informasi Produk" in curr_summary:
-                            curr_summary = re.sub(
-                                r'(## Informasi Produk[^\n]*\n(?:[^\n]*\n)*?)(?=\n##|\Z)',
-                                rf'\g<1>- **{field.capitalize()}:** {formatted_val}\n',
-                                curr_summary
-                            )
+                        if bullet_attr_pattern.search(curr_summary):
+                            curr_summary = bullet_attr_pattern.sub(rf'\g<1>{formatted_val}', curr_summary, count=1)
                         else:
                             curr_summary = curr_summary.rstrip() + f"\n- **{field.capitalize()}:** {formatted_val}\n"
-                    existing_doc["summary"] = curr_summary
+                        existing_doc["summary"] = curr_summary
 
-                elif target_item and target_item_lower:
-                    escaped_item = re.escape(target_item.strip())
-                    # Heading section match: ## target_item ... until next same-level or higher heading
-                    item_section_pattern = re.compile(
-                        r'(#{1,4}\s*[^\n]*' + escaped_item + r'[^\n]*\n(?:(?!^#{1,2}\s)[^\n]*\n?)*)',
-                        re.MULTILINE | re.IGNORECASE
-                    )
-                    match = item_section_pattern.search(curr_summary)
-                    if match:
-                        section_text = match.group(1)
-                        if clean_field in ("price", "harga", "biaya"):
-                            clean_num = re.sub(r'^(?:rp\.?\s*)', '', formatted_val, flags=re.IGNORECASE).strip()
-                            price_pat = re.compile(
-                                r'(^[|\-\*]\s*\*+(?:harga|price|biaya|tarif)[:\*\s]+|^[|\-\*]\s*(?:harga|price|biaya|tarif)[:\s]+)(?:Rp\.?\s*)?[^\n\r]+',
-                                re.MULTILINE | re.IGNORECASE
-                            )
-                            if price_pat.search(section_text):
-                                section_text = price_pat.sub(rf'\g<1>Rp {clean_num}', section_text)
-                            else:
-                                section_text = section_text.rstrip() + f"\n- **Harga**: Rp {clean_num}\n\n"
-                        elif clean_field in ("sku", "kode", "kode_sku"):
-                            sku_pat = re.compile(
-                                r'(^[|\-\*]\s*\*+(?:sku|kode)[:\*\s]+|^[|\-\*]\s*(?:sku|kode)[:\s]+)[^\n\r]+',
-                                re.MULTILINE | re.IGNORECASE
-                            )
-                            if sku_pat.search(section_text):
-                                section_text = sku_pat.sub(rf'\g<1>{formatted_val}', section_text)
-                            else:
-                                section_text = section_text.rstrip() + f"\n- **SKU**: {formatted_val}\n\n"
+                elif clean_item_name and target_item_lower:
+                    # Multi-product document: split into sections and isolate update to matched section
+                    sections = re.split(r'(?=\n#{1,4}\s+)', curr_summary)
+                    matched_idx = -1
+                    for idx, sec in enumerate(sections):
+                        if target_item_lower in sec.lower():
+                            matched_idx = idx
+                            break
+
+                    if matched_idx != -1:
+                        target_sec = sections[matched_idx]
+                        if is_name_rename:
+                            target_sec = re.sub(rf'\b{re.escape(clean_item_name)}\b', formatted_val, target_sec, flags=re.IGNORECASE)
                         else:
-                            if bullet_attr_pattern.search(section_text):
-                                section_text = bullet_attr_pattern.sub(rf'\g<1>{formatted_val}', section_text)
+                            if bullet_attr_pattern.search(target_sec):
+                                target_sec = bullet_attr_pattern.sub(rf'\g<1>{formatted_val}', target_sec, count=1)
                             else:
-                                section_text = section_text.rstrip() + f"\n- **{field.capitalize()}**: {formatted_val}\n\n"
-
-                        curr_summary = curr_summary[:match.start()] + section_text + curr_summary[match.end():]
+                                target_sec = target_sec.rstrip() + f"\n- **{field.capitalize()}**: {formatted_val}\n\n"
+                        sections[matched_idx] = target_sec
+                        curr_summary = "".join(sections)
                         existing_doc["summary"] = curr_summary
+                    else:
+                        table_row_pattern = re.compile(rf'(^\s*\|\s*[^\n|]*{re.escape(clean_item_name)}[^\n|]*\|)([^\n]+)$', re.MULTILINE | re.IGNORECASE)
+                        if table_row_pattern.search(curr_summary):
+                            if is_name_rename:
+                                curr_summary = re.sub(rf'\b{re.escape(clean_item_name)}\b', formatted_val, curr_summary, flags=re.IGNORECASE)
+                            else:
+                                curr_summary = table_row_pattern.sub(rf'\g<1> {formatted_val} |', curr_summary, count=1)
+                            existing_doc["summary"] = curr_summary
+                        elif bullet_key_pattern := re.search(rf'(^[|\-\*]\s*\*\*[^\*\n:]*{re.escape(clean_item_name)}[^\*\n:]*\*\*\s*:\s*)[^\n]+', curr_summary, re.MULTILINE | re.IGNORECASE):
+                            curr_summary = re.sub(
+                                rf'(^[|\-\*]\s*\*\*[^\*\n:]*{re.escape(clean_item_name)}[^\*\n:]*\*\*\s*:\s*)[^\n]+',
+                                rf'\g<1>{formatted_val}',
+                                curr_summary,
+                                flags=re.MULTILINE | re.IGNORECASE,
+                                count=1
+                            )
+                            existing_doc["summary"] = curr_summary
 
-                    # 1B. Table row match: | target_item | ... |
-                    table_row_pattern = re.compile(rf'(^\s*\|\s*[^\n|]*{escaped_item}[^\n|]*\|)([^\n]+)$', re.MULTILINE | re.IGNORECASE)
-                    if table_row_pattern.search(curr_summary):
-                        curr_summary = table_row_pattern.sub(rf'\g<1> {formatted_val} |', curr_summary)
-                        existing_doc["summary"] = curr_summary
-
-                    # 1C. Bullet key match: - **target_item**: ...
-                    bullet_key_pattern = re.compile(rf'(^[|\-\*]\s*\*\*[^\*\n:]*{escaped_item}[^\*\n:]*\*\*\s*:\s*)[^\n]+', re.MULTILINE | re.IGNORECASE)
-                    if bullet_key_pattern.search(curr_summary):
-                        curr_summary = bullet_key_pattern.sub(rf'\g<1>{formatted_val}', curr_summary)
-                        existing_doc["summary"] = curr_summary
-
-                    # 1D. Ingredient / keyword replacement across summary:
-                    if clean_item_name and clean_item_name.lower() in curr_summary.lower():
-                        curr_summary = re.sub(rf'\b{re.escape(clean_item_name)}\b', formatted_val, curr_summary, flags=re.IGNORECASE)
-                        existing_doc["summary"] = curr_summary
-
-            # 2. Update matching chunks
+            # 2. Update matching chunks ONLY
             for chunk in chunks:
                 if not isinstance(chunk, dict):
                     continue
@@ -857,53 +976,28 @@ class GeneralKnowledgeService:
 
                 chunk_text = chunk.get("text", "")
                 chunk_text_lower = chunk_text.lower()
+                chunk_prod_name = str(chunk["metadata"].get("product_name", "")).lower()
 
-                # Replace direct ingredient / keyword in chunk text if present
-                if clean_item_name and clean_item_name.lower() in chunk_text_lower:
+                chunk_belongs = True
+                if target_item_lower:
+                    if target_item_lower not in chunk_text_lower and target_item_lower not in chunk_prod_name:
+                        chunk_belongs = False
+
+                if not chunk_belongs:
+                    continue
+
+                if (is_name_rename or is_ingredient_rename) and clean_item_name and clean_item_name.lower() in chunk_text_lower:
                     chunk["text"] = re.sub(rf'\b{re.escape(clean_item_name)}\b', formatted_val, chunk_text, flags=re.IGNORECASE)
                     chunk_text = chunk["text"]
                     chunk_text_lower = chunk_text.lower()
+                    if is_name_rename:
+                        chunk["metadata"]["product_name"] = formatted_val
+                        chunk["metadata"]["entity"] = formatted_val
 
-                # If target_item is specified, skip chunks that do not belong to this item
-                if target_item_lower and target_item_lower not in chunk_text_lower:
-                    continue
-
-                # Apply field metadata to matching chunk
-                chunk["metadata"][clean_field] = formatted_val
-
-                # Update chunk text
-                escaped_item = re.escape(target_item.strip()) if target_item else ""
-                if clean_field in ("price", "harga", "biaya"):
-                    clean_num = re.sub(r'^(?:rp\.?\s*)', '', formatted_val, flags=re.IGNORECASE).strip()
-                    price_pattern = re.compile(r'(^[|\-\*]\s*\*+(?:harga|price|biaya|tarif)[:\*\s]+|^[|\-\*]\s*(?:harga|price|biaya|tarif)[:\s]+)(?:Rp\.?\s*)?[^\n\r]+', re.MULTILINE | re.IGNORECASE)
-                    if price_pattern.search(chunk_text):
-                        chunk["text"] = price_pattern.sub(rf'\g<1>Rp {clean_num}', chunk_text)
-                    elif not re.match(r'^#{1,3}\s+[^\n]+$', chunk_text.strip()):
-                        chunk["text"] = chunk_text.strip() + f"\n- **Harga**: Rp {clean_num}"
-                elif clean_field in ("sku", "kode_sku", "kode"):
-                    sku_pattern = re.compile(r'(^[|\-\*]\s*\*+(?:sku|kode)[:\*\s]+|^[|\-\*]\s*(?:sku|kode)[:\s]+)[^\n\r]+', re.MULTILINE | re.IGNORECASE)
-                    if sku_pattern.search(chunk_text):
-                        chunk["text"] = sku_pattern.sub(rf'\g<1>{formatted_val}', chunk_text)
-                    elif not re.match(r'^#{1,3}\s+[^\n]+$', chunk_text.strip()):
-                        chunk["text"] = chunk_text.strip() + f"\n- **SKU**: {formatted_val}"
-                elif escaped_item:
-                    # Check table row in chunk
-                    t_pattern = re.compile(rf'(^\s*\|\s*[^\n|]*{escaped_item}[^\n|]*\|)([^\n]+)$', re.MULTILINE | re.IGNORECASE)
-                    if t_pattern.search(chunk_text):
-                        chunk["text"] = t_pattern.sub(rf'\g<1> {formatted_val} |', chunk_text)
-                    else:
-                        b_pattern = re.compile(rf'(^[|\-\*]\s*\*\*[^\*\n:]*{escaped_item}[^\*\n:]*\*\*\s*:\s*)[^\n]+', re.MULTILINE | re.IGNORECASE)
-                        if b_pattern.search(chunk_text):
-                            chunk["text"] = b_pattern.sub(rf'\g<1>{formatted_val}', chunk_text)
-                        elif bullet_attr_pattern.search(chunk_text):
-                            chunk["text"] = bullet_attr_pattern.sub(rf'\g<1>{formatted_val}', chunk_text)
-                        elif not re.match(r'^#{1,3}\s+[^\n]+$', chunk_text.strip()):
-                            chunk["text"] = chunk_text.strip() + f"\n- **{field.capitalize()}**: {formatted_val}"
+                if bullet_attr_pattern.search(chunk_text):
+                    chunk["text"] = bullet_attr_pattern.sub(rf'\g<1>{formatted_val}', chunk_text, count=1)
                 else:
-                    if bullet_attr_pattern.search(chunk_text):
-                        chunk["text"] = bullet_attr_pattern.sub(rf'\g<1>{formatted_val}', chunk_text)
-                    elif not re.match(r'^#{1,3}\s+[^\n]+$', chunk_text.strip()):
-                        chunk["text"] = chunk_text.strip() + f"\n- **{field.capitalize()}**: {formatted_val}"
+                    chunk["text"] = chunk_text.strip() + f"\n- **{field.capitalize()}**: {formatted_val}"
 
             # Synchronize last assistant turn in staging_history/history if present
             curr_summary = existing_doc.get("summary", "")
@@ -1034,6 +1128,17 @@ class GeneralKnowledgeService:
                             logger.info(f"[DedicatedService] Re-indexed {len(doc_chunks)} chunks in vector store for '{doc_kid}'")
                         except Exception as ins_err:
                             logger.error(f"[DedicatedService] Vector insert failed: {ins_err}")
+                            # Rollback JSON file & vector store to backup state
+                            with open(approved_file, "w", encoding="utf-8") as f:
+                                json.dump(backup_doc, f, indent=4, ensure_ascii=False)
+                            backup_chunks = backup_doc.get("chunks", [])
+                            try:
+                                v_store.delete_document(doc_kid)
+                                if backup_chunks:
+                                    v_store.insert_chunks(backup_chunks)
+                            except Exception:
+                                pass
+                            return {"success": False, "error": f"Vector indexing failed: {ins_err}"}
 
                 # 4. Re-ingest into BM25 Index
                 bm25_inst = bm25_index
@@ -1061,6 +1166,25 @@ class GeneralKnowledgeService:
                             logger.info(f"[DedicatedService] Re-indexed {len(doc_chunks)} chunks in BM25 for '{doc_kid}'")
                         except Exception as bm25_ins_err:
                             logger.error(f"[DedicatedService] BM25 insert failed: {bm25_ins_err}")
+                            # Rollback JSON file, vector store, and BM25 to backup state
+                            with open(approved_file, "w", encoding="utf-8") as f:
+                                json.dump(backup_doc, f, indent=4, ensure_ascii=False)
+                            backup_chunks = backup_doc.get("chunks", [])
+                            if v_store:
+                                try:
+                                    v_store.delete_document(doc_kid)
+                                    if backup_chunks:
+                                        v_store.insert_chunks(backup_chunks)
+                                except Exception:
+                                    pass
+                            if bm25_inst:
+                                try:
+                                    bm25_inst.remove_file_chunks(doc_kid)
+                                    if backup_chunks:
+                                        bm25_inst.add_chunks(backup_chunks)
+                                except Exception:
+                                    pass
+                            return {"success": False, "error": f"BM25 indexing failed: {bm25_ins_err}"}
 
                 # 5. Sync PostgreSQL Knowledge record
                 try:
@@ -1084,6 +1208,26 @@ class GeneralKnowledgeService:
                         pass
 
                 logger.info(f"[DedicatedService] Auto-approved edit for '{doc_kid}'. Data immediately retrievable by RAG.")
+                GeneralKnowledgeService.log_mutation_summary(
+                    operation_id=f"op_{doc_kid[:8]}",
+                    action="UPDATE",
+                    scope=scope,
+                    knowledge_id=doc_kid,
+                    entity_id=clean_item_name or doc_kid,
+                    target_name=clean_item_name or existing_doc.get("title", doc_kid),
+                    field=clean_field,
+                    old_value=str(old_value)[:200] if old_value else None,
+                    new_value=formatted_val,
+                    affected_documents=1,
+                    affected_entities=1,
+                    chunks_old=len(backup_doc.get("chunks", [])),
+                    chunks_new=len(existing_doc.get("chunks", [])),
+                    canonical_status="SUCCESS",
+                    pgvector_status="SUCCESS",
+                    bm25_status="SUCCESS",
+                    retrieval_status="SUCCESS",
+                    status="APPLIED"
+                )
                 return {
                     "success": True,
                     "knowledge_id": doc_kid,
@@ -1130,7 +1274,8 @@ class GeneralKnowledgeService:
         vector_store=None,
         bm25_index=None,
         target_item: Optional[str] = None,
-        db=None
+        db=None,
+        scope: str = "SINGLE_ITEM"
     ) -> Dict[str, Any]:
         """
         Deletes a KB document or surgically deletes a specific item within a multi-item document.
@@ -1162,33 +1307,34 @@ class GeneralKnowledgeService:
                         if s_clean and not s_clean.lower().startswith("produk dengan kandungan"):
                             delete_targets.append(s_clean)
 
-                ing_m = re.search(r'(?:produk\s+(?:dengan\s+)?(?:yang\s+)?(?:mengandung|kandungan|bahan)\s+|kandungan\s+)(.+)', target_item, re.IGNORECASE)
+                ing_m = re.search(r'(?:produk\s+(?:dengan\s+)?(?:yang\s+)?(?:mengandung|kandungan|bahan)\s+|kandungan\s+|bahan\s+)(.+)', target_item, re.IGNORECASE)
                 ing_keyword = ing_m.group(1).strip().lower() if ing_m else None
-                if not ing_keyword and len(target_item_clean.split()) <= 4 and target_item_clean.lower() not in (str(existing_doc.get("title", "")).lower(), str(existing_doc.get("file_name", "")).lower()):
-                    ing_keyword = target_item_clean.lower()
 
-                # If ingredient keyword is present, collect all specific product names containing it
+                # If ingredient keyword is present, collect all specific product/section names containing it
                 if ing_keyword:
-                    corpus = summary + " " + str(existing_doc.get("batch_summary", ""))
-                    if existing_doc.get("staging_history") and isinstance(existing_doc.get("staging_history"), list):
-                        for t in existing_doc.get("staging_history"):
-                            if isinstance(t, dict) and t.get("role") == "assistant":
-                                corpus += "\n" + str(t.get("content", ""))
                     ing_re = re.compile(rf'\b{re.escape(ing_keyword)}\b', re.IGNORECASE)
-                    for line in corpus.splitlines():
-                        if ing_re.search(line):
-                            # Check for heading
-                            m_h = re.match(r'^#{1,3}\s+([^\n]+)', line)
+                    doc_title_clean = str(existing_doc.get("title", "")).strip().lower()
+                    doc_fn_clean = str(existing_doc.get("file_name", "")).strip().lower()
+
+                    # 1. Section-level check: split summary into heading sections (H2+)
+                    sections = re.split(r'(?=(?:^|\n)##{1,3}\s+)', summary)
+                    for s in sections:
+                        if ing_re.search(s):
+                            m_h = re.search(r'^(?:##{1,3}\s+)([^\n\r]+)', s.strip())
                             if m_h:
                                 h_name = re.sub(r'[\*\_]', '', m_h.group(1)).strip()
-                                if len(h_name) > 2 and h_name.lower() not in ("ringkasan dokumen", "penutup", "evaluasi hasil", "profil pasien", "detail perawatan"):
+                                h_name_lower = h_name.lower()
+                                if len(h_name) > 2 and h_name_lower not in ("ringkasan dokumen", "penutup", "evaluasi hasil", "profil pasien", "detail perawatan", doc_title_clean, doc_fn_clean):
                                     delete_targets.append(h_name)
-                            # Check for bullet or table row product name
-                            m_b = re.match(r'^[|\-\*]\s*([^\n|→]+?)(?:\s*→|\s*\||\s*:\s*Sabun|\s*:\s*Pelembap|\s*:\s*Perawatan)', line)
-                            if m_b:
-                                b_name = re.sub(r'[\*\_#]', '', m_b.group(1)).strip()
-                                if len(b_name) > 3 and not b_name.lower().startswith("http") and not b_name.lower().startswith("/api/storage"):
-                                    delete_targets.append(b_name)
+
+                    # 2. Table rows check
+                    for line in summary.splitlines():
+                        if "|" in line and ing_re.search(line):
+                            cols = [c.strip() for c in line.split("|") if c.strip()]
+                            if cols:
+                                item_col = re.sub(r'[\*\_#]', '', cols[0]).strip()
+                                if len(item_col) > 2 and item_col.lower() not in ("nama treatment", "nama produk", "produk", "treatment", "item", "nama", doc_title_clean, doc_fn_clean):
+                                    delete_targets.append(item_col)
 
                 if not delete_targets:
                     delete_targets = [target_item_clean]
@@ -1201,35 +1347,6 @@ class GeneralKnowledgeService:
                         seen_dt.add(dt.lower())
                         unique_delete_targets.append(dt)
                 delete_targets = unique_delete_targets
-
-                original_chunks = existing_doc.get("chunks", [])
-                filtered_chunks = []
-                removed_count = 0
-                ing_re = re.compile(rf'\b{re.escape(ing_keyword)}\b', re.IGNORECASE) if ing_keyword else None
-
-                for chunk in original_chunks:
-                    chunk_text = chunk.get("text", "") if isinstance(chunk, dict) else ""
-                    chunk_lower = chunk_text.lower()
-                    meta = chunk.get("metadata", {}) if isinstance(chunk, dict) else {}
-
-                    # Check if chunk matches any delete target or ingredient
-                    should_remove = False
-                    for dt in delete_targets:
-                        dt_low = dt.lower()
-                        if dt_low in chunk_lower or re.sub(r'[\*\_#]', '', chunk_lower).find(dt_low) != -1:
-                            should_remove = True
-                            break
-                        if dt_low in (str(meta.get("product_name", "")).lower(), str(meta.get("title", "")).lower(), str(meta.get("section", "")).lower(), str(meta.get("heading", "")).lower()):
-                            should_remove = True
-                            break
-
-                    if not should_remove and ing_re and ing_re.search(chunk_lower):
-                        should_remove = True
-
-                    if should_remove:
-                        removed_count += 1
-                    else:
-                        filtered_chunks.append(chunk)
 
                 # Helper to clean markdown sections, bullets, and table rows
                 def _clean_md(text: str, targets: list[str], ing_kw: Optional[str]) -> str:
@@ -1247,7 +1364,7 @@ class GeneralKnowledgeService:
                             flags=re.MULTILINE | re.IGNORECASE
                         )
                         res = re.sub(
-                            rf'^[|\-\*\d\.]+\s*[^\n]*{esc}[^\n]*$\n?',
+                            rf'^[^\n]*{esc}[^\n]*$\n?',
                             '',
                             res,
                             flags=re.MULTILINE | re.IGNORECASE
@@ -1255,7 +1372,7 @@ class GeneralKnowledgeService:
                     if ing_kw and len(ing_kw.strip()) > 1:
                         esc_ing = re.escape(ing_kw.strip())
                         res = re.sub(
-                            rf'^[|\-\*\d\.]+\s*[^\n]*\b{esc_ing}\b[^\n]*$\n?',
+                            rf'^[^\n]*\b{esc_ing}\b[^\n]*$\n?',
                             '',
                             res,
                             flags=re.MULTILINE | re.IGNORECASE
@@ -1281,10 +1398,65 @@ class GeneralKnowledgeService:
                                 if orig_c:
                                     turn["content"] = _clean_md(orig_c, delete_targets, ing_keyword)
 
+                original_chunks = existing_doc.get("chunks", [])
+                filtered_chunks = []
+                removed_count = 0
+                ing_re = re.compile(rf'\b{re.escape(ing_keyword)}\b', re.IGNORECASE) if ing_keyword else None
+
+                for chunk in original_chunks:
+                    chunk_text = chunk.get("text", "") if isinstance(chunk, dict) else ""
+                    chunk_lower = chunk_text.lower()
+                    meta = chunk.get("metadata", {}) if isinstance(chunk, dict) else {}
+
+                    # Check if chunk exclusively belongs to a deleted target
+                    is_dedicated_target_chunk = False
+                    for dt in delete_targets:
+                        dt_low = dt.lower()
+                        chunk_prod = str(meta.get("product_name", "")).lower()
+                        chunk_sec = str(meta.get("section", "")).lower()
+                        chunk_head = str(meta.get("heading", "")).lower()
+                        if dt_low and (dt_low in chunk_prod or dt_low in chunk_sec or dt_low in chunk_head or dt_low in chunk_lower):
+                            is_dedicated_target_chunk = True
+                            break
+
+                    if is_dedicated_target_chunk:
+                        removed_count += 1
+                        continue
+
+                    # For shared/table/catalog chunks, surgically clean target item text from chunk
+                    cleaned_chunk_text = _clean_md(chunk_text, delete_targets, ing_keyword)
+                    
+                    # If chunk text was stripped of all meaningful content, discard it
+                    stripped_clean = re.sub(r'^[#\|\-\*\s\:\d\.]+', '', cleaned_chunk_text).strip()
+                    if not stripped_clean or len(stripped_clean) < 10:
+                        removed_count += 1
+                        continue
+
+                    chunk["text"] = cleaned_chunk_text
+                    filtered_chunks.append(chunk)
+
+                # If summary still has content but all chunks were removed, re-chunk from remaining summary
+                remaining_summary = (existing_doc.get("summary") or "").strip()
+                if not filtered_chunks and remaining_summary and len(remaining_summary) > 20:
+                    try:
+                        from app.rag.utils.summary_chunker import chunk_summary_markdown
+                        rechunked = chunk_summary_markdown(
+                            summary=remaining_summary,
+                            source_file=existing_doc.get("file_name", doc_kid),
+                            knowledge_id=doc_kid,
+                            batch_id=existing_doc.get("batch_id"),
+                            title=existing_doc.get("title", doc_kid),
+                            doc_type=existing_doc.get("document_type", "GENERAL")
+                        )
+                        if rechunked:
+                            filtered_chunks = rechunked
+                    except Exception as rc_err:
+                        logger.debug(f"[DedicatedService] Re-chunk fallback note on delete: {rc_err}")
+
                 existing_doc["chunks"] = filtered_chunks
 
-                if not filtered_chunks:
-                    # All chunks were removed -> Full document deletion
+                if not filtered_chunks and not remaining_summary:
+                    # Document is completely empty -> Full document deletion
                     if approved_file and os.path.exists(approved_file):
                         try:
                             os.remove(approved_file)

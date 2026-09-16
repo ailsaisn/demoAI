@@ -21,11 +21,12 @@ export function ProductCard({ data }: { data: CardData }) {
 	let usage = "";
 	let ageGroup = "";
 	let sideEffects = "";
+	let description = "";
 	const otherItems: KeyValueItem[] = [];
 
 	for (const item of items) {
 		const k = item.key.toLowerCase();
-		if (k.includes("product name") || k.includes("nama produk")) {
+		if (k.includes("product name") || k.includes("nama produk") || k === "nama") {
 			productName = item.value;
 		} else if (k.includes("brand") || k.includes("merek")) {
 			brand = item.value;
@@ -34,7 +35,9 @@ export function ProductCard({ data }: { data: CardData }) {
 		} else if (
 			k.includes("product type") ||
 			k.includes("tipe produk") ||
-			k.includes("jenis produk")
+			k.includes("jenis produk") ||
+			k.includes("kategori") ||
+			k.includes("category")
 		) {
 			productType = item.value;
 		} else if (
@@ -47,7 +50,9 @@ export function ProductCard({ data }: { data: CardData }) {
 			k.includes("net content") ||
 			k.includes("berat bersih") ||
 			k.includes("volume") ||
-			k.includes("isi bersih")
+			k.includes("isi bersih") ||
+			k.includes("ukuran") ||
+			k.includes("size")
 		) {
 			netContent = item.value;
 		} else if (k.includes("harga") || k.includes("price")) {
@@ -64,9 +69,20 @@ export function ProductCard({ data }: { data: CardData }) {
 			ageGroup = item.value;
 		} else if (k.includes("efek samping") || k.includes("side effect")) {
 			sideEffects = item.value;
+		} else if (
+			k.includes("deskripsi") ||
+			k.includes("description") ||
+			k.includes("ringkasan") ||
+			k.includes("manfaat")
+		) {
+			description = item.value;
 		} else {
 			otherItems.push(item);
 		}
+	}
+
+	if (!productName && imageAlt && !/^(?:product|foto produk|image|document image|gambar)$/i.test(imageAlt.trim())) {
+		productName = imageAlt.trim();
 	}
 
 	const cleanImgUrl = imageUrl && isValidImageUrl(imageUrl) ? resolveImageUrl(imageUrl) : undefined;
@@ -129,14 +145,18 @@ export function ProductCard({ data }: { data: CardData }) {
 						</h4>
 					)}
 
-					{/* 2. Brand / Product Type / Variant Badges */}
-					{(brand || productType || variant) && (
+					{/* 2. SKU / Brand / Product Type / Variant Badges */}
+					{(sku || brand || productType || variant) && (
 						<div className="flex items-center gap-1.5 flex-wrap my-0.5">
-							{brand && (
+							{sku ? (
+								<span className="text-xs font-mono font-medium text-zinc-800 bg-zinc-100 px-2 py-0.5 rounded border border-zinc-200">
+									SKU: {sku}
+								</span>
+							) : brand ? (
 								<span className="text-xs font-medium text-zinc-800 bg-zinc-100 px-2 py-0.5 rounded border border-zinc-200">
 									{brand}
 								</span>
-							)}
+							) : null}
 							{productType && (
 								<span className="text-xs font-normal text-zinc-700 bg-zinc-100 px-2 py-0.5 rounded border border-zinc-200/80">
 									{productType}
@@ -150,10 +170,10 @@ export function ProductCard({ data }: { data: CardData }) {
 						</div>
 					)}
 
-					{/* 3. Net Content */}
+					{/* 3. Net Content / Ukuran */}
 					{netContent && (
 						<div>
-							<span className="text-zinc-500 font-medium">Net Content:</span>{" "}
+							<span className="text-zinc-500 font-medium">Ukuran:</span>{" "}
 							<span className="text-zinc-900 font-normal">{netContent}</span>
 						</div>
 					)}
@@ -208,7 +228,14 @@ export function ProductCard({ data }: { data: CardData }) {
 						</div>
 					)}
 
-					{/* 10. Other custom items */}
+					{/* 10. Description / Deskripsi */}
+					{description && (
+						<div className="mt-1 text-zinc-600 text-xs sm:text-[13px] leading-relaxed">
+							{description}
+						</div>
+					)}
+
+					{/* 11. Other custom items */}
 					{otherItems.map((item, idx) => (
 						<div key={idx}>
 							<span className="text-zinc-500 font-medium">{item.key}:</span>{" "}

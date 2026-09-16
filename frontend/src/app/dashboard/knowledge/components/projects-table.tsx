@@ -1,8 +1,15 @@
 "use client";
 
-import { useState } from "react";
-import { useRouter } from "next/navigation";
+import { ConfirmationModal } from "@/components/shared/confirmation-modal";
+import { DataTablePagination } from "@/components/shared/data-table-pagination";
+import { SortableTableHead } from "@/components/shared/sortable-table-head";
 import { Button } from "@/components/ui/button";
+import {
+	DropdownMenu,
+	DropdownMenuContent,
+	DropdownMenuItem,
+	DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import {
 	Table,
@@ -12,29 +19,24 @@ import {
 	TableHeader,
 	TableRow,
 } from "@/components/ui/table";
-import {
-	DropdownMenu,
-	DropdownMenuContent,
-	DropdownMenuItem,
-	DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
+import { usePagination } from "@/hooks/use-pagination";
+import { useTableSort } from "@/hooks/use-table-sort";
 import {
 	RiAddCircleLine,
 	RiBookOpenLine,
-	RiPencilLine,
-	RiEyeLine,
-	RiDeleteBinLine,
-	RiLoader4Line,
 	RiCheckLine,
 	RiCloseLine,
+	RiDeleteBinLine,
+	RiEyeLine,
+	RiLoader4Line,
 	RiMore2Line,
+	RiPencilLine,
 } from "@remixicon/react";
-import { useProjects, useUpdateProject, useDeleteProject } from "../hooks/use-projects";
-import { ProjectDialog } from "./project-dialog";
-import { ConfirmationModal } from "@/components/shared/confirmation-modal";
-import { usePagination } from "@/hooks/use-pagination";
-import { DataTablePagination } from "@/components/shared/data-table-pagination";
+import { useRouter } from "next/navigation";
+import { useMemo, useState } from "react";
 import type { ProjectResponse } from "../api/types";
+import { useDeleteProject, useProjects, useUpdateProject } from "../hooks/use-projects";
+import { ProjectDialog } from "./project-dialog";
 
 interface ProjectsTableProps {
 	searchQuery?: string;
@@ -57,6 +59,18 @@ export function ProjectsTable({ searchQuery = "" }: ProjectsTableProps) {
 	const updateMutation = useUpdateProject();
 	const deleteMutation = useDeleteProject();
 
+	const { sortKey, sortOrder, handleSort, sortItems } = useTableSort({
+		initialSortKey: "created_at",
+		initialSortOrder: "desc",
+	});
+
+	const sortedProjects = useMemo(() => {
+		return sortItems<ProjectResponse>(projects, (project, key) => {
+			if (key === "created_at") return project.created_at || project.updated_at || "";
+			return (project as unknown as Record<string, unknown>)[key];
+		});
+	}, [projects, sortItems]);
+
 	const {
 		page,
 		pageSize,
@@ -67,7 +81,7 @@ export function ProjectsTable({ searchQuery = "" }: ProjectsTableProps) {
 		setPageSize,
 		startIndex,
 		endIndex,
-	} = usePagination({ items: projects, initialPageSize: 10 });
+	} = usePagination<ProjectResponse>({ items: sortedProjects, initialPageSize: 10 });
 
 	const handleOpenAdd = () => {
 		setProjectToEdit(null);
@@ -154,8 +168,24 @@ export function ProjectsTable({ searchQuery = "" }: ProjectsTableProps) {
 				<Table className="[&_tr]:border-gray-100">
 					<TableHeader className="bg-gray-50/50">
 						<TableRow className="bg-gray-50/50 hover:bg-gray-50/50">
-							<TableHead className="w-1/2 font-medium text-gray-700">Project Title</TableHead>
-							<TableHead className="font-medium text-gray-700">Date</TableHead>
+							<SortableTableHead
+								sortKey="name"
+								currentSortKey={sortKey}
+								sortOrder={sortOrder}
+								onSort={handleSort}
+								className="w-1/2 font-medium text-gray-700"
+							>
+								Project Title
+							</SortableTableHead>
+							<SortableTableHead
+								sortKey="created_at"
+								currentSortKey={sortKey}
+								sortOrder={sortOrder}
+								onSort={handleSort}
+								className="font-medium text-gray-700"
+							>
+								Date
+							</SortableTableHead>
 							<TableHead className="w-32 font-medium text-gray-700 text-right">Actions</TableHead>
 						</TableRow>
 					</TableHeader>
@@ -282,7 +312,10 @@ export function ProjectsTable({ searchQuery = "" }: ProjectsTableProps) {
 															</Button>
 														}
 													/>
-													<DropdownMenuContent align="end" className="w-36 bg-white border-gray-200">
+													<DropdownMenuContent
+														align="end"
+														className="w-36 bg-white border-gray-200"
+													>
 														<DropdownMenuItem
 															onClick={() => {
 																setProjectToEdit(project);

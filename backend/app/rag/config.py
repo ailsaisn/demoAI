@@ -7,7 +7,7 @@ class Settings(BaseSettings):
     llm_provider: str = "openai"
     openai_api_key: Optional[str] = None
     openai_model_name: str = "gpt-5.4-mini"
-    llm_generation_temperature: float = 0.0  # Default 0.0. Recommended clinical range: 0.0 - 0.2
+    llm_generation_temperature: float = 0.2  # Set to 0.2 for natural & dynamic response generation
 
     # Vector DB (PGVector) Settings
     pg_host: str = "localhost"

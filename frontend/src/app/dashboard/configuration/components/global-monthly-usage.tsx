@@ -1,8 +1,7 @@
 "use client";
 
-import * as React from "react";
-import { useGlobalMonthlyUsage, useConfigs } from "../hooks/use-config";
-import { Skeleton } from "@/components/ui/skeleton";
+import { useConfigs, useGlobalMonthlyUsage } from "../hooks/use-config";
+import { MonthlyUsageSkeleton } from "./skeletons/monthly-usage-skeleton";
 
 export function GlobalMonthlyUsage() {
 	const { data: usage, isLoading: isUsageLoading } = useGlobalMonthlyUsage();
@@ -10,12 +9,17 @@ export function GlobalMonthlyUsage() {
 
 	const isLoading = isUsageLoading || isConfigsLoading;
 
-	// Check if global limit config is active from configs (authoritative) or usage endpoint
-	const globalConfigItem = configs?.find((c) => c.key === "GLOBAL_TOKEN_LIMIT_ACTIVE");
+	// Check if global limit config and threshold are active from configs (authoritative) or usage endpoint
+	const isMasterActive =
+		configs?.find((c) => c.key === "GLOBAL_TOKEN_LIMIT_ACTIVE")?.value === "true";
+	const isThresholdActive =
+		configs?.find((c) => c.key === "GLOBAL_THRESHOLD_ACTIVE")?.value === "true";
 	const isGlobalLimitActive =
-		globalConfigItem !== undefined
-			? globalConfigItem.value === "true"
-			: usage?.is_global_active === true;
+		isMasterActive && isThresholdActive
+			? true
+			: isMasterActive === false
+				? false
+				: usage?.is_global_active === true;
 
 	const tokensUsed = usage?.tokens_used ?? 0;
 	const tokenLimit = usage?.token_limit ?? 1000000;
@@ -28,23 +32,7 @@ export function GlobalMonthlyUsage() {
 	};
 
 	if (isLoading) {
-		return (
-			<div className="flex flex-col w-full">
-				<div className="flex flex-col gap-6 border border-white-600 rounded-lg p-4 bg-white">
-					<div className="flex flex-col gap-1">
-						<Skeleton className="h-5 w-56" />
-						<Skeleton className="h-4 w-96" />
-					</div>
-					<div className="flex items-center gap-6">
-						<Skeleton className="size-17 rounded-full" />
-						<div className="flex flex-col gap-2">
-							<Skeleton className="h-4 w-40" />
-							<Skeleton className="h-10 w-72" />
-						</div>
-					</div>
-				</div>
-			</div>
-		);
+		return <MonthlyUsageSkeleton />;
 	}
 
 	// SVG Donut Chart calculation
@@ -59,9 +47,7 @@ export function GlobalMonthlyUsage() {
 			<div className="flex flex-col gap-6 border border-white-600 rounded-lg p-4 bg-white">
 				{/* Title and Subtitle */}
 				<div className="flex flex-col gap-1">
-					<h3 className="text-base font-medium text-black-500">
-						Global Monthly Token Usage
-					</h3>
+					<h3 className="text-base font-medium text-black-500">Global Monthly Token Usage</h3>
 					<p className="text-sm text-black-300">
 						Monitor total AI token consumption and monthly usage limits across the system.
 					</p>
@@ -102,9 +88,7 @@ export function GlobalMonthlyUsage() {
 										className="transition-all duration-500 ease-in-out"
 									/>
 								</svg>
-								<span className="absolute text-sm font-medium text-black-500">
-									{percentage}%
-								</span>
+								<span className="absolute text-sm font-medium text-black-500">{percentage}%</span>
 							</div>
 
 							{/* Usage Remaining Box */}

@@ -46,8 +46,13 @@ export function ConfirmationModal({
 		onOpenChange(false);
 	};
 
+	const handleOpenChange = (open: boolean) => {
+		if (!open && isLoading) return;
+		onOpenChange(open);
+	};
+
 	return (
-		<Dialog open={isOpen} onOpenChange={onOpenChange}>
+		<Dialog open={isOpen} onOpenChange={handleOpenChange}>
 			<DialogContent className="sm:max-w-100 w-full p-0 flex flex-col gap-0 rounded-lg overflow-hidden bg-white border border-gray-200 shadow-none">
 				{/* Title Section */}
 				<DialogHeader className="p-4 pb-2 border-none">

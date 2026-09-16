@@ -1,28 +1,28 @@
 "use client";
 
-import * as React from "react";
-import { useState, useEffect, useRef, useMemo } from "react";
-import { useRouter } from "next/navigation";
-import Image from "next/image";
+import { Input } from "@/components/ui/input";
+import { cn } from "@/lib/utils";
 import {
-	RiSearchLine,
 	RiCloseLine,
-	RiLoader4Line,
-	RiHospitalLine,
-	RiUser3Line,
-	RiSparklingLine,
 	RiCornerDownLeftLine,
 	RiFolderLine,
+	RiHospitalLine,
+	RiLoader4Line,
+	RiSearchLine,
+	RiSparklingLine,
+	RiUser3Line,
 } from "@remixicon/react";
-import { Input } from "@/components/ui/input";
-import { useGlobalSearch } from "@/hooks/use-global-search";
-import {
-	KnowledgeSearchResult,
-	ProjectSearchResult,
+import Image from "next/image";
+import { useRouter } from "next/navigation";
+import * as React from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import type {
 	CategorySearchResult,
 	ChatSearchResult,
-} from "@/app/dashboard/api/search";
-import { cn } from "@/lib/utils";
+	KnowledgeSearchResult,
+	ProjectSearchResult,
+} from "./api";
+import { useGlobalSearch } from "./hooks/use-global-search";
 
 type SearchCategory = "all" | "projects" | "knowledge" | "chats" | "categories";
 
@@ -32,13 +32,7 @@ type FlatSearchItem =
 	| { type: "chat"; data: ChatSearchResult }
 	| { type: "category"; data: CategorySearchResult };
 
-function HighlightSnippet({
-	text,
-	query,
-}: {
-	text?: string | null;
-	query: string;
-}) {
+function HighlightSnippet({ text, query }: { text?: string | null; query: string }) {
 	if (!text) return null;
 	if (!query.trim()) return <span>{text}</span>;
 
@@ -57,10 +51,7 @@ function HighlightSnippet({
 		<span>
 			{parts.map((part, i) =>
 				regex.test(part) ? (
-					<span
-						key={i}
-						className="font-semibold text-blue-600 bg-blue-50/90 px-0.5 rounded-xs"
-					>
+					<span key={i} className="font-semibold text-blue-600 bg-blue-50/90 px-0.5 rounded-xs">
 						{part}
 					</span>
 				) : (
@@ -130,10 +121,7 @@ export function GlobalSearchBar({ className }: { className?: string }) {
 	// Click outside listener
 	useEffect(() => {
 		const handleClickOutside = (e: MouseEvent) => {
-			if (
-				containerRef.current &&
-				!containerRef.current.contains(e.target as Node)
-			) {
+			if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
 				setIsOpen(false);
 			}
 		};
@@ -171,18 +159,14 @@ export function GlobalSearchBar({ className }: { className?: string }) {
 				setIsOpen(true);
 				return;
 			}
-			setSelectedIndex((prev) =>
-				prev < flatItems.length - 1 ? prev + 1 : 0,
-			);
+			setSelectedIndex((prev) => (prev < flatItems.length - 1 ? prev + 1 : 0));
 		} else if (e.key === "ArrowUp") {
 			e.preventDefault();
 			if (!isOpen) {
 				setIsOpen(true);
 				return;
 			}
-			setSelectedIndex((prev) =>
-				prev > 0 ? prev - 1 : flatItems.length - 1,
-			);
+			setSelectedIndex((prev) => (prev > 0 ? prev - 1 : flatItems.length - 1));
 		} else if (e.key === "Enter") {
 			if (isOpen && flatItems.length > 0) {
 				e.preventDefault();
@@ -199,14 +183,10 @@ export function GlobalSearchBar({ className }: { className?: string }) {
 	};
 
 	const hasResults = flatItems.length > 0;
-	const showEmptyState =
-		searchQuery.trim().length > 0 && !isSearching && !hasResults;
+	const showEmptyState = searchQuery.trim().length > 0 && !isSearching && !hasResults;
 
 	return (
-		<div
-			ref={containerRef}
-			className={cn("relative w-full max-w-xl lg:max-w-2xl", className)}
-		>
+		<div ref={containerRef} className={cn("relative w-full max-w-xl lg:max-w-2xl", className)}>
 			{/* Dashboard-Styled Search Input */}
 			<div className="relative flex items-center w-full">
 				<RiSearchLine className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground size-4 pointer-events-none" />
@@ -373,311 +353,299 @@ export function GlobalSearchBar({ className }: { className?: string }) {
 						)}
 
 						{/* 4. Projects Group Results (1st in Order) */}
-						{(activeTab === "all" || activeTab === "projects") &&
-							projectResults.length > 0 && (
-								<div className="py-1">
-									<div className="px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-										Projects ({projectResults.length})
-									</div>
-									<div className="mt-0.5 space-y-0.5">
-										{projectResults.map((p) => {
-											const itemIndex = flatItems.findIndex(
-												(item) => item.type === "project" && item.data.id === p.id,
-											);
-											const isSelected = itemIndex === selectedIndex;
+						{(activeTab === "all" || activeTab === "projects") && projectResults.length > 0 && (
+							<div className="py-1">
+								<div className="px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+									Projects ({projectResults.length})
+								</div>
+								<div className="mt-0.5 space-y-0.5">
+									{projectResults.map((p) => {
+										const itemIndex = flatItems.findIndex(
+											(item) => item.type === "project" && item.data.id === p.id,
+										);
+										const isSelected = itemIndex === selectedIndex;
 
-											return (
-												<div
-													key={p.id}
-													onClick={() => handleSelectItem({ type: "project", data: p })}
-													onMouseEnter={() => setSelectedIndex(itemIndex)}
-													className={cn(
-														"group flex items-start gap-2.5 p-2 rounded-lg cursor-pointer transition-colors text-left",
-														isSelected
-															? "bg-muted/70 text-foreground"
-															: "hover:bg-muted/40 text-foreground",
+										return (
+											<div
+												key={p.id}
+												onClick={() => handleSelectItem({ type: "project", data: p })}
+												onMouseEnter={() => setSelectedIndex(itemIndex)}
+												className={cn(
+													"group flex items-start gap-2.5 p-2 rounded-lg cursor-pointer transition-colors text-left",
+													isSelected
+														? "bg-muted/70 text-foreground"
+														: "hover:bg-muted/40 text-foreground",
+												)}
+											>
+												<RiFolderLine className="size-4 text-muted-foreground shrink-0 mt-0.5" />
+
+												<div className="flex-1 min-w-0">
+													<div className="flex items-center justify-between gap-2">
+														<span className="text-xs font-medium truncate">{p.name}</span>
+														<span className="text-[10px] text-muted-foreground shrink-0">
+															{p.document_count} docs
+														</span>
+													</div>
+
+													{p.description && (
+														<p className="text-[11px] text-muted-foreground leading-relaxed mt-0.5 line-clamp-1">
+															<HighlightSnippet text={p.description} query={searchQuery} />
+														</p>
 													)}
-												>
-													<RiFolderLine className="size-4 text-muted-foreground shrink-0 mt-0.5" />
 
-													<div className="flex-1 min-w-0">
-														<div className="flex items-center justify-between gap-2">
-															<span className="text-xs font-medium truncate">
-																{p.name}
-															</span>
-															<span className="text-[10px] text-muted-foreground shrink-0">
-																{p.document_count} docs
-															</span>
-														</div>
-
-														{p.description && (
-															<p className="text-[11px] text-muted-foreground leading-relaxed mt-0.5 line-clamp-1">
-																<HighlightSnippet text={p.description} query={searchQuery} />
-															</p>
-														)}
-
-														<div className="flex items-center gap-2 mt-0.5 text-[10px] text-muted-foreground">
-															<span>Project Folder</span>
-														</div>
+													<div className="flex items-center gap-2 mt-0.5 text-[10px] text-muted-foreground">
+														<span>Project Folder</span>
 													</div>
 												</div>
-											);
-										})}
-									</div>
+											</div>
+										);
+									})}
 								</div>
-							)}
+							</div>
+						)}
 
 						{/* 5. Knowledge Group Results (2nd in Order) */}
-						{(activeTab === "all" || activeTab === "knowledge") &&
-							knowledgeResults.length > 0 && (
-								<div className="py-1">
-									<div className="px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
-										<Image
-											src="/icons/database.png"
-											alt=""
-											width={12}
-											height={12}
-											className="size-3 shrink-0 object-contain opacity-75"
-										/>
-										<span>Knowledge Base ({knowledgeResults.length})</span>
-									</div>
-									<div className="mt-0.5 space-y-0.5">
-										{knowledgeResults.map((k) => {
-											const itemIndex = flatItems.findIndex(
-												(item) => item.type === "knowledge" && item.data.id === k.id,
-											);
-											const isSelected = itemIndex === selectedIndex;
+						{(activeTab === "all" || activeTab === "knowledge") && knowledgeResults.length > 0 && (
+							<div className="py-1">
+								<div className="px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+									<Image
+										src="/icons/database.png"
+										alt=""
+										width={12}
+										height={12}
+										className="size-3 shrink-0 object-contain opacity-75"
+									/>
+									<span>Knowledge Base ({knowledgeResults.length})</span>
+								</div>
+								<div className="mt-0.5 space-y-0.5">
+									{knowledgeResults.map((k) => {
+										const itemIndex = flatItems.findIndex(
+											(item) => item.type === "knowledge" && item.data.id === k.id,
+										);
+										const isSelected = itemIndex === selectedIndex;
 
-											return (
-												<div
-													key={k.id}
-													onClick={() => handleSelectItem({ type: "knowledge", data: k })}
-													onMouseEnter={() => setSelectedIndex(itemIndex)}
-													className={cn(
-														"group flex items-start gap-2.5 p-2 rounded-lg cursor-pointer transition-colors text-left",
-														isSelected
-															? "bg-muted/70 text-foreground"
-															: "hover:bg-muted/40 text-foreground",
+										return (
+											<div
+												key={k.id}
+												onClick={() => handleSelectItem({ type: "knowledge", data: k })}
+												onMouseEnter={() => setSelectedIndex(itemIndex)}
+												className={cn(
+													"group flex items-start gap-2.5 p-2 rounded-lg cursor-pointer transition-colors text-left",
+													isSelected
+														? "bg-muted/70 text-foreground"
+														: "hover:bg-muted/40 text-foreground",
+												)}
+											>
+												<Image
+													src="/icons/database.png"
+													alt="Knowledge"
+													width={16}
+													height={16}
+													className="size-4 shrink-0 object-contain opacity-75 mt-0.5"
+												/>
+
+												<div className="flex-1 min-w-0">
+													<div className="flex items-center justify-between gap-2">
+														<span className="text-xs font-medium truncate">{k.title}</span>
+														<span className="text-[9px] font-medium tracking-wide uppercase px-1.5 py-0.5 rounded bg-muted/60 text-muted-foreground shrink-0">
+															{k.type}
+														</span>
+													</div>
+
+													{k.snippet && (
+														<p className="text-[11px] text-muted-foreground leading-relaxed mt-0.5 line-clamp-2">
+															<HighlightSnippet text={k.snippet} query={searchQuery} />
+														</p>
 													)}
-												>
-													<Image
-														src="/icons/database.png"
-														alt="Knowledge"
-														width={16}
-														height={16}
-														className="size-4 shrink-0 object-contain opacity-75 mt-0.5"
-													/>
 
-													<div className="flex-1 min-w-0">
-														<div className="flex items-center justify-between gap-2">
-															<span className="text-xs font-medium truncate">
-																{k.title}
+													<div className="flex items-center gap-2 mt-1 text-[10px] text-muted-foreground">
+														{k.match_field === "chunk_content" && (
+															<span className="inline-flex items-center gap-1">
+																<RiSparklingLine className="size-2.5 text-muted-foreground" />
+																Matched in document text
 															</span>
-															<span className="text-[9px] font-medium tracking-wide uppercase px-1.5 py-0.5 rounded bg-muted/60 text-muted-foreground shrink-0">
-																{k.type}
-															</span>
-														</div>
-
-														{k.snippet && (
-															<p className="text-[11px] text-muted-foreground leading-relaxed mt-0.5 line-clamp-2">
-																<HighlightSnippet text={k.snippet} query={searchQuery} />
-															</p>
 														)}
-
-														<div className="flex items-center gap-2 mt-1 text-[10px] text-muted-foreground">
-															{k.match_field === "chunk_content" && (
-																<span className="inline-flex items-center gap-1">
-																	<RiSparklingLine className="size-2.5 text-muted-foreground" />
-																	Matched in document text
-																</span>
-															)}
-															{k.match_field === "summary" && (
-																<span className="inline-flex items-center gap-1">
-																	<RiSparklingLine className="size-2.5 text-muted-foreground" />
-																	Matched in summary
-																</span>
-															)}
-															{k.match_field === "project" && (
-																<span className="inline-flex items-center gap-1">
-																	<RiFolderLine className="size-2.5 text-muted-foreground" />
-																	Matched via project
-																</span>
-															)}
-															{k.match_field === "category" && (
-																<span className="inline-flex items-center gap-1">
-																	<Image
-																		src="/icons/boxes.png"
-																		alt=""
-																		width={10}
-																		height={10}
-																		className="size-2.5 shrink-0 object-contain opacity-75"
-																	/>
-																	Matched via category
-																</span>
-															)}
-															{k.project_name && <span>• {k.project_name}</span>}
-															{k.categories.length > 0 && (
-																<span>• {k.categories.join(", ")}</span>
-															)}
-														</div>
+														{k.match_field === "summary" && (
+															<span className="inline-flex items-center gap-1">
+																<RiSparklingLine className="size-2.5 text-muted-foreground" />
+																Matched in summary
+															</span>
+														)}
+														{k.match_field === "project" && (
+															<span className="inline-flex items-center gap-1">
+																<RiFolderLine className="size-2.5 text-muted-foreground" />
+																Matched via project
+															</span>
+														)}
+														{k.match_field === "category" && (
+															<span className="inline-flex items-center gap-1">
+																<Image
+																	src="/icons/boxes.png"
+																	alt=""
+																	width={10}
+																	height={10}
+																	className="size-2.5 shrink-0 object-contain opacity-75"
+																/>
+																Matched via category
+															</span>
+														)}
+														{k.project_name && <span>• {k.project_name}</span>}
+														{k.categories.length > 0 && <span>• {k.categories.join(", ")}</span>}
 													</div>
 												</div>
-											);
-										})}
-									</div>
+											</div>
+										);
+									})}
 								</div>
-							)}
+							</div>
+						)}
 
 						{/* 6. Chat Group Results (3rd in Order) */}
-						{(activeTab === "all" || activeTab === "chats") &&
-							chatResults.length > 0 && (
-								<div className="py-1">
-									<div className="px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
-										<Image
-											src="/icons/history.png"
-											alt=""
-											width={12}
-											height={12}
-											className="size-3 shrink-0 object-contain opacity-75"
-										/>
-										<span>Chat History ({chatResults.length})</span>
-									</div>
-									<div className="mt-0.5 space-y-0.5">
-										{chatResults.map((c) => {
-											const itemIndex = flatItems.findIndex(
-												(item) => item.type === "chat" && item.data.id === c.id,
-											);
-											const isSelected = itemIndex === selectedIndex;
+						{(activeTab === "all" || activeTab === "chats") && chatResults.length > 0 && (
+							<div className="py-1">
+								<div className="px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+									<Image
+										src="/icons/history.png"
+										alt=""
+										width={12}
+										height={12}
+										className="size-3 shrink-0 object-contain opacity-75"
+									/>
+									<span>Chat History ({chatResults.length})</span>
+								</div>
+								<div className="mt-0.5 space-y-0.5">
+									{chatResults.map((c) => {
+										const itemIndex = flatItems.findIndex(
+											(item) => item.type === "chat" && item.data.id === c.id,
+										);
+										const isSelected = itemIndex === selectedIndex;
 
-											return (
-												<div
-													key={c.id}
-													onClick={() => handleSelectItem({ type: "chat", data: c })}
-													onMouseEnter={() => setSelectedIndex(itemIndex)}
-													className={cn(
-														"group flex items-start gap-2.5 p-2 rounded-lg cursor-pointer transition-colors text-left",
-														isSelected
-															? "bg-muted/70 text-foreground"
-															: "hover:bg-muted/40 text-foreground",
-													)}
-												>
-													<Image
-														src="/icons/history.png"
-														alt="Chat"
-														width={16}
-														height={16}
-														className="size-4 shrink-0 object-contain opacity-75 mt-0.5"
-													/>
+										return (
+											<div
+												key={c.id}
+												onClick={() => handleSelectItem({ type: "chat", data: c })}
+												onMouseEnter={() => setSelectedIndex(itemIndex)}
+												className={cn(
+													"group flex items-start gap-2.5 p-2 rounded-lg cursor-pointer transition-colors text-left",
+													isSelected
+														? "bg-muted/70 text-foreground"
+														: "hover:bg-muted/40 text-foreground",
+												)}
+											>
+												<Image
+													src="/icons/history.png"
+													alt="Chat"
+													width={16}
+													height={16}
+													className="size-4 shrink-0 object-contain opacity-75 mt-0.5"
+												/>
 
-													<div className="flex-1 min-w-0">
-														<div className="flex items-center justify-between gap-2">
-															<span className="text-xs font-semibold truncate group-hover:text-blue-600 transition-colors">
-																{c.title}
-															</span>
-															<span className="text-[9px] font-medium tracking-wide uppercase px-1.5 py-0.5 rounded bg-muted/60 text-muted-foreground shrink-0">
-																{c.session_type === "DOCTOR" ? "Doctor" : "Assistant"}
-															</span>
-														</div>
+												<div className="flex-1 min-w-0">
+													<div className="flex items-center justify-between gap-2">
+														<span className="text-xs font-semibold truncate group-hover:text-blue-600 transition-colors">
+															{c.title}
+														</span>
+														<span className="text-[9px] font-medium tracking-wide uppercase px-1.5 py-0.5 rounded bg-muted/60 text-muted-foreground shrink-0">
+															{c.session_type === "DOCTOR" ? "Doctor" : "Assistant"}
+														</span>
+													</div>
 
-														{c.snippet && (
-															<p className="text-[11px] text-muted-foreground leading-relaxed mt-0.5 line-clamp-2">
-																{c.match_role && c.match_role !== "SUMMARY" && (
-																	<span className="font-semibold text-foreground mr-1">
-																		{c.match_role.toLowerCase() === "user" ? "User: " : "AI: "}
-																	</span>
-																)}
-																<HighlightSnippet text={c.snippet} query={searchQuery} />
-															</p>
-														)}
-
-														<div className="flex items-center gap-2 mt-1 text-[10px] text-muted-foreground">
-															<span className="inline-flex items-center gap-1">
-																<RiUser3Line className="size-2.5 text-muted-foreground" />
-																{c.doctor_name}
-															</span>
-															{c.branch_name && (
-																<span className="inline-flex items-center gap-1">
-																	<RiHospitalLine className="size-2.5 text-muted-foreground" />
-																	{c.branch_name}
+													{c.snippet && (
+														<p className="text-[11px] text-muted-foreground leading-relaxed mt-0.5 line-clamp-2">
+															{c.match_role && c.match_role !== "SUMMARY" && (
+																<span className="font-semibold text-foreground mr-1">
+																	{c.match_role.toLowerCase() === "user" ? "User: " : "AI: "}
 																</span>
 															)}
-															<span>• {c.message_count} msgs</span>
-														</div>
+															<HighlightSnippet text={c.snippet} query={searchQuery} />
+														</p>
+													)}
+
+													<div className="flex items-center gap-2 mt-1 text-[10px] text-muted-foreground">
+														<span className="inline-flex items-center gap-1">
+															<RiUser3Line className="size-2.5 text-muted-foreground" />
+															{c.doctor_name}
+														</span>
+														{c.branch_name && (
+															<span className="inline-flex items-center gap-1">
+																<RiHospitalLine className="size-2.5 text-muted-foreground" />
+																{c.branch_name}
+															</span>
+														)}
+														<span>• {c.message_count} msgs</span>
 													</div>
 												</div>
-											);
-										})}
-									</div>
+											</div>
+										);
+									})}
 								</div>
-							)}
+							</div>
+						)}
 
 						{/* 7. Categories Group Results (4th in Order) */}
-						{(activeTab === "all" || activeTab === "categories") &&
-							categoryResults.length > 0 && (
-								<div className="py-1">
-									<div className="px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
-										<Image
-											src="/icons/boxes.png"
-											alt=""
-											width={12}
-											height={12}
-											className="size-3 shrink-0 object-contain opacity-75"
-										/>
-										<span>Categories ({categoryResults.length})</span>
-									</div>
-									<div className="mt-0.5 space-y-0.5">
-										{categoryResults.map((cat) => {
-											const itemIndex = flatItems.findIndex(
-												(item) => item.type === "category" && item.data.id === cat.id,
-											);
-											const isSelected = itemIndex === selectedIndex;
+						{(activeTab === "all" || activeTab === "categories") && categoryResults.length > 0 && (
+							<div className="py-1">
+								<div className="px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+									<Image
+										src="/icons/boxes.png"
+										alt=""
+										width={12}
+										height={12}
+										className="size-3 shrink-0 object-contain opacity-75"
+									/>
+									<span>Categories ({categoryResults.length})</span>
+								</div>
+								<div className="mt-0.5 space-y-0.5">
+									{categoryResults.map((cat) => {
+										const itemIndex = flatItems.findIndex(
+											(item) => item.type === "category" && item.data.id === cat.id,
+										);
+										const isSelected = itemIndex === selectedIndex;
 
-											return (
-												<div
-													key={cat.id}
-													onClick={() => handleSelectItem({ type: "category", data: cat })}
-													onMouseEnter={() => setSelectedIndex(itemIndex)}
-													className={cn(
-														"group flex items-start gap-2.5 p-2 rounded-lg cursor-pointer transition-colors text-left",
-														isSelected
-															? "bg-muted/70 text-foreground"
-															: "hover:bg-muted/40 text-foreground",
+										return (
+											<div
+												key={cat.id}
+												onClick={() => handleSelectItem({ type: "category", data: cat })}
+												onMouseEnter={() => setSelectedIndex(itemIndex)}
+												className={cn(
+													"group flex items-start gap-2.5 p-2 rounded-lg cursor-pointer transition-colors text-left",
+													isSelected
+														? "bg-muted/70 text-foreground"
+														: "hover:bg-muted/40 text-foreground",
+												)}
+											>
+												<Image
+													src="/icons/boxes.png"
+													alt="Category"
+													width={16}
+													height={16}
+													className="size-4 shrink-0 object-contain opacity-75 mt-0.5"
+												/>
+
+												<div className="flex-1 min-w-0">
+													<div className="flex items-center justify-between gap-2">
+														<span className="text-xs font-medium truncate">{cat.name}</span>
+														<span className="text-[10px] text-muted-foreground shrink-0">
+															{cat.knowledge_count} entries
+														</span>
+													</div>
+
+													{cat.description && (
+														<p className="text-[11px] text-muted-foreground leading-relaxed mt-0.5 line-clamp-1">
+															<HighlightSnippet text={cat.description} query={searchQuery} />
+														</p>
 													)}
-												>
-													<Image
-														src="/icons/boxes.png"
-														alt="Category"
-														width={16}
-														height={16}
-														className="size-4 shrink-0 object-contain opacity-75 mt-0.5"
-													/>
 
-													<div className="flex-1 min-w-0">
-														<div className="flex items-center justify-between gap-2">
-															<span className="text-xs font-medium truncate">
-																{cat.name}
-															</span>
-															<span className="text-[10px] text-muted-foreground shrink-0">
-																{cat.knowledge_count} entries
-															</span>
-														</div>
-
-														{cat.description && (
-															<p className="text-[11px] text-muted-foreground leading-relaxed mt-0.5 line-clamp-1">
-																<HighlightSnippet text={cat.description} query={searchQuery} />
-															</p>
-														)}
-
-														<div className="flex items-center gap-2 mt-0.5 text-[10px] text-muted-foreground">
-															<span>Knowledge Category</span>
-														</div>
+													<div className="flex items-center gap-2 mt-0.5 text-[10px] text-muted-foreground">
+														<span>Knowledge Category</span>
 													</div>
 												</div>
-											);
-										})}
-									</div>
+											</div>
+										);
+									})}
 								</div>
-							)}
+							</div>
+						)}
 					</div>
 
 					{/* Footer Controls */}

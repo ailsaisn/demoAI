@@ -197,7 +197,6 @@ export default function KnowledgeDetailPage({ params }: { params: Promise<{ id: 
 					categories={pendingCategories}
 					onChangeCategories={setPendingCategories}
 					chunks={pendingChunks}
-					onChangeChunks={setPendingChunks}
 					visibilitySettings={pendingVisibilitySettings}
 					onChangeVisibilitySettings={setPendingVisibilitySettings}
 					title={pendingTitle}

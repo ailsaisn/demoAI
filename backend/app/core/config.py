@@ -22,15 +22,15 @@ class Settings(BaseSettings):
     OPENAI_API_KEY: Optional[str] = None
 
     # MinIO / S3 Object Storage Settings
-    S3_ENDPOINT_URL: str = "http://localhost:9000"
-    S3_ACCESS_KEY: str = "minioadmin"
-    S3_SECRET_KEY: str = "minioadmin"
+    S3_ENDPOINT_URL: Optional[str] = None # e.g. "http://localhost:9000" for MinIO or None for AWS S3
+    S3_ACCESS_KEY: Optional[str] = None # None for AWS IRSA / IAM role auth, or "minioadmin" for MinIO
+    S3_SECRET_KEY: Optional[str] = None
     S3_BUCKET: str = "images"
     S3_DOCUMENTS_BUCKET: str = "knowledge-documents"
     S3_STAGING_BUCKET: str = "staging"
     S3_APPROVED_BUCKET: str = "approved"
     S3_REGION: str = "us-east-1"
-    S3_USE_PATH_STYLE: bool = True
+    S3_USE_PATH_STYLE: Optional[bool] = None # None = auto-detect (True for MinIO/custom, False for AWS)
     S3_PUBLIC_URL: Optional[str] = None # Optional public CDN / API prefix (e.g. "https://dokterpedia.aryanoble.co.id/api/storage")
 
     COOKIE_DOMAIN: Optional[str] = None # e.g. ".aryanoble.web.id" or ".aryanoble.co.id"

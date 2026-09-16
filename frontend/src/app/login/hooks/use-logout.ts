@@ -1,4 +1,4 @@
-import { api } from "@/lib/axios";
+import { logoutApi } from "@/app/login/api";
 import type { ApiError } from "@/lib/types";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { AxiosError } from "axios";
@@ -15,8 +15,7 @@ export const useLogout = () => {
 				} catch {}
 			}
 			queryClient.cancelQueries();
-			const response = await api.post("/auth/logout");
-			return response.data;
+			return await logoutApi();
 		},
 		onSuccess: () => {
 			queryClient.clear();

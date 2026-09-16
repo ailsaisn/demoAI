@@ -4,7 +4,7 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException, status
 from fastapi.responses import FileResponse, StreamingResponse
 from loguru import logger
-from app.services.storage import get_s3_object_stream
+from app.services.storage import get_s3_object_stream, diagnose_s3_storage
 
 router = APIRouter(prefix="/storage", tags=["storage"])
 
@@ -34,6 +34,25 @@ def _resolve_mime_type(filename: str, default: str = "application/octet-stream")
 
 
 import urllib.parse
+
+
+@router.get("/debug/health", summary="Probe S3 and storage health")
+async def get_storage_health():
+    """
+    Diagnostic probe endpoint for AWS IRSA / MinIO storage.
+    Inspects authentication mode, AWS environment variables, and bucket connectivity.
+    """
+    return diagnose_s3_storage()
+
+
+@router.get("/debug/diagnose", summary="Diagnose specific storage key lookup")
+async def diagnose_storage_key(key: str):
+    """
+    Deep-dive trace for a specific storage asset key across S3 buckets and local disk fallback.
+    """
+    if not key or not key.strip():
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Query parameter 'key' is required.")
+    return diagnose_s3_storage(key=key)
 
 
 @router.get("/{s3_key:path}", summary="Stream storage asset or proxy image")

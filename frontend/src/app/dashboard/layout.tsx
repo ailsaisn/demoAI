@@ -1,8 +1,8 @@
-import { SidebarProvider, SidebarInset } from "@/components/ui/sidebar";
-import { RouteGuard } from "@/components/auth/route-guard";
+import { RouteGuard } from "@/components/auth";
 import { StaffSidebar } from "@/components/layout/StaffSidebar";
+import { CisSyncListener } from "@/components/layout/cis-sync-listener";
 import { DashboardHeader } from "@/components/layout/dashboard-header";
-import { CisSyncListener } from "./hooks/CisSyncListener";
+import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar";
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
 	return (

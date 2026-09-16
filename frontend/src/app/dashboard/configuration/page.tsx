@@ -1,11 +1,10 @@
 "use client";
 
-
-import { GlobalMonthlyUsage } from "./components/global-monthly-usage";
-import { GlobalModelConfig } from "./components/global-model-config";
-import { GlobalTokenConfig } from "./components/global-token-config";
-import { GlobalTimeLimitConfig } from "./components/global-time-limit-config";
 import { GlobalFileAttachmentConfig } from "./components/global-file-attachment-config";
+import { GlobalModelConfig } from "./components/global-model-config";
+import { GlobalMonthlyUsage } from "./components/global-monthly-usage";
+import { GlobalTimeLimitConfig } from "./components/global-time-limit-config";
+import { GlobalTokenConfig } from "./components/global-token-config";
 
 export default function ConfigPage() {
 	return (
@@ -17,7 +16,9 @@ export default function ConfigPage() {
 				{/* 2. Configuration title and subtitle */}
 				<div className="flex flex-col gap-1">
 					<h1 className="text-xl font-semibold text-foreground">Configuration</h1>
-					<p className="text-sm text-muted-foreground">Here is the overview data of the configuration</p>
+					<p className="text-sm text-muted-foreground">
+						Here is the overview data of the configuration
+					</p>
 				</div>
 
 				{/* Content Sections */}

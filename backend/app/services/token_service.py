@@ -39,35 +39,87 @@ async def check_chat_token_quota(
     if user.type == UserType.STAFF:
         return True, "OK", {"mode": "staff_by_usage"}
 
+    # 2. Doctor must be assigned to an active clinic branch
+    if not branch_id:
+        return False, "Doctor is not assigned to an active clinic branch.", {
+            "mode": "blocked_no_branch",
+            "reason": "no_branch_assigned"
+        }
+
+    b_stmt = select(Branch).where(Branch.id == branch_id, Branch.deleted_at.is_(None))
+    branch_res = await db.execute(b_stmt)
+    branch = branch_res.scalar_one_or_none()
+
+    if not branch:
+        return False, "Clinic branch not found or has been deactivated.", {
+            "mode": "blocked_branch_not_found",
+            "reason": "branch_not_found"
+        }
+
     current_ym = datetime.now(timezone.utc).strftime("%Y-%m")
     is_global_mode = (await get_app_config_value(db, "GLOBAL_TOKEN_LIMIT_ACTIVE", "false")).lower() == "true"
 
-    branch = None
-    if branch_id:
-        b_stmt = select(Branch).where(Branch.id == branch_id, Branch.deleted_at.is_(None))
-        branch_res = await db.execute(b_stmt)
-        branch = branch_res.scalar_one_or_none()
-
     if is_global_mode:
-        # --- Mode ON: Token determined per branch pool + optional doctor custom override ---
-        global_branch_limit_str = await get_app_config_value(db, "GLOBAL_TOKEN_LIMIT", None)
-        branch_limit = int(global_branch_limit_str) if (global_branch_limit_str and global_branch_limit_str.isdigit()) else (branch.token_limit if branch else 0)
+        # --- Mode ON: Granular checks per active sub-setting ---
+        is_threshold_active = (await get_app_config_value(db, "GLOBAL_THRESHOLD_ACTIVE", "false")).lower() == "true"
+        is_branch_global_active = (await get_app_config_value(db, "GLOBAL_BRANCH_LIMIT_ACTIVE", "false")).lower() == "true"
+        is_spkk_global_active = (await get_app_config_value(db, "GLOBAL_SPKK_LIMIT_ACTIVE", "false")).lower() == "true"
+        is_gp_global_active = (await get_app_config_value(db, "GLOBAL_GP_LIMIT_ACTIVE", "false")).lower() == "true"
 
-        if branch and branch_limit > 0:
+        # 1. Global Monthly Threshold Check (if active, cap system-wide total token consumption)
+        if is_threshold_active:
+            thresh_str = await get_app_config_value(db, "GLOBAL_TOKEN_THRESHOLD", "1000000")
+            threshold_limit = int(thresh_str) if (thresh_str and thresh_str.isdigit()) else 1000000
+
+            tot_chat_stmt = select(func.sum(UserTokenUsage.tokens_used)).where(UserTokenUsage.year_month == current_ym)
+            tot_chat_used = (await db.execute(tot_chat_stmt)).scalar() or 0
+
+            tot_ingest_stmt = select(func.sum(IngestionTokenUsage.tokens_used)).where(IngestionTokenUsage.year_month == current_ym)
+            tot_ingest_used = (await db.execute(tot_ingest_stmt)).scalar() or 0
+
+            total_global_used = tot_chat_used + tot_ingest_used
+            if total_global_used >= threshold_limit:
+                return False, f"Global monthly token threshold ({threshold_limit:,}) has been reached.", {
+                    "mode": "global_threshold",
+                    "threshold_limit": threshold_limit,
+                    "tokens_used": total_global_used,
+                    "reason": "global_threshold_exceeded"
+                }
+
+        # 2. Branch limit check (Custom Branch Limit OR Shared Global Pool OR fallback to Global Threshold)
+        has_branch_custom = branch.token_limit is not None and branch.token_limit > 0
+        if has_branch_custom:
+            branch_limit = branch.token_limit
+        elif is_branch_global_active:
+            global_branch_limit_str = await get_app_config_value(db, "GLOBAL_TOKEN_LIMIT", None)
+            branch_limit = int(global_branch_limit_str) if (global_branch_limit_str and global_branch_limit_str.isdigit()) else 0
+        else:
+            branch_limit = branch.token_limit or 0
+
+        # If branch limit is unallocated (<= 0), check if Global Threshold is active as a fallback pool
+        if branch_limit <= 0:
+            if not is_threshold_active:
+                return False, f"Branch '{branch.name}' token limit has not been allocated (0 tokens). Please contact your administrator to set a token quota.", {
+                    "mode": "branch_custom" if has_branch_custom else ("global_shared" if is_branch_global_active else "branch_individual"),
+                    "branch_limit": 0,
+                    "reason": "branch_limit_zero"
+                }
+        else:
             branch_usage_stmt = select(func.sum(UserTokenUsage.tokens_used)).where(
                 UserTokenUsage.branch_id == branch.id,
                 UserTokenUsage.year_month == current_ym
             )
             branch_used = (await db.execute(branch_usage_stmt)).scalar() or 0
             if branch_used >= branch_limit:
-                return False, f"Branch '{branch.name}' monthly token pool ({branch_limit:,}) is exhausted for this month.", {
-                    "mode": "global_shared",
+                pool_label = "custom monthly token limit" if has_branch_custom else ("global monthly token pool" if is_branch_global_active else "monthly token limit")
+                return False, f"Branch '{branch.name}' {pool_label} ({branch_limit:,}) is exhausted for this month.", {
+                    "mode": "branch_custom" if has_branch_custom else ("global_shared" if is_branch_global_active else "branch_individual"),
                     "branch_limit": branch_limit,
                     "branch_used": branch_used,
                     "reason": "branch_limit_exceeded"
                 }
 
-        # Check individual override if explicitly configured
+        # 2. Doctor limit check (Custom override OR Doctor Type Global Quota OR Branch Pool)
         if user.token_limit is not None and user.token_limit > 0:
             doc_usage_stmt = select(func.sum(UserTokenUsage.tokens_used)).where(
                 UserTokenUsage.user_id == user.id,
@@ -81,12 +133,70 @@ async def check_chat_token_quota(
                     "doc_used": doc_used,
                     "reason": "individual_doctor_limit_exceeded"
                 }
+        else:
+            # Evaluate global doctor type quotas if active
+            dr_type_clean = (user.dr_type or "").upper()
+            is_spkk = any(k in dr_type_clean for k in ["SPDVE", "SP.DVE", "SPKK", "SP.KK", "SPDV"])
+            is_gp = any(k in dr_type_clean for k in ["GP", "GP PLUS", "UMUM"])
 
-        return True, "OK", {"mode": "global_shared"}
+            effective_doc_quota = None
+            if is_spkk and is_spkk_global_active:
+                spkk_str = await get_app_config_value(db, "TOKEN_LIMIT_SPKK", "500000")
+                effective_doc_quota = int(spkk_str) if (spkk_str and spkk_str.isdigit()) else 500000
+            elif is_gp and is_gp_global_active:
+                gp_str = await get_app_config_value(db, "TOKEN_LIMIT_GP", "250000")
+                effective_doc_quota = int(gp_str) if (gp_str and gp_str.isdigit()) else 250000
+
+            if effective_doc_quota is not None:
+                if effective_doc_quota <= 0:
+                    type_label = "SpDVE" if is_spkk else "GP Plus"
+                    return False, f"{type_label} global token limit is set to 0. Please contact your administrator.", {
+                        "mode": "doctor_type_quota",
+                        "doc_limit": 0,
+                        "reason": "doctor_type_quota_zero"
+                    }
+
+                doc_usage_stmt = select(func.sum(UserTokenUsage.tokens_used)).where(
+                    UserTokenUsage.user_id == user.id,
+                    UserTokenUsage.year_month == current_ym
+                )
+                doc_used = (await db.execute(doc_usage_stmt)).scalar() or 0
+                if doc_used >= effective_doc_quota:
+                    type_label = "SpDVE" if is_spkk else "GP Plus"
+                    return False, f"{type_label} global monthly token limit ({effective_doc_quota:,}) has been exceeded.", {
+                        "mode": "doctor_type_quota",
+                        "doc_limit": effective_doc_quota,
+                        "doc_used": doc_used,
+                        "reason": "doctor_type_quota_exceeded"
+                    }
+
+        return True, "OK", {"mode": "global_granular"}
 
     else:
         # --- Mode OFF: Strict individual doctor limit & strict individual branch limit ---
-        # 1. Individual doctor limit
+        # 1. Branch limit check (Strict: Must be > 0 and not exceeded)
+        branch_limit = branch.token_limit or 0
+        if branch_limit <= 0:
+            return False, f"Branch '{branch.name}' token limit has not been allocated (0 tokens). Please contact your administrator to set a token quota.", {
+                "mode": "individual",
+                "branch_limit": 0,
+                "reason": "branch_limit_zero"
+            }
+
+        branch_usage_stmt = select(func.sum(UserTokenUsage.tokens_used)).where(
+            UserTokenUsage.branch_id == branch.id,
+            UserTokenUsage.year_month == current_ym
+        )
+        branch_used = (await db.execute(branch_usage_stmt)).scalar() or 0
+        if branch_used >= branch_limit:
+            return False, f"Branch '{branch.name}' monthly token limit ({branch_limit:,}) has been reached.", {
+                "mode": "individual",
+                "branch_limit": branch_limit,
+                "branch_used": branch_used,
+                "reason": "branch_limit_exceeded"
+            }
+
+        # 2. Individual doctor limit (applied only if positive custom override is set)
         if user.token_limit is not None and user.token_limit > 0:
             doc_usage_stmt = select(func.sum(UserTokenUsage.tokens_used)).where(
                 UserTokenUsage.user_id == user.id,
@@ -99,21 +209,6 @@ async def check_chat_token_quota(
                     "doc_limit": user.token_limit,
                     "doc_used": doc_used,
                     "reason": "individual_doctor_limit_exceeded"
-                }
-
-        # 2. Individual branch limit
-        if branch and branch.token_limit > 0:
-            branch_usage_stmt = select(func.sum(UserTokenUsage.tokens_used)).where(
-                UserTokenUsage.branch_id == branch.id,
-                UserTokenUsage.year_month == current_ym
-            )
-            branch_used = (await db.execute(branch_usage_stmt)).scalar() or 0
-            if branch_used >= branch.token_limit:
-                return False, f"Branch '{branch.name}' monthly token limit ({branch.token_limit:,}) has been reached.", {
-                    "mode": "individual",
-                    "branch_limit": branch.token_limit,
-                    "branch_used": branch_used,
-                    "reason": "branch_limit_exceeded"
                 }
 
         return True, "OK", {"mode": "individual"}
@@ -135,9 +230,10 @@ async def record_chat_token_usage(
     total_tokens = input_tokens + output_tokens
     current_ym = datetime.now(timezone.utc).strftime("%Y-%m")
 
+    branch_filter = UserTokenUsage.branch_id.is_(None) if branch_id is None else (UserTokenUsage.branch_id == branch_id)
     stmt = select(UserTokenUsage).where(
         UserTokenUsage.user_id == user_id,
-        UserTokenUsage.branch_id == branch_id,
+        branch_filter,
         UserTokenUsage.year_month == current_ym
     )
     result = await db.execute(stmt)

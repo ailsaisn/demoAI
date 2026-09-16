@@ -1,21 +1,30 @@
 "use client";
 
-import { use, useState, useMemo } from "react";
-import { toast } from "sonner";
-import { useRouter } from "next/navigation";
-import { useSafeBack } from "@/hooks/use-safe-back";
-import { useProjectDetail, useDeleteProject } from "@/app/dashboard/knowledge/hooks/use-projects";
-import { useDeleteKnowledge } from "@/app/dashboard/knowledge/hooks/use-knowledge";
 import { useCategories } from "@/app/dashboard/category/hooks/use-categories";
-import { ProjectDialog } from "@/app/dashboard/knowledge/components/project-dialog";
+import {
+	extractKnowledgeCategories,
+	type KnowledgeResponse,
+} from "@/app/dashboard/knowledge/api/types";
 import { AttachProjectDialog } from "@/app/dashboard/knowledge/components/attach-project-dialog";
+import { ProjectDialog } from "@/app/dashboard/knowledge/components/project-dialog";
+import { useDeleteKnowledge } from "@/app/dashboard/knowledge/hooks/use-knowledge";
+import { useDeleteProject, useProjectDetail } from "@/app/dashboard/knowledge/hooks/use-projects";
 import { ConfirmationModal } from "@/components/shared/confirmation-modal";
-import { SearchBar } from "@/components/shared/search-bar";
-import { useDebounce } from "@/hooks/use-debounce";
-import { usePagination } from "@/hooks/use-pagination";
 import { DataTablePagination } from "@/components/shared/data-table-pagination";
-import { Button } from "@/components/ui/button";
+import { SearchBar } from "@/components/shared/search-bar";
+import { SortableTableHead } from "@/components/shared/sortable-table-head";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import {
+	DropdownMenu,
+	DropdownMenuContent,
+	DropdownMenuItem,
+	DropdownMenuRadioGroup,
+	DropdownMenuRadioItem,
+	DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { Input } from "@/components/ui/input";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import {
 	Table,
 	TableBody,
@@ -24,41 +33,33 @@ import {
 	TableHeader,
 	TableRow,
 } from "@/components/ui/table";
+import { useDebounce } from "@/hooks/use-debounce";
+import { usePagination } from "@/hooks/use-pagination";
+import { useSafeBack } from "@/hooks/use-safe-back";
+import { useTableSort } from "@/hooks/use-table-sort";
 import {
-	DropdownMenu,
-	DropdownMenuTrigger,
-	DropdownMenuContent,
-	DropdownMenuItem,
-	DropdownMenuRadioGroup,
-	DropdownMenuRadioItem,
-} from "@/components/ui/dropdown-menu";
-import {
-	Popover,
-	PopoverContent,
-	PopoverTrigger,
-} from "@/components/ui/popover";
-import { Input } from "@/components/ui/input";
-import {
-	RiArrowLeftLine,
 	RiAddCircleLine,
+	RiArrowDownSLine,
+	RiArrowLeftLine,
 	RiBookOpenLine,
 	RiBookletLine,
+	RiCheckLine,
+	RiCloseLine,
 	RiDatabase2Line,
+	RiDeleteBin7Line,
+	RiDeleteBinLine,
+	RiEdit2Line,
 	RiEyeLine,
 	RiFilterOffLine,
 	RiLoader4Line,
 	RiMoneyDollarCircleLine,
 	RiMore2Line,
-	RiDeleteBin7Line,
-	RiDeleteBinLine,
-	RiEdit2Line,
 	RiRobot2Line,
-	RiCloseLine,
 	RiSearchLine,
-	RiCheckLine,
-	RiArrowDownSLine,
 } from "@remixicon/react";
-import { extractKnowledgeCategories, type KnowledgeResponse } from "@/app/dashboard/knowledge/api/types";
+import { useRouter } from "next/navigation";
+import { use, useMemo, useState } from "react";
+import { toast } from "sonner";
 
 interface DisplayRowItem {
 	id: string;
@@ -274,23 +275,25 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
 		);
 	};
 
+	const { sortKey, sortOrder, handleSort, sortItems } = useTableSort({
+		initialSortKey: "created_at",
+		initialSortOrder: "desc",
+	});
+
 	const filteredList = useMemo(() => {
-		return displayRows
-			?.filter((item) => (statusFilter !== "ALL" ? item.status === statusFilter : true))
-			?.filter((item) => isCategoryMatch(item.categories, categoryFilter))
-			?.filter(
+		const result = (displayRows || [])
+			.filter((item) => (statusFilter !== "ALL" ? item.status === statusFilter : true))
+			.filter((item) => isCategoryMatch(item.categories, categoryFilter))
+			.filter(
 				(item) =>
 					item.title.toLowerCase().includes(debouncedSearch.toLowerCase()) ||
 					item.allFileNames.some((f) => f.toLowerCase().includes(debouncedSearch.toLowerCase())) ||
 					item.description.toLowerCase().includes(debouncedSearch.toLowerCase()) ||
 					item.categories.some((c) => c.toLowerCase().includes(debouncedSearch.toLowerCase())),
-			)
-			.sort((a, b) => {
-				const timeA = a.created_at ? new Date(a.created_at).getTime() : 0;
-				const timeB = b.created_at ? new Date(b.created_at).getTime() : 0;
-				return timeB - timeA;
-			});
-	}, [displayRows, statusFilter, categoryFilter, debouncedSearch]);
+			);
+
+		return sortItems<DisplayRowItem>(result);
+	}, [displayRows, statusFilter, categoryFilter, debouncedSearch, sortItems]);
 
 	const {
 		page,
@@ -302,9 +305,10 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
 		setPageSize,
 		startIndex,
 		endIndex,
-	} = usePagination({ items: filteredList, initialPageSize: 10 });
+	} = usePagination<DisplayRowItem>({ items: filteredList, initialPageSize: 10 });
 
-	const hasActiveFilters = searchQuery.trim() !== "" || statusFilter !== "ALL" || categoryFilter !== "ALL";
+	const hasActiveFilters =
+		searchQuery.trim() !== "" || statusFilter !== "ALL" || categoryFilter !== "ALL";
 
 	const handleResetFilters = () => {
 		setSearchQuery("");
@@ -355,11 +359,7 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
 		return (
 			<div className="flex flex-col items-center justify-center h-full p-12 text-zinc-600">
 				<p className="text-sm text-red-600 mb-4">Project not found or failed to load.</p>
-				<Button
-					variant="outline"
-					size="sm"
-					onClick={handleBack}
-				>
+				<Button variant="outline" size="sm" onClick={handleBack}>
 					<RiArrowLeftLine className="w-4 h-4 mr-1.5" />
 					Back to Knowledge Base
 				</Button>
@@ -447,186 +447,212 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
 							</p>
 						</div>
 
-					{/* Search & Filters Bar */}
-					<div className="flex flex-wrap items-center gap-3">
-						<SearchBar
-							containerClassName="w-72"
-							placeholder="Search documents..."
-							value={searchQuery}
-							onChange={(e) => setSearchQuery(e.target.value)}
-						/>
+						{/* Search & Filters Bar */}
+						<div className="flex flex-wrap items-center gap-3">
+							<SearchBar
+								containerClassName="w-72"
+								placeholder="Search documents..."
+								value={searchQuery}
+								onChange={(e) => setSearchQuery(e.target.value)}
+							/>
 
-						<div className="flex items-center gap-2">
-							{/* Reset Filters button */}
-							{hasActiveFilters && (
-								<Button
-									type="button"
-									variant="outline"
-									size="sm"
-									onClick={handleResetFilters}
-									className="text-xs text-red-600 hover:text-red-700 bg-white hover:bg-red-50 border-red-200 hover:border-red-300 rounded-lg cursor-pointer h-9 px-3 gap-1.5 shadow-none transition-colors"
-								>
-									<RiFilterOffLine className="size-3.5 text-red-500" />
-									Reset
-								</Button>
-							)}
+							<div className="flex items-center gap-2">
+								{/* Reset Filters button */}
+								{hasActiveFilters && (
+									<Button
+										type="button"
+										variant="outline"
+										size="sm"
+										onClick={handleResetFilters}
+										className="text-xs text-red-600 hover:text-red-700 bg-white hover:bg-red-50 border-red-200 hover:border-red-300 rounded-lg cursor-pointer h-9 px-3 gap-1.5 shadow-none transition-colors"
+									>
+										<RiFilterOffLine className="size-3.5 text-red-500" />
+										Reset
+									</Button>
+								)}
 
-							{/* Category Filter with Search */}
-							<Popover open={isCategoryPopoverOpen} onOpenChange={setIsCategoryPopoverOpen}>
-								<PopoverTrigger
-									render={
-										<Button
-											variant="outline"
-											title={categoryFilter === "ALL" ? "All Categories" : categoryFilter}
-											className="min-w-44 justify-between gap-2 bg-white font-normal text-gray-700 hover:bg-gray-50 border-gray-200 shadow-none cursor-pointer rounded-lg text-sm h-10"
-										/>
-									}
-								>
-									<div className="flex items-center gap-2 min-w-0 flex-1">
-										<RiDatabase2Line className="size-4 shrink-0 text-gray-500" />
-										<span className="truncate text-left">
-											{categoryFilter === "ALL" ? "All Categories" : categoryFilter}
-										</span>
-									</div>
-									<RiArrowDownSLine className="size-4 shrink-0 text-zinc-400 ml-1" />
-								</PopoverTrigger>
-								<PopoverContent
-									align="start"
-									className="w-56 p-2 flex flex-col gap-2 z-50 bg-white border border-gray-200 shadow-none rounded-lg ring-0 outline-none"
-								>
-									{/* Search Bar inside Popover */}
-									<div className="relative w-full">
-										<RiSearchLine className="absolute left-2.5 top-1/2 -translate-y-1/2 size-3.5 text-zinc-400 pointer-events-none" />
-										<Input
-											placeholder="Search category..."
-											value={categorySearchQuery}
-											onChange={(e) => setCategorySearchQuery(e.target.value)}
-											className="h-8 pl-8 pr-7 text-xs bg-zinc-50 border-gray-200 focus-visible:ring-blue-500 rounded-md"
-											autoFocus
-										/>
-										{categorySearchQuery && (
-											<button
-												type="button"
-												onClick={() => setCategorySearchQuery("")}
-												className="absolute right-2 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-zinc-600 cursor-pointer"
-											>
-												<RiCloseLine className="size-3.5" />
-											</button>
-										)}
-									</div>
-
-									{/* Category List */}
-									<div className="flex flex-col gap-0.5 max-h-56 overflow-y-auto overscroll-contain pr-0.5">
-										{(!categorySearchQuery ||
-											"all categories".includes(categorySearchQuery.toLowerCase().trim())) && (
-											<button
-												type="button"
-												onClick={() => {
-													setCategoryFilter("ALL");
-													setIsCategoryPopoverOpen(false);
-													setCategorySearchQuery("");
-													setPage(1);
-												}}
-												className={`flex items-center justify-between w-full px-2.5 py-1.5 rounded-md text-xs font-medium text-left transition-colors cursor-pointer ${
-													categoryFilter === "ALL"
-														? "bg-blue-50 text-blue-700"
-														: "text-zinc-700 hover:bg-zinc-100"
-												}`}
-											>
-												<span className="truncate">All Categories</span>
-												{categoryFilter === "ALL" && (
-													<RiCheckLine className="size-3.5 text-blue-600 shrink-0 ml-1.5" />
-												)}
-											</button>
-										)}
-
-										{filteredAvailableCategories.map((cat) => {
-											const isSelected = categoryFilter === cat.name;
-											return (
+								{/* Category Filter with Search */}
+								<Popover open={isCategoryPopoverOpen} onOpenChange={setIsCategoryPopoverOpen}>
+									<PopoverTrigger
+										render={
+											<Button
+												variant="outline"
+												title={categoryFilter === "ALL" ? "All Categories" : categoryFilter}
+												className="min-w-44 justify-between gap-2 bg-white font-normal text-gray-700 hover:bg-gray-50 border-gray-200 shadow-none cursor-pointer rounded-lg text-sm h-10"
+											/>
+										}
+									>
+										<div className="flex items-center gap-2 min-w-0 flex-1">
+											<RiDatabase2Line className="size-4 shrink-0 text-gray-500" />
+											<span className="truncate text-left">
+												{categoryFilter === "ALL" ? "All Categories" : categoryFilter}
+											</span>
+										</div>
+										<RiArrowDownSLine className="size-4 shrink-0 text-zinc-400 ml-1" />
+									</PopoverTrigger>
+									<PopoverContent
+										align="start"
+										className="w-56 p-2 flex flex-col gap-2 z-50 bg-white border border-gray-200 shadow-none rounded-lg ring-0 outline-none"
+									>
+										{/* Search Bar inside Popover */}
+										<div className="relative w-full">
+											<RiSearchLine className="absolute left-2.5 top-1/2 -translate-y-1/2 size-3.5 text-zinc-400 pointer-events-none" />
+											<Input
+												placeholder="Search category..."
+												value={categorySearchQuery}
+												onChange={(e) => setCategorySearchQuery(e.target.value)}
+												className="h-8 pl-8 pr-7 text-xs bg-zinc-50 border-gray-200 focus-visible:ring-blue-500 rounded-md"
+												autoFocus
+											/>
+											{categorySearchQuery && (
 												<button
 													type="button"
-													key={cat.id}
-													title={cat.name}
+													onClick={() => setCategorySearchQuery("")}
+													className="absolute right-2 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-zinc-600 cursor-pointer"
+												>
+													<RiCloseLine className="size-3.5" />
+												</button>
+											)}
+										</div>
+
+										{/* Category List */}
+										<div className="flex flex-col gap-0.5 max-h-56 overflow-y-auto overscroll-contain pr-0.5">
+											{(!categorySearchQuery ||
+												"all categories".includes(categorySearchQuery.toLowerCase().trim())) && (
+												<button
+													type="button"
 													onClick={() => {
-														setCategoryFilter(cat.name);
+														setCategoryFilter("ALL");
 														setIsCategoryPopoverOpen(false);
 														setCategorySearchQuery("");
 														setPage(1);
 													}}
 													className={`flex items-center justify-between w-full px-2.5 py-1.5 rounded-md text-xs font-medium text-left transition-colors cursor-pointer ${
-														isSelected
+														categoryFilter === "ALL"
 															? "bg-blue-50 text-blue-700"
 															: "text-zinc-700 hover:bg-zinc-100"
 													}`}
 												>
-													<span className="truncate min-w-0 flex-1">{cat.name}</span>
-													{isSelected && (
+													<span className="truncate">All Categories</span>
+													{categoryFilter === "ALL" && (
 														<RiCheckLine className="size-3.5 text-blue-600 shrink-0 ml-1.5" />
 													)}
 												</button>
-											);
-										})}
-
-										{filteredAvailableCategories.length === 0 &&
-											categorySearchQuery &&
-											!"all categories".includes(categorySearchQuery.toLowerCase().trim()) && (
-												<div className="py-4 text-center text-xs text-zinc-400">
-													No categories found
-												</div>
 											)}
-									</div>
-								</PopoverContent>
-							</Popover>
 
-							{/* Status Filter */}
-							<DropdownMenu>
-								<DropdownMenuTrigger
-									render={
-										<Button
-											variant="outline"
-											className="min-w-36 justify-start gap-2 bg-white font-normal text-gray-700 hover:bg-gray-50 border-gray-200 shadow-none cursor-pointer"
-										/>
-									}
-								>
-									<RiMoneyDollarCircleLine className="size-4 shrink-0 text-gray-500" />
-									<span className="truncate">
-										{statusFilter === "ALL"
-											? "All Status"
-											: statusFilter.charAt(0) + statusFilter.slice(1).toLowerCase()}
-									</span>
-								</DropdownMenuTrigger>
-								<DropdownMenuContent className="w-44 rounded-lg border border-gray-200 shadow-none p-1 bg-white">
-									<DropdownMenuRadioGroup value={statusFilter} onValueChange={setStatusFilter}>
-										<DropdownMenuRadioItem closeOnClick value="ALL">
-											All Status
-										</DropdownMenuRadioItem>
-										<DropdownMenuRadioItem closeOnClick value="APPROVED">
-											Approved
-										</DropdownMenuRadioItem>
-										<DropdownMenuRadioItem closeOnClick value="PENDING">
-											Pending
-										</DropdownMenuRadioItem>
-										<DropdownMenuRadioItem closeOnClick value="PROCESSING">
-											Processing
-										</DropdownMenuRadioItem>
-									</DropdownMenuRadioGroup>
-								</DropdownMenuContent>
-							</DropdownMenu>
+											{filteredAvailableCategories.map((cat) => {
+												const isSelected = categoryFilter === cat.name;
+												return (
+													<button
+														type="button"
+														key={cat.id}
+														title={cat.name}
+														onClick={() => {
+															setCategoryFilter(cat.name);
+															setIsCategoryPopoverOpen(false);
+															setCategorySearchQuery("");
+															setPage(1);
+														}}
+														className={`flex items-center justify-between w-full px-2.5 py-1.5 rounded-md text-xs font-medium text-left transition-colors cursor-pointer ${
+															isSelected
+																? "bg-blue-50 text-blue-700"
+																: "text-zinc-700 hover:bg-zinc-100"
+														}`}
+													>
+														<span className="truncate min-w-0 flex-1">{cat.name}</span>
+														{isSelected && (
+															<RiCheckLine className="size-3.5 text-blue-600 shrink-0 ml-1.5" />
+														)}
+													</button>
+												);
+											})}
+
+											{filteredAvailableCategories.length === 0 &&
+												categorySearchQuery &&
+												!"all categories".includes(categorySearchQuery.toLowerCase().trim()) && (
+													<div className="py-4 text-center text-xs text-zinc-400">
+														No categories found
+													</div>
+												)}
+										</div>
+									</PopoverContent>
+								</Popover>
+
+								{/* Status Filter */}
+								<DropdownMenu>
+									<DropdownMenuTrigger
+										render={
+											<Button
+												variant="outline"
+												className="min-w-36 justify-start gap-2 bg-white font-normal text-gray-700 hover:bg-gray-50 border-gray-200 shadow-none cursor-pointer"
+											/>
+										}
+									>
+										<RiMoneyDollarCircleLine className="size-4 shrink-0 text-gray-500" />
+										<span className="truncate">
+											{statusFilter === "ALL"
+												? "All Status"
+												: statusFilter.charAt(0) + statusFilter.slice(1).toLowerCase()}
+										</span>
+									</DropdownMenuTrigger>
+									<DropdownMenuContent className="w-44 rounded-lg border border-gray-200 shadow-none p-1 bg-white">
+										<DropdownMenuRadioGroup value={statusFilter} onValueChange={setStatusFilter}>
+											<DropdownMenuRadioItem closeOnClick value="ALL">
+												All Status
+											</DropdownMenuRadioItem>
+											<DropdownMenuRadioItem closeOnClick value="APPROVED">
+												Approved
+											</DropdownMenuRadioItem>
+											<DropdownMenuRadioItem closeOnClick value="PENDING">
+												Pending
+											</DropdownMenuRadioItem>
+											<DropdownMenuRadioItem closeOnClick value="PROCESSING">
+												Processing
+											</DropdownMenuRadioItem>
+										</DropdownMenuRadioGroup>
+									</DropdownMenuContent>
+								</DropdownMenu>
+							</div>
 						</div>
 					</div>
-				</div>
 
 					{/* Table */}
 					<div className="border border-gray-200 rounded-lg bg-white overflow-hidden shadow-none">
 						<Table className="[&_tr]:border-gray-100">
 							<TableHeader className="bg-gray-50/50">
 								<TableRow className="bg-gray-50/50 hover:bg-gray-50/50">
-									<TableHead className="w-62.5 font-medium text-gray-700">Knowledge Title</TableHead>
+									<SortableTableHead
+										sortKey="title"
+										currentSortKey={sortKey}
+										sortOrder={sortOrder}
+										onSort={handleSort}
+										className="w-62.5 font-medium text-gray-700"
+									>
+										Knowledge Title
+									</SortableTableHead>
 									<TableHead className="w-37.5 font-medium text-gray-700">Category</TableHead>
-									<TableHead className="w-35 font-medium text-gray-700">Date</TableHead>
+									<SortableTableHead
+										sortKey="created_at"
+										currentSortKey={sortKey}
+										sortOrder={sortOrder}
+										onSort={handleSort}
+										className="w-35 font-medium text-gray-700"
+									>
+										Date
+									</SortableTableHead>
 									<TableHead className="font-medium text-gray-700">Description</TableHead>
-									<TableHead className="w-30 font-medium text-gray-700">Status</TableHead>
-									<TableHead className="w-30 font-medium text-gray-700 text-right">Actions</TableHead>
+									<SortableTableHead
+										sortKey="status"
+										currentSortKey={sortKey}
+										sortOrder={sortOrder}
+										onSort={handleSort}
+										className="w-30 font-medium text-gray-700"
+									>
+										Status
+									</SortableTableHead>
+									<TableHead className="w-30 font-medium text-gray-700 text-right">
+										Actions
+									</TableHead>
 								</TableRow>
 							</TableHeader>
 							<TableBody>
@@ -677,7 +703,7 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
 													{row.isBatch && row.documentCount && row.documentCount > 1 && (
 														<Badge
 															variant="secondary"
-															className="bg-blue-50 text-blue-700 border-blue-200 text-[10px] px-1.5 py-0 shrink-0 font-normal rounded-lg"
+															className="bg-blue-50 text-blue-700 border-blue-200 text-[10px] px-1.5 py-0 shrink-0 font-normal rounded-md"
 														>
 															{row.documentCount} files
 														</Badge>
@@ -693,7 +719,7 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
 																<Badge
 																	key={idx}
 																	variant="secondary"
-																	className="bg-gray-100 text-gray-700 hover:bg-gray-100 rounded-lg"
+																	className="bg-gray-100 text-gray-700 hover:bg-gray-100 rounded-md"
 																>
 																	{cat}
 																</Badge>
@@ -701,7 +727,7 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
 															{row.categories.length > 2 && (
 																<Badge
 																	variant="secondary"
-																	className="bg-gray-100 text-zinc-700 hover:bg-gray-200 text-[11px] px-1.5 py-0 rounded-lg cursor-default font-medium"
+																	className="bg-gray-100 text-zinc-700 hover:bg-gray-200 text-[11px] px-1.5 py-0 rounded-md cursor-default font-medium"
 																	title={row.categories.slice(2).join(", ")}
 																>
 																	+{row.categories.length - 2}
@@ -749,7 +775,10 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
 																</Button>
 															}
 														/>
-														<DropdownMenuContent align="end" className="w-40 bg-white border-gray-200">
+														<DropdownMenuContent
+															align="end"
+															className="w-40 bg-white border-gray-200"
+														>
 															<DropdownMenuItem
 																onClick={() => handleRowClick(row)}
 																className="text-xs text-gray-700 cursor-pointer"

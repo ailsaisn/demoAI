@@ -1,7 +1,26 @@
 "use client";
 
+import { useCategories } from "@/app/dashboard/category/hooks/use-categories";
+import { KnowledgeResponse, extractKnowledgeCategories } from "@/app/dashboard/knowledge/api/types";
+import {
+	useDeleteKnowledge,
+	useKnowledgeBaseList,
+} from "@/app/dashboard/knowledge/hooks/use-knowledge";
+import { ConfirmationModal } from "@/components/shared/confirmation-modal";
+import { DataTablePagination } from "@/components/shared/data-table-pagination";
+import { SortableTableHead } from "@/components/shared/sortable-table-head";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import {
+	DropdownMenu,
+	DropdownMenuContent,
+	DropdownMenuItem,
+	DropdownMenuRadioGroup,
+	DropdownMenuRadioItem,
+	DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { Input } from "@/components/ui/input";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import {
 	Table,
 	TableBody,
@@ -10,45 +29,27 @@ import {
 	TableHeader,
 	TableRow,
 } from "@/components/ui/table";
+import { usePagination } from "@/hooks/use-pagination";
+import { useTableSort } from "@/hooks/use-table-sort";
 import {
-	DropdownMenu,
-	DropdownMenuTrigger,
-	DropdownMenuContent,
-	DropdownMenuItem,
-	DropdownMenuRadioGroup,
-	DropdownMenuRadioItem,
-} from "@/components/ui/dropdown-menu";
-import {
-	Popover,
-	PopoverContent,
-	PopoverTrigger,
-} from "@/components/ui/popover";
-import { Input } from "@/components/ui/input";
-import {
+	RiArrowDownSLine,
 	RiBookOpenLine,
 	RiBookletLine,
+	RiCheckLine,
+	RiCloseLine,
 	RiDatabase2Line,
+	RiDeleteBinLine,
 	RiEyeLine,
 	RiFilterOffLine,
 	RiLoader4Line,
 	RiMoneyDollarCircleLine,
-	RiCloseLine,
 	RiMore2Line,
-	RiDeleteBinLine,
 	RiSearchLine,
-	RiCheckLine,
-	RiArrowDownSLine,
 } from "@remixicon/react";
 import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
-import { useKnowledgeBaseList, useDeleteKnowledge } from "@/app/dashboard/knowledge/hooks/use-knowledge";
-import { useCategories } from "@/app/dashboard/category/hooks/use-categories";
-import { KnowledgeResponse, extractKnowledgeCategories } from "@/app/dashboard/knowledge/api/types";
 import { AttachProjectDialog } from "./attach-project-dialog";
-import { ConfirmationModal } from "@/components/shared/confirmation-modal";
-import { usePagination } from "@/hooks/use-pagination";
-import { DataTablePagination } from "@/components/shared/data-table-pagination";
 
 interface DisplayRowItem {
 	id: string;
@@ -266,24 +267,26 @@ export function KnowledgeTable({
 		return rows;
 	}, [knowledgeList]);
 
+	const { sortKey, sortOrder, handleSort, sortItems } = useTableSort({
+		initialSortKey: "created_at",
+		initialSortOrder: "desc",
+	});
+
 	const filteredList = useMemo(() => {
-		return displayRows
-			?.filter((item) => (selectedProjectId ? item.projectId === selectedProjectId : true))
-			?.filter((item) => (statusFilter !== "ALL" ? item.status === statusFilter : true))
-			?.filter((item) => isCategoryMatch(item.categories, categoryFilter))
-			?.filter(
+		const result = (displayRows || [])
+			.filter((item) => (selectedProjectId ? item.projectId === selectedProjectId : true))
+			.filter((item) => (statusFilter !== "ALL" ? item.status === statusFilter : true))
+			.filter((item) => isCategoryMatch(item.categories, categoryFilter))
+			.filter(
 				(item) =>
 					item.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
 					item.allFileNames.some((f) => f.toLowerCase().includes(searchQuery.toLowerCase())) ||
 					item.description.toLowerCase().includes(searchQuery.toLowerCase()) ||
 					item.categories.some((c) => c.toLowerCase().includes(searchQuery.toLowerCase())),
-			)
-			.sort((a, b) => {
-				const timeA = a.created_at ? new Date(a.created_at).getTime() : 0;
-				const timeB = b.created_at ? new Date(b.created_at).getTime() : 0;
-				return timeB - timeA;
-			});
-	}, [displayRows, selectedProjectId, statusFilter, categoryFilter, searchQuery]);
+			);
+
+		return sortItems<DisplayRowItem>(result);
+	}, [displayRows, selectedProjectId, statusFilter, categoryFilter, searchQuery, sortItems]);
 
 	const {
 		page,
@@ -295,9 +298,10 @@ export function KnowledgeTable({
 		setPageSize,
 		startIndex,
 		endIndex,
-	} = usePagination({ items: filteredList, initialPageSize: 10 });
+	} = usePagination<DisplayRowItem>({ items: filteredList, initialPageSize: 10 });
 
-	const hasActiveFilters = statusFilter !== "ALL" || categoryFilter !== "ALL" || !!selectedProjectId;
+	const hasActiveFilters =
+		statusFilter !== "ALL" || categoryFilter !== "ALL" || !!selectedProjectId;
 
 	const handleResetFilters = () => {
 		setStatusFilter("ALL");
@@ -454,9 +458,7 @@ export function KnowledgeTable({
 												setPage(1);
 											}}
 											className={`flex items-center justify-between w-full px-2.5 py-1.5 rounded-md text-xs font-medium text-left transition-colors cursor-pointer ${
-												isSelected
-													? "bg-blue-50 text-blue-700"
-													: "text-zinc-700 hover:bg-zinc-100"
+												isSelected ? "bg-blue-50 text-blue-700" : "text-zinc-700 hover:bg-zinc-100"
 											}`}
 										>
 											<span className="truncate min-w-0 flex-1">{cat.name}</span>
@@ -520,11 +522,35 @@ export function KnowledgeTable({
 				<Table className="[&_tr]:border-gray-100">
 					<TableHeader className="bg-gray-50/50">
 						<TableRow className="bg-gray-50/50 hover:bg-gray-50/50">
-							<TableHead className="w-62.5 font-medium text-gray-700">Knowledge Title</TableHead>
+							<SortableTableHead
+								sortKey="title"
+								currentSortKey={sortKey}
+								sortOrder={sortOrder}
+								onSort={handleSort}
+								className="w-62.5 font-medium text-gray-700"
+							>
+								Knowledge Title
+							</SortableTableHead>
 							<TableHead className="w-37.5 font-medium text-gray-700">Category</TableHead>
-							<TableHead className="w-35 font-medium text-gray-700">Date</TableHead>
+							<SortableTableHead
+								sortKey="created_at"
+								currentSortKey={sortKey}
+								sortOrder={sortOrder}
+								onSort={handleSort}
+								className="w-35 font-medium text-gray-700"
+							>
+								Date
+							</SortableTableHead>
 							<TableHead className="font-medium text-gray-700">Description</TableHead>
-							<TableHead className="w-30 font-medium text-gray-700">Status</TableHead>
+							<SortableTableHead
+								sortKey="status"
+								currentSortKey={sortKey}
+								sortOrder={sortOrder}
+								onSort={handleSort}
+								className="w-30 font-medium text-gray-700"
+							>
+								Status
+							</SortableTableHead>
 							<TableHead className="w-30 font-medium text-gray-700 text-right">Actions</TableHead>
 						</TableRow>
 					</TableHeader>
@@ -592,7 +618,7 @@ export function KnowledgeTable({
 											{row.isBatch && row.documentCount && row.documentCount > 1 && (
 												<Badge
 													variant="secondary"
-													className="bg-blue-50 text-blue-700 border-blue-200 text-[10px] px-1.5 py-0 shrink-0 font-normal rounded-lg"
+													className="bg-blue-50 text-blue-700 border-blue-200 text-[10px] px-1.5 py-0 shrink-0 font-normal rounded-md"
 												>
 													{row.documentCount} files
 												</Badge>
@@ -607,7 +633,7 @@ export function KnowledgeTable({
 														<Badge
 															key={idx}
 															variant="secondary"
-															className="bg-gray-100 text-gray-700 hover:bg-gray-100 rounded-lg"
+															className="bg-gray-100 text-gray-700 hover:bg-gray-100 rounded-md"
 														>
 															{cat}
 														</Badge>
@@ -615,7 +641,7 @@ export function KnowledgeTable({
 													{row.categories.length > 2 && (
 														<Badge
 															variant="secondary"
-															className="bg-gray-100 text-zinc-700 hover:bg-gray-200 text-[11px] px-1.5 py-0 rounded-lg cursor-default font-medium"
+															className="bg-gray-100 text-zinc-700 hover:bg-gray-200 text-[11px] px-1.5 py-0 rounded-md cursor-default font-medium"
 															title={row.categories.slice(2).join(", ")}
 														>
 															+{row.categories.length - 2}
@@ -672,7 +698,9 @@ export function KnowledgeTable({
 															setAttachKnowledgeId(row.id);
 															setAttachKnowledgeIds(row.allDocIds || [row.id]);
 															setAttachKnowledgeTitle(row.title);
-															setAttachCurrentProjectId(row.projectId || row.rawItem?.project_id || null);
+															setAttachCurrentProjectId(
+																row.projectId || row.rawItem?.project_id || null,
+															);
 															setIsAttachModalOpen(true);
 														}}
 														className="text-xs text-gray-700 cursor-pointer"
