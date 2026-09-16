@@ -111,13 +111,13 @@ export function ViewBranchSheet({ branch }: ViewBranchSheetProps) {
 										</span>
 										{hasCustomLimit ? (
 											<div className="pt-0.5">
-												<span className="inline-flex items-center text-[11px] bg-amber-50 text-amber-700 px-2 py-0.5 rounded-full font-medium border border-amber-200">
+												<span className="inline-flex items-center text-[11px] bg-amber-50 text-amber-700 px-2 py-0.5 rounded-md font-medium border border-amber-200">
 													Custom Override
 												</span>
 											</div>
 										) : isGlobalLimitActive ? (
 											<div className="pt-0.5">
-												<span className="inline-flex items-center text-[11px] bg-blue-50 text-blue-600 px-2 py-0.5 rounded-full font-medium border border-blue-100">
+												<span className="inline-flex items-center text-[11px] bg-blue-50 text-blue-600 px-2 py-0.5 rounded-md font-medium border border-blue-100">
 													Global Pool
 												</span>
 											</div>

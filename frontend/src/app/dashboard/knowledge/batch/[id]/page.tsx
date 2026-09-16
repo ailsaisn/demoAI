@@ -271,22 +271,22 @@ export default function BatchKnowledgePage({ params }: { params: Promise<{ id: s
 										</div>
 										<div className="shrink-0">
 											{doc.status === "PROCESSING" && (
-												<Badge className="bg-blue-50 text-blue-700 border-blue-200 text-[10px] px-1.5 py-0 rounded-lg shadow-none">
+												<Badge className="bg-blue-50 text-blue-700 border-blue-200 text-[10px] px-1.5 py-0 rounded-md shadow-none">
 													Processing
 												</Badge>
 											)}
 											{doc.status === "PENDING" && (
-												<Badge className="bg-amber-50 text-amber-700 border-amber-200 text-[10px] px-1.5 py-0 rounded-lg shadow-none">
+												<Badge className="bg-amber-50 text-amber-700 border-amber-200 text-[10px] px-1.5 py-0 rounded-md shadow-none">
 													Review
 												</Badge>
 											)}
 											{doc.status === "APPROVED" && (
-												<Badge className="bg-emerald-50 text-emerald-700 border-emerald-200 text-[10px] px-1.5 py-0 rounded-lg shadow-none">
+												<Badge className="bg-emerald-50 text-emerald-700 border-emerald-200 text-[10px] px-1.5 py-0 rounded-md shadow-none">
 													Approved
 												</Badge>
 											)}
 											{doc.status === "REJECTED" && (
-												<Badge className="bg-red-50 text-red-700 border-red-200 text-[10px] px-1.5 py-0 rounded-lg shadow-none">
+												<Badge className="bg-red-50 text-red-700 border-red-200 text-[10px] px-1.5 py-0 rounded-md shadow-none">
 													Failed
 												</Badge>
 											)}

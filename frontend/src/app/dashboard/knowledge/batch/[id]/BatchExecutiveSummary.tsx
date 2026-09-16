@@ -59,7 +59,7 @@ export function BatchExecutiveSummary({
 					<div className="flex items-center gap-2 min-w-0">
 						<h3 className="font-semibold text-sm">Executive Summary</h3>
 						{typeof documentCount === "number" && documentCount > 0 && (
-							<span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium bg-zinc-200/60 text-zinc-600 shrink-0">
+							<span className="inline-flex items-center px-2 py-0.5 rounded-md text-[11px] font-medium bg-zinc-200/60 text-zinc-600 shrink-0">
 								{documentCount} {documentCount === 1 ? "document" : "documents"}
 							</span>
 						)}

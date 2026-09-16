@@ -19,7 +19,7 @@ export function PromoCard({ data }: { data: PromoCardData }) {
 				</div>
 
 				{period && (
-					<div className="inline-flex items-center gap-1.5 text-xs font-medium text-amber-900 bg-amber-100/90 border border-amber-200/80 px-2.5 py-0.5 rounded-full shrink-0">
+					<div className="inline-flex items-center gap-1.5 text-xs font-medium text-amber-900 bg-amber-100/90 border border-amber-200/80 px-2.5 py-0.5 rounded-md shrink-0">
 						<RiCalendarEventLine className="size-3 text-amber-700" />
 						<span>{period}</span>
 					</div>

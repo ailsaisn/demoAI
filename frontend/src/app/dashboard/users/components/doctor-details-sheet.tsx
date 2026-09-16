@@ -129,7 +129,7 @@ export function DoctorDetailsSheet({
 												{doctor.dr_type || "-"}
 											</span>
 											{isGlobalLimitActive && !hasCustomLimit && (
-												<span className="text-[11px] bg-blue-50 text-blue-600 px-2 py-0.5 rounded-full font-medium border border-blue-100">
+												<span className="text-[11px] bg-blue-50 text-blue-600 px-2 py-0.5 rounded-md font-medium border border-blue-100">
 													{isSpDVE
 														? "SpDVE Global Quota"
 														: isGP
@@ -138,7 +138,7 @@ export function DoctorDetailsSheet({
 												</span>
 											)}
 											{isGlobalLimitActive && hasCustomLimit && (
-												<span className="text-[11px] bg-emerald-50 text-emerald-700 px-2 py-0.5 rounded-full font-medium border border-emerald-200">
+												<span className="text-[11px] bg-emerald-50 text-emerald-700 px-2 py-0.5 rounded-md font-medium border border-emerald-200">
 													Custom Override
 												</span>
 											)}
@@ -152,7 +152,7 @@ export function DoctorDetailsSheet({
 												{tokensUsed.toLocaleString()} tokens
 											</span>
 											{!hasCustomLimit && !isGlobalLimitActive && (
-												<span className="text-[11px] bg-zinc-100 text-zinc-600 px-2 py-0.5 rounded-full font-medium">
+												<span className="text-[11px] bg-zinc-100 text-zinc-600 px-2 py-0.5 rounded-md font-medium">
 													Drawing from Branch Pool
 												</span>
 											)}
@@ -179,7 +179,7 @@ export function DoctorDetailsSheet({
 													<span className="text-black-500 font-normal">tokens</span>
 												</span>
 												{isGlobalLimitActive && !hasCustomLimit && (
-													<span className="text-[11px] bg-blue-50 text-blue-600 px-2 py-0.5 rounded-full font-medium border border-blue-100">
+													<span className="text-[11px] bg-blue-50 text-blue-600 px-2 py-0.5 rounded-md font-medium border border-blue-100">
 														{isSpDVE
 															? "SpDVE Global Quota"
 															: isGP
@@ -188,12 +188,12 @@ export function DoctorDetailsSheet({
 													</span>
 												)}
 												{isGlobalLimitActive && hasCustomLimit && (
-													<span className="text-[11px] bg-emerald-50 text-emerald-700 px-2 py-0.5 rounded-full font-medium border border-emerald-200">
+													<span className="text-[11px] bg-emerald-50 text-emerald-700 px-2 py-0.5 rounded-md font-medium border border-emerald-200">
 														Custom Override
 													</span>
 												)}
 												{!isGlobalLimitActive && !hasCustomLimit && (
-													<span className="text-[11px] bg-zinc-100 text-zinc-600 px-2 py-0.5 rounded-full font-medium">
+													<span className="text-[11px] bg-zinc-100 text-zinc-600 px-2 py-0.5 rounded-md font-medium">
 														Branch Pool (Used: {tokensUsed.toLocaleString()})
 													</span>
 												)}

@@ -618,7 +618,7 @@ export function KnowledgeTable({
 											{row.isBatch && row.documentCount && row.documentCount > 1 && (
 												<Badge
 													variant="secondary"
-													className="bg-blue-50 text-blue-700 border-blue-200 text-[10px] px-1.5 py-0 shrink-0 font-normal rounded-lg"
+													className="bg-blue-50 text-blue-700 border-blue-200 text-[10px] px-1.5 py-0 shrink-0 font-normal rounded-md"
 												>
 													{row.documentCount} files
 												</Badge>
@@ -633,7 +633,7 @@ export function KnowledgeTable({
 														<Badge
 															key={idx}
 															variant="secondary"
-															className="bg-gray-100 text-gray-700 hover:bg-gray-100 rounded-lg"
+															className="bg-gray-100 text-gray-700 hover:bg-gray-100 rounded-md"
 														>
 															{cat}
 														</Badge>
@@ -641,7 +641,7 @@ export function KnowledgeTable({
 													{row.categories.length > 2 && (
 														<Badge
 															variant="secondary"
-															className="bg-gray-100 text-zinc-700 hover:bg-gray-200 text-[11px] px-1.5 py-0 rounded-lg cursor-default font-medium"
+															className="bg-gray-100 text-zinc-700 hover:bg-gray-200 text-[11px] px-1.5 py-0 rounded-md cursor-default font-medium"
 															title={row.categories.slice(2).join(", ")}
 														>
 															+{row.categories.length - 2}
