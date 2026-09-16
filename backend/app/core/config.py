@@ -22,16 +22,16 @@ class Settings(BaseSettings):
     OPENAI_API_KEY: Optional[str] = None
 
     # MinIO / S3 Object Storage Settings
-    S3_ENDPOINT_URL: Optional[str] = None # e.g. "http://localhost:9000" for MinIO or None for AWS S3
-    S3_ACCESS_KEY: Optional[str] = None # None for AWS IRSA / IAM role auth, or "minioadmin" for MinIO
+    S3_ENDPOINT_URL: Optional[str] = None # Set only for MinIO (e.g. "http://localhost:9000"); Leave None for AWS S3
+    S3_ACCESS_KEY: Optional[str] = None # Leave None for AWS IRSA / IAM role auth, or "minioadmin" for MinIO
     S3_SECRET_KEY: Optional[str] = None
-    S3_BUCKET: str = "images"
-    S3_DOCUMENTS_BUCKET: str = "knowledge-documents"
-    S3_STAGING_BUCKET: str = "staging"
-    S3_APPROVED_BUCKET: str = "approved"
-    S3_REGION: str = "us-east-1"
-    S3_USE_PATH_STYLE: Optional[bool] = None # None = auto-detect (True for MinIO/custom, False for AWS)
-    S3_PUBLIC_URL: Optional[str] = None # Optional public CDN / API prefix (e.g. "https://dokterpedia.aryanoble.co.id/api/storage")
+    S3_BUCKET: str = "skin-clinic-chatbot-dev" # Unified S3 bucket
+    S3_DOCUMENTS_BUCKET: Optional[str] = None # Automatically defaults to S3_BUCKET
+    S3_STAGING_BUCKET: Optional[str] = None # Automatically defaults to S3_BUCKET
+    S3_APPROVED_BUCKET: Optional[str] = None # Automatically defaults to S3_BUCKET
+    S3_REGION: str = "ap-southeast-3" # AWS Jakarta Region
+    S3_USE_PATH_STYLE: Optional[bool] = None # None = auto-detect (True for MinIO, False for AWS)
+    S3_PUBLIC_URL: Optional[str] = None # Optional public CDN / API prefix
 
     COOKIE_DOMAIN: Optional[str] = None # e.g. ".aryanoble.web.id" or ".aryanoble.co.id"
     COOKIE_SECURE: Optional[bool] = None
