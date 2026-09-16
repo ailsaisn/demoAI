@@ -5,13 +5,14 @@ import { Button } from "@/components/ui/button";
 import {
 	Dialog,
 	DialogContent,
+	DialogDescription,
 	DialogFooter,
 	DialogHeader,
 	DialogTitle,
 } from "@/components/ui/dialog";
 import { Field, FieldContent, FieldLabel, FieldTitle } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
-import { RiCheckLine } from "@remixicon/react";
+import { RiCheckLine, RiLoader4Line } from "@remixicon/react";
 import { CategoryResponse } from "../api/types";
 import { useCategoryForm } from "../hooks/use-category-form";
 
@@ -23,15 +24,12 @@ interface CategoryDialogProps {
 }
 
 export function CategoryDialog({ isOpen, onOpenChange, mode, category }: CategoryDialogProps) {
-	const {
-		name,
-		setName,
-		title,
-		buttonText,
-		isEdit,
-		isPending,
-		handleSubmit,
-	} = useCategoryForm({ isOpen, onOpenChange, mode, category });
+	const { name, setName, title, buttonText, isEdit, isPending, handleSubmit } = useCategoryForm({
+		isOpen,
+		onOpenChange,
+		mode,
+		category,
+	});
 
 	return (
 		<Dialog open={isOpen} onOpenChange={onOpenChange}>
@@ -39,6 +37,9 @@ export function CategoryDialog({ isOpen, onOpenChange, mode, category }: Categor
 				<form onSubmit={handleSubmit}>
 					<DialogHeader className="p-4 border-b border-gray-100">
 						<DialogTitle className="text-base font-semibold text-foreground">{title}</DialogTitle>
+						<DialogDescription className="sr-only">
+							{isEdit ? "Edit existing category name" : "Add new knowledge category"}
+						</DialogDescription>
 					</DialogHeader>
 
 					<div className="p-4 flex flex-col gap-4">
@@ -91,8 +92,12 @@ export function CategoryDialog({ isOpen, onOpenChange, mode, category }: Categor
 							className="bg-blue-600 hover:bg-blue-700 text-white rounded-lg px-4 h-10 font-medium text-sm transition-colors cursor-pointer shadow-none disabled:opacity-50"
 							disabled={isPending || !name.trim()}
 						>
-							<RiCheckLine className="size-4 mr-1.5" />
-							{buttonText}
+							{isPending ? (
+								<RiLoader4Line className="size-4 mr-1.5 animate-spin" />
+							) : (
+								<RiCheckLine className="size-4 mr-1.5" />
+							)}
+							{isPending ? (isEdit ? "Saving..." : "Adding...") : buttonText}
 						</Button>
 					</DialogFooter>
 				</form>

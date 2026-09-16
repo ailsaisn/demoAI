@@ -1,6 +1,9 @@
 "use client";
 
-import React, { useState, useMemo, useEffect } from "react";
+import { useBranches } from "@/app/dashboard/branches/hooks/use-branches";
+import { VisibilitySettings as IVisibilitySettings } from "@/app/dashboard/knowledge/api/types";
+import { SearchableDropdown } from "@/app/dashboard/knowledge/components/preview/visibility-settings";
+import { useUsers } from "@/app/dashboard/users/hooks/use-users";
 import { Button } from "@/components/ui/button";
 import {
 	Dialog,
@@ -10,12 +13,9 @@ import {
 	DialogHeader,
 	DialogTitle,
 } from "@/components/ui/dialog";
-import { Field, FieldLabel, FieldContent, FieldGroup } from "@/components/ui/field";
-import { RiCheckLine, RiEyeLine } from "@remixicon/react";
-import { useBranches } from "@/app/dashboard/branches/hooks/use-branches";
-import { useUsers } from "@/app/dashboard/users/hooks/use-users";
-import { VisibilitySettings as IVisibilitySettings } from "@/app/dashboard/knowledge/api/types";
-import { SearchableDropdown } from "@/app/dashboard/knowledge/components/preview/visibility-settings";
+import { Field, FieldContent, FieldGroup, FieldLabel } from "@/components/ui/field";
+import { RiCheckLine, RiEyeLine, RiLoader4Line } from "@remixicon/react";
+import { useEffect, useMemo, useState } from "react";
 import { useUpdateBatchVisibility } from "../../hooks/use-knowledge";
 
 interface BatchVisibilityModalProps {
@@ -166,7 +166,8 @@ export function BatchVisibilityModal({
 								Batch Visibility Settings
 							</DialogTitle>
 							<DialogDescription className="text-xs text-muted-foreground">
-								Set access limits for all {documentCount} document{documentCount > 1 ? "s" : ""} in this batch at once.
+								Set access limits for all {documentCount} document{documentCount > 1 ? "s" : ""} in
+								this batch at once.
 							</DialogDescription>
 						</div>
 					</div>
@@ -231,7 +232,11 @@ export function BatchVisibilityModal({
 						disabled={isSaveDisabled}
 						onClick={handleSave}
 					>
-						<RiCheckLine className="size-4" />
+						{updateBatchVisibilityMutation.isPending ? (
+							<RiLoader4Line className="size-4 animate-spin" />
+						) : (
+							<RiCheckLine className="size-4" />
+						)}
 						{updateBatchVisibilityMutation.isPending ? "Applying..." : "Apply to All"}
 					</Button>
 				</DialogFooter>
