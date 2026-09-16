@@ -42,9 +42,11 @@ export function GlobalTimeLimitConfig() {
 							<div className="relative">
 								<Input
 									type="number"
+									min={1}
 									disabled={!isEditing}
 									value={timeAmount}
 									onChange={(e) => setTimeAmount(e.target.value)}
+									onWheel={(e) => (e.target as HTMLInputElement).blur()}
 									className="w-60 bg-black-50 border-black-50 text-black-500 h-10 rounded-lg [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none disabled:opacity-75"
 								/>
 								<span className="absolute right-3 top-1/2 -translate-y-1/2 text-sm text-black-200 pointer-events-none">

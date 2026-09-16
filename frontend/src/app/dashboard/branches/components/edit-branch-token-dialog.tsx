@@ -1,5 +1,6 @@
 "use client";
 
+import { TokenInput } from "@/components/shared/token-input";
 import { Button } from "@/components/ui/button";
 import {
 	Dialog,
@@ -9,7 +10,6 @@ import {
 	DialogTrigger,
 } from "@/components/ui/dialog";
 import { Field, FieldError, FieldLabel } from "@/components/ui/field";
-import { Input } from "@/components/ui/input";
 import { RiEdit2Line, RiLoader4Line } from "@remixicon/react";
 import * as React from "react";
 import { BranchResponse } from "../api/types";
@@ -59,22 +59,18 @@ export function EditBranchTokenDialog({ branch }: EditBranchTokenDialogProps) {
 										<FieldLabel htmlFor="token_limit" className="text-xs font-medium text-zinc-700">
 											Token Limit
 										</FieldLabel>
-										<div className="relative">
-											<Input
-												name={field.name}
-												id="token_limit"
-												type="number"
-												placeholder="1000"
-												className="h-10 rounded-lg border-gray-200 bg-white text-sm text-foreground [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none focus-visible:ring-blue-500"
-												value={field.state.value}
-												onChange={(e) => field.handleChange(e.target.value)}
-												onBlur={field.handleBlur}
-												aria-invalid={isInvalid}
-											/>
-											<span className="absolute right-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground pointer-events-none">
-												per month
-											</span>
-										</div>
+										<TokenInput
+											name={field.name}
+											id="token_limit"
+											placeholder="1,000,000"
+											value={field.state.value}
+											onChange={(val) => field.handleChange(val.toString())}
+											onBlur={field.handleBlur}
+											suffix="per month"
+											previewSuffix="tokens / month"
+											min={0}
+											aria-invalid={isInvalid}
+										/>
 										{isInvalid && (
 											<FieldError errors={field.state.meta.errors as Array<{ message?: string }>} />
 										)}

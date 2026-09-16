@@ -121,7 +121,7 @@ export function GlobalTokenConfig() {
 									)
 								}
 								isSaving={savingKey === "GLOBAL_TOKEN_THRESHOLD"}
-								placeholder="1000000"
+								placeholder="1,000,000"
 							/>
 						</div>
 
@@ -165,7 +165,7 @@ export function GlobalTokenConfig() {
 								}
 								isSaving={savingKey === "GLOBAL_TOKEN_LIMIT"}
 								isDeactivating={deactivatingKey === "GLOBAL_TOKEN_LIMIT"}
-								placeholder="3000000"
+								placeholder="3,000,000"
 							/>
 
 							{/* Row: Token Amount (SpDVE) & Token Amount (GP Plus) */}
@@ -199,7 +199,7 @@ export function GlobalTokenConfig() {
 									}
 									isSaving={savingKey === "TOKEN_LIMIT_SPKK"}
 									isDeactivating={deactivatingKey === "TOKEN_LIMIT_SPKK"}
-									placeholder="500000"
+									placeholder="500,000"
 								/>
 
 								<TokenLimitRow
@@ -231,7 +231,7 @@ export function GlobalTokenConfig() {
 									}
 									isSaving={savingKey === "TOKEN_LIMIT_GP"}
 									isDeactivating={deactivatingKey === "TOKEN_LIMIT_GP"}
-									placeholder="250000"
+									placeholder="250,000"
 								/>
 							</div>
 						</div>
@@ -300,7 +300,10 @@ export function GlobalTokenConfig() {
 					if (!open) setPendingDeactivate(null);
 				}}
 				title={pendingDeactivate?.title || "Deactivate Configuration Rule"}
-				description={pendingDeactivate?.description || "Are you sure you want to deactivate this configuration rule?"}
+				description={
+					pendingDeactivate?.description ||
+					"Are you sure you want to deactivate this configuration rule?"
+				}
 				confirmText="Deactivate"
 				variant="destructive"
 				isLoading={isPending && deactivatingKey !== null}

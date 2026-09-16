@@ -1,5 +1,5 @@
+import { TokenInput } from "@/components/shared/token-input";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import {
 	RiCheckLine,
 	RiCloseCircleLine,
@@ -36,27 +36,29 @@ export function TokenLimitRow({
 	onDeactivate,
 	isSaving,
 	isDeactivating = false,
-	placeholder = "1000000",
+	placeholder = "1,000,000",
 	suffix = "per month",
 }: TokenLimitRowProps) {
 	return (
 		<div className="flex flex-col gap-1.5">
 			<span className="text-sm text-zinc-600">{label}</span>
-			<div className="flex items-center gap-4">
-				<div className="relative w-64">
-					<Input
-						type="number"
+			<div className="flex items-start gap-4">
+				<div className="w-64">
+					<TokenInput
 						disabled={!isEditing}
 						value={value}
 						placeholder={placeholder}
-						onChange={(e) => onChange(e.target.value)}
-						className="w-full bg-[#f0f0f0] border-gray-200 text-zinc-800 h-10 rounded-lg pr-20 disabled:opacity-80 focus-visible:ring-blue-500"
+						onChange={(val) => onChange(val.toString())}
+						suffix={suffix}
+						showPreview={isEditing}
+						previewSuffix={suffix}
+						min={0}
+						className={
+							!isEditing
+								? "bg-zinc-50 border-gray-200 text-zinc-700 disabled:opacity-90"
+								: "bg-white border-gray-200 focus-visible:ring-blue-500"
+						}
 					/>
-					{suffix && (
-						<span className="absolute right-3 top-1/2 -translate-y-1/2 text-sm text-zinc-400 pointer-events-none select-none">
-							{suffix}
-						</span>
-					)}
 				</div>
 				{isEditing ? (
 					<div className="flex items-center gap-2">
@@ -117,4 +119,3 @@ export function TokenLimitRow({
 		</div>
 	);
 }
-
