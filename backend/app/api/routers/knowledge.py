@@ -2339,6 +2339,10 @@ async def refine_knowledge(
 
             # Persist chat turns in metadata
             if k_entry.status == KnowledgeStatus.APPROVED:
+                asst_content = res.get("reply") or res.get("feedback") or res.get("answer") or "Dokumen berhasil diperbarui."
+                res["reply"] = asst_content
+                res["feedback"] = asst_content
+
                 if isinstance(res, dict) and res.get("edit_history") and isinstance(res.get("edit_history"), list):
                     full_edit_hist = res.get("edit_history")
                 elif isinstance(res, dict) and res.get("history") and isinstance(res.get("history"), list):
@@ -2374,7 +2378,6 @@ async def refine_knowledge(
                             user_turn["attachmentName"] = active_attached_file_name
                             user_turn["attachmentNames"] = [active_attached_file_name]
                         full_edit_hist.append(user_turn)
-                    asst_content = res.get("reply") or res.get("answer") or res.get("summary")
                     if asst_content:
                         full_edit_hist.append({
                             "role": "assistant",

@@ -404,9 +404,10 @@ status       : {status}
         )
         ingredient_filter = None
         if ingredient_delete_match:
-            raw_ing = ingredient_delete_match.group(1).strip().strip('"\'“”`')
+            raw_ing = ingredient_delete_match.group(1).strip()
             raw_ing = re.sub(r'\s+(?:dari|pada|di|dalam|ke)\s+.*$', '', raw_ing, flags=re.IGNORECASE).strip()
             raw_ing = re.sub(r'[\s,\.]+(?:ya|dong|tolong|mohon|terima\s*kasih|thanks)$', '', raw_ing, flags=re.IGNORECASE).strip()
+            raw_ing = re.sub(r'^[\s\*_\`"\'“”.,]+|[\s\*_\`"\'“”.,]+$', '', raw_ing).strip()
             if len(raw_ing) > 1:
                 ingredient_filter = raw_ing
 
@@ -491,6 +492,7 @@ status       : {status}
 
         # Filter out purely anaphoric terms from explicit_item_candidate
         if explicit_item_candidate:
+            explicit_item_candidate = re.sub(r'^[\s\*_\`"\'“”.,]+|[\s\*_\`"\'“”.,]+$', '', explicit_item_candidate).strip()
             anaphoric_clean = explicit_item_candidate.lower().strip()
             if anaphoric_clean in ("tersebut", "produk tersebut", "item tersebut", "dokumen tersebut", "ini", "itu", "nya", "produk ini", "produk itu"):
                 explicit_item_candidate = None
@@ -811,6 +813,14 @@ status       : {status}
 
         # Sort: highest score first (dedicated document first, then catalog sections)
         matched_docs.sort(key=lambda x: x["score"], reverse=True)
+
+        # Filter: if structural matches exist (explicit UUID, dedicated document, section, ingredient match), exclude weak content mentions
+        structural_matches = [d for d in matched_docs if d.get("match_type") in ("explicit_uuid", "dedicated_document", "section", "ingredient_match")]
+        if structural_matches:
+            matched_docs = structural_matches
+        elif any(verb in q_lower for verb in ["hapus", "delete", "hilangkan", "remove", "buang", "tiadakan"]):
+            return None
+
         return (resolved_entity_name, matched_docs)
 
     @staticmethod

@@ -197,7 +197,7 @@ function getInitialMessages(
 			content: string;
 			attachmentName?: string;
 			attachmentNames?: string[];
-		}): Message => {
+		}, idx: number): Message => {
 			if (m.role === "user") {
 				const cleaned = cleanMessageTurn(m.content, m.attachmentName, m.attachmentNames);
 				return {
@@ -207,9 +207,16 @@ function getInitialMessages(
 					attachmentNames: cleaned.attachmentNames,
 				};
 			}
+			let content = m.content;
+			if (idx > 0 && content && />\s*\*\*Ringkasan Perubahan:\*\*/i.test(content)) {
+				const match = content.match(/(?:^|\n)>\s*\*\*Ringkasan Perubahan:\*\*[\s\S]*?(?=\n#{1,3}\s+|\n\*\*[^*]+\*\*|\Z)/i);
+				if (match) {
+					content = match[0].replace(/^>\s*/gm, "").trim();
+				}
+			}
 			return {
 				role: "assistant",
-				content: m.content,
+				content: content,
 				attachmentName: m.attachmentName,
 				attachmentNames: m.attachmentNames,
 			};
@@ -275,6 +282,7 @@ export function ChatPreview({
 	categories = [],
 	onChangeCategories,
 	chunks = [],
+	onChangeChunks,
 	visibilitySettings,
 	onChangeVisibilitySettings,
 	title,
@@ -1431,28 +1439,24 @@ export function ChatPreview({
 						{ signal: controller.signal },
 					);
 				}
-				const isRetrievalOnly = Boolean(
-					response.data.is_retrieval ||
-					response.data.reply ||
-					response.data.answer
-				);
+				const isRetrievalOnly = Boolean(response.data.is_retrieval);
 				const chatResponse = response.data.reply
+					|| response.data.feedback
 					|| response.data.answer
-					|| (response.data.summary
-						? response.data.summary
-						: response.data.feedback
-							? response.data.feedback
-							: "I've updated the document summary based on your instructions.");
+					|| "Dokumen knowledge base telah berhasil diperbarui.";
 				setChatTurns((prev) => [...prev, { role: "assistant", content: chatResponse }]);
 				scrollToBottomAndFocus();
 				if (response.data.summary && !isRetrievalOnly) {
 					handleSummaryChange(response.data.summary);
-				} else if (
-					!isRetrievalOnly &&
-					chatResponse &&
-					chatResponse !== "I've updated the document summary based on your instructions."
-				) {
-					handleSummaryChange(chatResponse);
+				}
+				if (response.data.title && !isRetrievalOnly && typeof onChangeTitle === "function") {
+					onChangeTitle(response.data.title);
+				}
+				if (response.data.chunks && !isRetrievalOnly && typeof onChangeChunks === "function" && Array.isArray(response.data.chunks)) {
+					onChangeChunks(response.data.chunks);
+				}
+				if (response.data.categories && !isRetrievalOnly && typeof onChangeCategories === "function" && Array.isArray(response.data.categories)) {
+					onChangeCategories(response.data.categories);
 				}
 
 				if (knowledgeId) {
