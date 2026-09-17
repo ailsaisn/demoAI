@@ -68,7 +68,7 @@ import {
 } from "@/app/dashboard/knowledge/hooks/use-knowledge";
 import { MarkdownContent } from "@/components/shared/markdown-content";
 import { StreamingMarkdown } from "@/components/shared/streaming-markdown";
-import { cleanMessageTurn } from "@/components/shared/markdown/utils";
+import { cleanMessageTurn, cleanDeletedItemFromMarkdown } from "@/components/shared/markdown/utils";
 import { toast } from "sonner";
 import { ApprovalActions } from "./approval-actions";
 import { CategorySettings } from "./category-settings";
@@ -114,6 +114,7 @@ interface Message {
 	operation_status?: string | null;
 	attachments?: Record<string, unknown>;
 	target_knowledge_id?: string | null;
+	target_item?: string;
 	total_found?: number;
 }
 
@@ -128,17 +129,6 @@ function getInitialMessages(
 ): Message[] {
 	const currentSummary = aiSummary || knowledge?.ai_summary;
 
-	// 1. For APPROVED documents, always provide the single current approved summary as Turn 0 baseline
-	if (
-		knowledgeStatus?.toUpperCase() === "APPROVED" ||
-		knowledge?.status?.toUpperCase() === "APPROVED"
-	) {
-		if (currentSummary) {
-			return [{ role: "assistant", content: currentSummary }];
-		}
-		return [];
-	}
-
 	const isProcessing =
 		knowledgeStatus?.toUpperCase() === "PROCESSING" ||
 		knowledge?.status?.toUpperCase() === "PROCESSING";
@@ -150,7 +140,7 @@ function getInitialMessages(
 		undefined;
 	const docFile = fileName || knowledge?.file_name || undefined;
 
-	// 2. While actively processing, NEVER render stale assistant bubbles or old history
+	// While actively processing, NEVER render stale assistant bubbles or old history
 	if (isProcessing) {
 		if (effectivePrompt) {
 			return [
@@ -164,7 +154,16 @@ function getInitialMessages(
 		return [];
 	}
 
-	const history = (meta?.history || meta?.chat_history) as
+	const rawHistory =
+		(Array.isArray(meta?.edit_history) && meta.edit_history.length > 0)
+			? meta.edit_history
+			: (Array.isArray(meta?.history) && meta.history.length > 0)
+				? meta.history
+				: (Array.isArray(meta?.chat_history) && meta.chat_history.length > 0)
+					? meta.chat_history
+					: undefined;
+
+	const history = rawHistory as
 		| Array<{
 				role: "user" | "assistant";
 				content: string;
@@ -218,13 +217,14 @@ function getInitialMessages(
 
 		const startsWithTurn0 =
 			(effectivePrompt && history[0]?.role === "user" && history[0]?.content === effectivePrompt) ||
-			(!effectivePrompt && history[0]?.role === "assistant");
+			(!effectivePrompt && history[0]?.role === "assistant") ||
+			(history.length >= 2 && history[0]?.role === "user" && history[1]?.role === "assistant");
 
-		if (startsWithTurn0) {
+		if (startsWithTurn0 || history[0]?.role === "user") {
 			const mapped = history.map(mapTurn);
 			if (currentSummary) {
 				for (let i = mapped.length - 1; i >= 0; i--) {
-					if (mapped[i].role === "assistant") {
+					if (mapped[i].role === "assistant" && !mapped[i].content) {
 						mapped[i].content = currentSummary;
 						break;
 					}
@@ -236,7 +236,7 @@ function getInitialMessages(
 		const mapped = [...turn0, ...history.map(mapTurn)];
 		if (currentSummary) {
 			for (let i = mapped.length - 1; i >= 0; i--) {
-				if (mapped[i].role === "assistant") {
+				if (mapped[i].role === "assistant" && !mapped[i].content) {
 					mapped[i].content = currentSummary;
 					break;
 				}
@@ -696,7 +696,7 @@ export function ChatPreview({
 			if (summary) {
 				const timer = setTimeout(() => {
 					setInitialSnapshotMap((prev) => {
-						if (prev[knowledgeId]) return prev;
+						if (prev[knowledgeId] && prev[knowledgeId] === summary) return prev;
 						return { ...prev, [knowledgeId]: summary };
 					});
 				}, 0);
@@ -1385,6 +1385,19 @@ export function ChatPreview({
 							knowledgeId: data.target_knowledge_id,
 							knowledgeIds: data.affected_knowledge_ids,
 						});
+						if (data.action === "delete_applied") {
+							setInitialSnapshotMap((prev) => {
+								const next = { ...prev };
+								if (data.target_knowledge_id) delete next[data.target_knowledge_id];
+								if (knowledgeId) delete next[knowledgeId];
+								if (Array.isArray(data.affected_knowledge_ids)) {
+									for (const kid of data.affected_knowledge_ids) {
+										delete next[kid];
+									}
+								}
+								return next;
+							});
+						}
 					}
 				}
 			} else if (
@@ -1418,15 +1431,24 @@ export function ChatPreview({
 						{ signal: controller.signal },
 					);
 				}
-				const chatResponse = response.data.summary
-					? response.data.summary
-					: response.data.feedback
-						? response.data.feedback
-						: "I've updated the document summary based on your instructions.";
+				const isRetrievalOnly = Boolean(
+					response.data.is_retrieval ||
+					response.data.reply ||
+					response.data.answer
+				);
+				const chatResponse = response.data.reply
+					|| response.data.answer
+					|| (response.data.summary
+						? response.data.summary
+						: response.data.feedback
+							? response.data.feedback
+							: "I've updated the document summary based on your instructions.");
 				setChatTurns((prev) => [...prev, { role: "assistant", content: chatResponse }]);
-				if (response.data.summary) {
+				scrollToBottomAndFocus();
+				if (response.data.summary && !isRetrievalOnly) {
 					handleSummaryChange(response.data.summary);
 				} else if (
+					!isRetrievalOnly &&
 					chatResponse &&
 					chatResponse !== "I've updated the document summary based on your instructions."
 				) {
@@ -1479,6 +1501,71 @@ export function ChatPreview({
 				sessionId: mode === "general" ? sessionId : null,
 			});
 			setCompletedOps((prev) => ({ ...prev, [opId]: "confirmed" }));
+
+			const isDeleteOp =
+				res.action?.toLowerCase().includes("delete") ||
+				messages.some((m) => m.operation_id === opId && m.action?.toLowerCase().includes("delete"));
+
+			const targetItem =
+				res.target_item ||
+				messages.find((m) => m.operation_id === opId)?.target_item ||
+				(messages.find((m) => m.operation_id === opId)?.attachments as Record<string, unknown> | undefined)?.target_item;
+
+			if (isDeleteOp) {
+				// 1. Clear initialSnapshotMap so Turn 0 updates to clean state
+				setInitialSnapshotMap((prev) => {
+					const next = { ...prev };
+					if (knowledgeId) delete next[knowledgeId];
+					if (res.target_knowledge_id) delete next[res.target_knowledge_id];
+					if (Array.isArray(res.affected_knowledge_ids)) {
+						for (const kid of res.affected_knowledge_ids) {
+							delete next[kid];
+						}
+					}
+					return next;
+				});
+
+				// 2. Surgically clean localSummary if targetItem was deleted
+				if (typeof targetItem === "string" && targetItem.trim()) {
+					setLocalSummary((prev) => {
+						const cleaned = cleanDeletedItemFromMarkdown(prev, targetItem);
+						onChangeSummary?.(cleaned);
+						return cleaned;
+					});
+				}
+
+				// 3. Surgically clean previous chat turns so deleted product does not linger in UI
+				if (typeof targetItem === "string" && targetItem.trim()) {
+					setChatTurns((prev) =>
+						prev
+							.map((turn) => {
+								if (turn.role === "assistant" && turn.content) {
+									return {
+										...turn,
+										content: cleanDeletedItemFromMarkdown(turn.content, targetItem),
+									};
+								}
+								return turn;
+							})
+							.filter((turn) => {
+								if (turn.role === "assistant") {
+									const stripped = turn.content.replace(/^[#|\-*\s:\d.]+/g, "").trim();
+									return turn.action === res.action || stripped.length >= 15;
+								}
+								return true;
+							}),
+					);
+				}
+
+				// 4. Invalidate all knowledge queries immediately
+				await invalidateAllKnowledgeQueries(queryClient, {
+					knowledgeId: res.target_knowledge_id || knowledgeId,
+					knowledgeIds: res.affected_knowledge_ids,
+					batchId: res.batch_id,
+					sessionId: mode === "general" ? sessionId : null,
+				});
+			}
+
 			if (mode !== "general" || !sessionId) {
 				setChatTurns((prev) => [
 					...prev,
@@ -2003,7 +2090,7 @@ export function ChatPreview({
 																		{fileName}
 																	</AttachmentTitle>
 																	<span className="text-[11px] text-zinc-500 uppercase font-medium">
-																		DOCUMENT
+																		{/\.(png|jpe?g|webp|gif|svg)$/i.test(fileName || "") ? "IMAGE" : "DOCUMENT"}
 																	</span>
 																</AttachmentContent>
 															</Attachment>
@@ -2053,7 +2140,7 @@ export function ChatPreview({
 																	{fileName}
 																</AttachmentTitle>
 																<AttachmentDescription className="text-[11px] text-zinc-500 uppercase">
-																	DOCUMENT
+																	{/\.(png|jpe?g|webp|gif|svg)$/i.test(fileName || "") ? "IMAGE" : "DOCUMENT"}
 																</AttachmentDescription>
 															</AttachmentContent>
 														</Attachment>
@@ -2084,7 +2171,7 @@ export function ChatPreview({
 																		{name}
 																	</AttachmentTitle>
 																	<AttachmentDescription className="text-[11px] text-zinc-500 uppercase">
-																		DOCUMENT
+																		{/\.(png|jpe?g|webp|gif|svg)$/i.test(name || "") ? "IMAGE" : "DOCUMENT"}
 																	</AttachmentDescription>
 																</AttachmentContent>
 															</Attachment>
@@ -2155,7 +2242,7 @@ export function ChatPreview({
 																			{name}
 																		</AttachmentTitle>
 																		<AttachmentDescription className="text-[11px] text-zinc-500 uppercase">
-																			DOCUMENT
+																			{/\.(png|jpe?g|webp|gif|svg)$/i.test(name || "") ? "IMAGE" : "DOCUMENT"}
 																		</AttachmentDescription>
 																	</AttachmentContent>
 																</Attachment>

@@ -364,14 +364,31 @@ def is_valid_storage_asset(s3_key_or_url: str) -> bool:
         client = _get_client()
         if client:
             s3_candidates = [clean_key]
-            if not clean_key.startswith("images/"):
+            if clean_key.startswith("images/"):
+                s3_candidates.append(clean_key[len("images/"):])
+            else:
                 s3_candidates.append(f"images/{clean_key}")
-            for cand in s3_candidates:
-                try:
-                    client.head_object(Bucket=_images_bucket(), Key=cand)
-                    return True
-                except Exception:
-                    continue
+            
+            unique_search_buckets = list(dict.fromkeys([_images_bucket(), _docs_bucket(), _staging_bucket(), _approved_bucket()]))
+            for b in unique_search_buckets:
+                for cand in s3_candidates:
+                    try:
+                        client.head_object(Bucket=b, Key=cand)
+                        return True
+                    except Exception:
+                        continue
+                
+                # UUID Hex prefix fallback
+                hex_match = re.search(r'([0-9a-f]{32})_', clean_key)
+                if hex_match:
+                    hex_prefix = hex_match.group(1)
+                    for prefix_cand in [f"images/{hex_prefix}", hex_prefix]:
+                        try:
+                            list_res = client.list_objects_v2(Bucket=b, Prefix=prefix_cand, MaxKeys=1)
+                            if list_res.get("Contents"):
+                                return True
+                        except Exception:
+                            pass
     except Exception:
         pass
 
@@ -383,7 +400,8 @@ def _format_browser_url(raw_url: str = None, s3_key: str = "") -> str:
     Ensures image URL is accessible across all network environments (Dashboard & Mock CIS cross-origin):
     1. If raw_url is a valid external third-party HTTP(S) URL, preserve it.
     2. If S3_PUBLIC_URL is explicitly configured, use that.
-    3. Otherwise, return absolute backend API endpoint URL 'http://localhost:8000/api/storage/{clean_key}'.
+    3. If BACKEND_PUBLIC_URL is explicitly configured, use that.
+    4. Otherwise, return relative backend API endpoint URL '/api/storage/{clean_key}' so frontend proxies correctly.
     """
     input_str = (s3_key or raw_url or "").strip()
     if not input_str:
@@ -416,10 +434,16 @@ def _format_browser_url(raw_url: str = None, s3_key: str = "") -> str:
         if clean_key:
             return f"{base}/{clean_key}"
 
-    # Default backend host for cross-origin widget compatibility (e.g. Mock CIS port 8001 -> port 8000)
-    backend_base = os.getenv("BACKEND_PUBLIC_URL") or "http://localhost:8000"
+    # Explicit backend host if configured in environment
+    backend_base = os.getenv("BACKEND_PUBLIC_URL")
+    if backend_base and str(backend_base).strip():
+        base_clean = str(backend_base).strip().rstrip("/")
+        if clean_key:
+            return f"{base_clean}/api/storage/{clean_key}"
+
+    # Default relative API endpoint URL (prevents hardcoded localhost:8000 in remote/production)
     if clean_key:
-        return f"{backend_base}/api/storage/{clean_key}"
+        return f"/api/storage/{clean_key}"
     return raw_url or ""
 
 
@@ -476,12 +500,14 @@ def diagnose_s3_storage(key: Optional[str] = None) -> dict:
     client = _get_client()
     s3_connected = client is not None
     
+    primary_bucket = _images_bucket()
     unique_buckets = []
-    for b in [_images_bucket(), _docs_bucket(), _staging_bucket(), _approved_bucket()]:
+    for b in [primary_bucket, _docs_bucket(), _staging_bucket(), _approved_bucket()]:
         if b and b not in unique_buckets:
             unique_buckets.append(b)
 
     bucket_probes = {}
+    prefix_probes = {}
     if client:
         for b in unique_buckets:
             probe_result = {
@@ -503,7 +529,10 @@ def diagnose_s3_storage(key: Optional[str] = None) -> dict:
                 if "AccessDenied" in err_str:
                     probe_result["list_permission (s3:ListBucket)"] = "DENIED (AccessDenied: Missing s3:ListBucket)"
                 elif "NoSuchBucket" in err_str:
-                    probe_result["list_permission (s3:ListBucket)"] = "FAILED (NoSuchBucket: Bucket does not exist)"
+                    if b != primary_bucket:
+                        probe_result["list_permission (s3:ListBucket)"] = "FALLBACK (Single-Bucket mode: using primary bucket prefix)"
+                    else:
+                        probe_result["list_permission (s3:ListBucket)"] = "FAILED (NoSuchBucket: Bucket does not exist)"
                 else:
                     probe_result["list_permission (s3:ListBucket)"] = f"ERROR: {err_str}"
 
@@ -522,13 +551,18 @@ def diagnose_s3_storage(key: Optional[str] = None) -> dict:
                     # In AWS S3, receiving NoSuchKey proves s3:GetObject permission is GRANTED!
                     probe_result["read_permission (s3:GetObject)"] = "GRANTED (Verified via NoSuchKey response on probe key)"
                 elif "NoSuchBucket" in err_str:
-                    probe_result["read_permission (s3:GetObject)"] = "FAILED (NoSuchBucket)"
+                    if b != primary_bucket:
+                        probe_result["read_permission (s3:GetObject)"] = "FALLBACK (Single-Bucket mode: using primary bucket prefix)"
+                    else:
+                        probe_result["read_permission (s3:GetObject)"] = "FAILED (NoSuchBucket)"
                 else:
                     probe_result["read_permission (s3:GetObject)"] = f"ERROR: {err_str}"
 
             # Summary diagnosis for this bucket
             if probe_result["list_permission (s3:ListBucket)"] == "GRANTED" and "GRANTED" in probe_result["read_permission (s3:GetObject)"]:
                 probe_result["status"] = "HEALTHY"
+            elif b != primary_bucket and "FALLBACK" in probe_result.get("list_permission (s3:ListBucket)", ""):
+                probe_result["status"] = "UNIFIED (Operating inside primary bucket prefix)"
             elif "DENIED" in probe_result["read_permission (s3:GetObject)"]:
                 probe_result["status"] = "ACTION REQUIRED: Missing s3:GetObject permission. Ask DevOps to add s3:GetObject to the IRSA IAM role."
             elif "DENIED" in probe_result["list_permission (s3:ListBucket)"]:
@@ -537,6 +571,22 @@ def diagnose_s3_storage(key: Optional[str] = None) -> dict:
                 probe_result["status"] = "DEGRADED"
 
             bucket_probes[b] = probe_result
+
+        # Probe standard prefixes within the primary unified bucket
+        if bucket_probes.get(primary_bucket, {}).get("status") == "HEALTHY":
+            for prefix in ["images/", "documents/", "staging/", "approved/"]:
+                try:
+                    p_res = client.list_objects_v2(Bucket=primary_bucket, Prefix=prefix, MaxKeys=2)
+                    p_count = p_res.get("KeyCount", 0)
+                    prefix_probes[prefix] = {
+                        "status": "ACCESSIBLE",
+                        "objects_found": p_count
+                    }
+                except Exception as p_err:
+                    prefix_probes[prefix] = {
+                        "status": "ERROR",
+                        "error": str(p_err)
+                    }
 
     # Probe AWS STS Caller Identity if running on AWS
     caller_identity = None
@@ -647,14 +697,20 @@ def diagnose_s3_storage(key: Optional[str] = None) -> dict:
             "local_disk_trace": local_steps
         }
 
+    primary_healthy = bucket_probes.get(primary_bucket, {}).get("status") == "HEALTHY"
+    overall_ok = s3_connected and (primary_healthy or not is_aws_env)
+
     return {
-        "status": "ok" if s3_connected else "degraded",
+        "status": "ok" if overall_ok else "degraded",
+        "architecture_mode": "Single-Bucket (Unified)" if len(unique_buckets) == 1 or primary_healthy else "Multi-Bucket",
+        "primary_bucket": primary_bucket,
         "auth_mode_detected": auth_desc,
         "is_aws_environment": is_aws_env,
         "s3_connected": s3_connected,
         "aws_caller_identity": caller_identity,
         "aws_environment": aws_env_info,
         "bucket_probes": bucket_probes,
+        "prefix_probes": prefix_probes,
         "recent_storage_errors": _recent_storage_errors,
         "key_diagnosis": key_trace
     }

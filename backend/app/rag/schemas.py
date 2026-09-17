@@ -84,6 +84,9 @@ class PendingDocumentResponse(BaseModel):
     initial_prompt: Optional[str] = Field(None, description="Initial prompt passed during ingestion if any")
     history: Optional[List[ChatMessage]] = Field(default=[], description="Conversation history list")
     chunks: List[Dict[str, Any]] = Field(..., description="Parsed chunks list")
+    reply: Optional[str] = Field(None, description="Direct assistant chat reply for retrieval queries")
+    answer: Optional[str] = Field(None, description="Direct assistant chat answer")
+    is_retrieval: Optional[bool] = Field(False, description="Whether this turn was a retrieval query")
 
 class RefineRequest(BaseModel):
     prompt: str = Field(..., description="Instructions to refine the document summary or text content")

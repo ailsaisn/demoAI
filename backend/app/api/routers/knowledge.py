@@ -479,7 +479,8 @@ async def confirm_pending_operation(
                 target_item=doc_target,
                 vector_store=vector_store,
                 bm25_index=bm25,
-                db=db
+                db=db,
+                session_id=session_id
             )
             del_results.append(res)
 
@@ -510,6 +511,7 @@ async def confirm_pending_operation(
                 "type": "success",
                 "action": "delete_applied",
                 "operation_id": str(op.id),
+                "target_item": op.target_item,
                 "target_knowledge_id": op.knowledge_id,
                 "affected_knowledge_ids": affected_kids,
                 "batch_id": op.batch_id,
@@ -805,10 +807,7 @@ async def get_knowledge(
             raise HTTPException(status_code=404, detail="Knowledge document not found")
         # OUT-OF-BAND SYNC: Fetch latest AI summary & metadata from RAG JSON files
         try:
-            if knowledge.status == KnowledgeStatus.APPROVED:
-                target_file = resolve_approved_file(str(knowledge_id))
-            else:
-                target_file = resolve_pending_file(str(knowledge_id)) or resolve_approved_file(str(knowledge_id))
+            target_file = resolve_pending_file(str(knowledge_id)) or resolve_approved_file(str(knowledge_id))
             if target_file and os.path.exists(target_file):
                 with open(target_file, "r", encoding="utf-8") as f:
                     data = json.load(f)
@@ -833,13 +832,14 @@ async def get_knowledge(
                     if knowledge.status == KnowledgeStatus.PROCESSING:
                         merged_meta["history"] = []
                         merged_meta["chat_history"] = []
-                    # If approved, ensure active history is clean while staging_history and edit_history are retained
-                    elif knowledge.status == KnowledgeStatus.APPROVED:
-                        merged_meta["history"] = []
-                        merged_meta["chat_history"] = []
+                    # If approved and no active staging draft under review, populate edit history to history
+                    elif knowledge.status == KnowledgeStatus.APPROVED and (not target_file or "output" in target_file):
                         db_edit_hist = knowledge.metadata_.get("edit_history") if isinstance(knowledge.metadata_, dict) else []
                         file_edit_hist = data.get("edit_history") if isinstance(data, dict) else []
-                        merged_meta["edit_history"] = sanitize_history_turns(db_edit_hist if len(db_edit_hist or []) >= len(file_edit_hist or []) else file_edit_hist)
+                        resolved_edit_hist = sanitize_history_turns(db_edit_hist if len(db_edit_hist or []) >= len(file_edit_hist or []) else file_edit_hist)
+                        merged_meta["edit_history"] = resolved_edit_hist
+                        merged_meta["history"] = resolved_edit_hist
+                        merged_meta["chat_history"] = resolved_edit_hist
 
                         db_stage_hist = knowledge.metadata_.get("staging_history") if isinstance(knowledge.metadata_, dict) else []
                         file_stage_hist = data.get("staging_history") if isinstance(data, dict) else []
@@ -2300,14 +2300,12 @@ async def refine_knowledge(
         db_res = await db.execute(stmt)
         k_entry = db_res.scalar_one_or_none()
         if k_entry and isinstance(res, dict):
-            # For pending documents, update live summary and title directly in DB
-            # For approved documents, preserve approved baseline in DB until admin explicitly approves
-            if k_entry.status != KnowledgeStatus.APPROVED:
-                if res.get("title"):
-                    k_entry.title = res.get("title")
-                if res.get("summary"):
-                    k_entry.ai_summary = res.get("summary")
-                    k_entry.content = res.get("summary")
+            # Synchronize live summary and title directly in DB
+            if res.get("title"):
+                k_entry.title = res.get("title")
+            if res.get("summary"):
+                k_entry.ai_summary = res.get("summary")
+                k_entry.content = res.get("summary")
 
             if k_entry.metadata_ is None:
                 k_entry.metadata_ = {}
@@ -2341,46 +2339,55 @@ async def refine_knowledge(
 
             # Persist chat turns in metadata
             if k_entry.status == KnowledgeStatus.APPROVED:
-                existing_edit_hist = k_entry.metadata_.get("edit_history") or []
-                if not isinstance(existing_edit_hist, list):
-                    existing_edit_hist = []
+                if isinstance(res, dict) and res.get("edit_history") and isinstance(res.get("edit_history"), list):
+                    full_edit_hist = res.get("edit_history")
+                elif isinstance(res, dict) and res.get("history") and isinstance(res.get("history"), list):
+                    full_edit_hist = res.get("history")
+                else:
+                    existing_edit_hist = k_entry.metadata_.get("edit_history") or []
+                    if not isinstance(existing_edit_hist, list):
+                        existing_edit_hist = []
 
-                full_edit_hist = list(existing_edit_hist)
-                if not full_edit_hist:
-                    if initial_prompt:
-                        full_edit_hist.append({
+                    full_edit_hist = list(existing_edit_hist)
+                    if not full_edit_hist:
+                        if initial_prompt:
+                            full_edit_hist.append({
+                                "role": "user",
+                                "content": initial_prompt,
+                                "attachmentName": k_entry.file_name,
+                                "created_at": k_entry.created_at.isoformat() if k_entry.created_at else datetime.now(timezone.utc).isoformat()
+                            })
+                        if initial_summary:
+                            full_edit_hist.append({
+                                "role": "assistant",
+                                "content": initial_summary,
+                                "created_at": k_entry.created_at.isoformat() if k_entry.created_at else datetime.now(timezone.utc).isoformat()
+                            })
+
+                    if prompt_str:
+                        user_turn: Dict[str, Any] = {
                             "role": "user",
-                            "content": initial_prompt,
-                            "attachmentName": k_entry.file_name,
-                            "created_at": k_entry.created_at.isoformat() if k_entry.created_at else datetime.now(timezone.utc).isoformat()
-                        })
-                    if initial_summary:
+                            "content": prompt_str,
+                            "created_at": datetime.now(timezone.utc).isoformat()
+                        }
+                        if active_attached_file_name:
+                            user_turn["attachmentName"] = active_attached_file_name
+                            user_turn["attachmentNames"] = [active_attached_file_name]
+                        full_edit_hist.append(user_turn)
+                    asst_content = res.get("reply") or res.get("answer") or res.get("summary")
+                    if asst_content:
                         full_edit_hist.append({
                             "role": "assistant",
-                            "content": initial_summary,
-                            "created_at": k_entry.created_at.isoformat() if k_entry.created_at else datetime.now(timezone.utc).isoformat()
+                            "content": asst_content,
+                            "created_at": datetime.now(timezone.utc).isoformat()
                         })
-
-                if prompt_str:
-                    user_turn: Dict[str, Any] = {
-                        "role": "user",
-                        "content": prompt_str,
-                        "created_at": datetime.now(timezone.utc).isoformat()
-                    }
-                    if active_attached_file_name:
-                        user_turn["attachmentName"] = active_attached_file_name
-                        user_turn["attachmentNames"] = [active_attached_file_name]
-                    full_edit_hist.append(user_turn)
-                if res.get("summary"):
-                    full_edit_hist.append({
-                        "role": "assistant",
-                        "content": res.get("summary"),
-                        "created_at": datetime.now(timezone.utc).isoformat()
-                    })
 
                 full_edit_hist = sanitize_history_turns(full_edit_hist, default_attachment=active_attached_file_name)
                 k_entry.metadata_["edit_history"] = full_edit_hist
+                k_entry.metadata_["history"] = full_edit_hist
+                k_entry.metadata_["chat_history"] = full_edit_hist
                 res["edit_history"] = full_edit_hist
+                res["history"] = full_edit_hist
                 if a_file and os.path.exists(a_file):
                     try:
                         with open(a_file, "r", encoding="utf-8") as af_r:

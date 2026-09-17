@@ -419,6 +419,7 @@ export interface OperationResult {
 	type: "success" | "cancelled" | "info" | "error" | string;
 	action: string;
 	operation_id?: string;
+	target_item?: string;
 	target_knowledge_id?: string;
 	affected_knowledge_ids?: string[];
 	batch_id?: string;

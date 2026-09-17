@@ -1,7 +1,7 @@
-# Stage 1: Base image with Corepack enabled for PNPM support
+# Stage 1: Base image with PNPM support
 FROM node:22-alpine AS base
 WORKDIR /app
-RUN corepack enable && corepack prepare pnpm@latest --activate
+RUN npm install -g pnpm@11.9.0
 
 # Stage 2: Dependencies layer
 FROM base AS deps

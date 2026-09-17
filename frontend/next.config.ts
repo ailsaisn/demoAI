@@ -12,9 +12,15 @@ const nextConfig: NextConfig = {
     ],
   },
   async rewrites() {
-    const backendUrl = process.env.NEXT_PUBLIC_API_URL
+    const defaultBackend = process.env.INTERNAL_BACKEND_URL || "http://backend:8000";
+    let backendUrl = process.env.NEXT_PUBLIC_API_URL
       ? process.env.NEXT_PUBLIC_API_URL.replace(/\/api\/?$/, "")
-      : "http://127.0.0.1:8000";
+      : defaultBackend;
+
+    if (backendUrl.includes("localhost") || backendUrl.includes("127.0.0.1")) {
+      backendUrl = process.env.INTERNAL_BACKEND_URL || "http://backend:8000";
+    }
+
     return [
       {
         source: "/api/storage/:path*",

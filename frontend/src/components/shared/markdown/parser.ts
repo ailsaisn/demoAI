@@ -54,8 +54,8 @@ export function parseMarkdownSegments(markdown: string): Segment[] {
 
 	let m: RegExpExecArray | null;
 	while ((m = cardPattern.exec(markdown)) !== null) {
-		const rawImgAlt = m[1] || m[4] || "";
-		const rawImgUrl = m[2] || m[5] || "";
+		const rawImgAlt = m[4] || m[1] || "";
+		const rawImgUrl = m[5] || m[2] || "";
 		const headerTitle = (m[3] || "").trim();
 		const headerLower = headerTitle.toLowerCase();
 		const isKnownCardHeader = /^(?:product\s+(?:overview|details|info|specification|summary)|overview\s+produk|spesifikasi\s+produk|info\s+produk|ringkasan\s+produk|detail\s+produk|informasi\s+produk|detail\s+informasi\s+produk|treatment\s+(?:overview|details|info|procedure|summary)|overview\s+tindakan|detail\s+tindakan|info\s+tindakan)$/i.test(headerLower);

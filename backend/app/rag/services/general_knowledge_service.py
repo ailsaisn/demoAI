@@ -231,6 +231,149 @@ status       : {status}
         logger.info(log_box)
 
     @staticmethod
+    def clean_markdown_text(text: str, targets: list[str], ing_kw: Optional[str] = None) -> str:
+        """
+        Surgically cleans markdown sections, cards, bullets, and table rows for target entities.
+        Cleans preceding/following image tags, full card blocks, and bullet items.
+        """
+        if not text or not targets:
+            return text or ""
+        res = text
+        for t in targets:
+            if not t or len(t.strip()) < 2:
+                continue
+            esc = re.escape(t.strip())
+
+            # 1. Full section with heading matching target (including preceding image tag or following image tag)
+            res = re.sub(
+                r'(?:^|\n)(?:[ \t]*!\[[^\]]*\]\([^\)]+\)\s*\n+)?(?:#{1,4}\s*[^\n]*' + esc + r'[^\n]*\n(?:(?!^#{1,4}\s)[^\n]*\n?)*)',
+                '\n',
+                res,
+                flags=re.MULTILINE | re.IGNORECASE
+            )
+
+            # 2. Product Card block where heading is generic (e.g. ### Detail Produk) but bullets contain target
+            card_regex = re.compile(
+                r'(?:^|\n)(?:[ \t]*!\[[^\]]*\]\([^\)]+\)\s*\n+)?(?:#{1,4}\s*[^\n]+\n+)(?:[ \t]*!\[[^\]]*\]\([^\)]+\)\s*\n+)?((?:[ \t]*[-*]\s*\*\*[^*]+\*\*\s*[:–-][^\n]+(?:\n|$))+)',
+                flags=re.IGNORECASE
+            )
+            def _filter_card(match):
+                card_block = match.group(0)
+                bullets = match.group(1)
+                if re.search(rf'\b{esc}\b', bullets, re.IGNORECASE):
+                    return '\n'
+                return card_block
+
+            res = card_regex.sub(_filter_card, res)
+
+            # 3. Numbered list or bullet line matching target (plus any indented sub-bullets)
+            res = re.sub(
+                rf'^[ \t]*(?:[-*]|\d+\.)\s*[^\n]*\b{esc}\b[^\n]*(?:\n[ \t]{{2,}}[^\n]+)*\n?',
+                '',
+                res,
+                flags=re.MULTILINE | re.IGNORECASE
+            )
+
+            # 4. Standalone table rows containing target
+            res = re.sub(
+                rf'^[ \t]*\|[^\n]*\b{esc}\b[^\n]*\|\s*$\n?',
+                '',
+                res,
+                flags=re.MULTILINE | re.IGNORECASE
+            )
+
+            # 5. Any orphan image tags that have alt text matching target
+            res = re.sub(
+                rf'^[ \t]*!\[[^\n\]]*{esc}[^\n\]]*\]\([^\)]+\)\s*$\n?',
+                '',
+                res,
+                flags=re.MULTILINE | re.IGNORECASE
+            )
+
+            # 6. Fallback line match
+            res = re.sub(
+                rf'^[^\n]*\b{esc}\b[^\n]*$\n?',
+                '',
+                res,
+                flags=re.MULTILINE | re.IGNORECASE
+            )
+
+        if ing_kw and len(ing_kw.strip()) > 1:
+            esc_ing = re.escape(ing_kw.strip())
+            res = re.sub(
+                rf'^[^\n]*\b{esc_ing}\b[^\n]*$\n?',
+                '',
+                res,
+                flags=re.MULTILINE | re.IGNORECASE
+            )
+
+        return re.sub(r'\n{3,}', '\n\n', res).strip()
+
+    @staticmethod
+    async def prune_chat_messages_for_deleted_targets(
+        db,
+        delete_targets: list[str],
+        session_id: Optional[Any] = None,
+        knowledge_id: Optional[str] = None
+    ) -> int:
+        """
+        Prunes or sanitizes ChatMessage records in PostgreSQL that reference deleted targets.
+        Removes the deleted item from assistant messages, or deletes the message entirely
+        if it only contained information about the deleted item, preventing LLM history contamination.
+        """
+        if not db or not delete_targets:
+            return 0
+
+        from app.models.chat import ChatMessage, ChatRole
+        from sqlalchemy import select
+        import uuid as _uuid
+
+        pruned_count = 0
+        try:
+            stmt = select(ChatMessage).where(ChatMessage.role == ChatRole.ASSISTANT)
+            if session_id:
+                try:
+                    s_uuid = _uuid.UUID(str(session_id).strip()) if not isinstance(session_id, _uuid.UUID) else session_id
+                    stmt = stmt.where(ChatMessage.session_id == s_uuid)
+                except Exception:
+                    pass
+
+            res = await db.execute(stmt)
+            messages = res.scalars().all()
+
+            for msg in messages:
+                content = msg.content or ""
+                matches_target = any(t.lower() in content.lower() for t in delete_targets if len(t) > 2)
+                
+                att = msg.attachments or {}
+                is_op_preview = (
+                    att.get("action") in ("delete_preview", "delete_applied") or
+                    "Pratinjau Penghapusan" in content or
+                    "Confirm & Delete" in content
+                )
+                
+                if matches_target or is_op_preview:
+                    cleaned_content = GeneralKnowledgeService.clean_markdown_text(content, delete_targets)
+                    substantive = re.sub(r'^[#\|\-\*\s\:\d\.]+', '', cleaned_content).strip()
+                    substantive = re.sub(r'(?:Pratinjau|Penghapusan|Perubahan|Dokumen Terdampak|Catatan Keamanan|Apakah Anda yakin).*$', '', substantive, flags=re.IGNORECASE | re.DOTALL).strip()
+
+                    if not substantive or len(substantive) < 15 or is_op_preview:
+                        await db.delete(msg)
+                        pruned_count += 1
+                        logger.info(f"[PruneChat] Deleted dedicated assistant message {msg.id} for targets {delete_targets}")
+                    else:
+                        msg.content = cleaned_content
+                        db.add(msg)
+                        pruned_count += 1
+                        logger.info(f"[PruneChat] Sanitized assistant message {msg.id} removing {delete_targets}")
+
+            await db.commit()
+        except Exception as e:
+            logger.warning(f"[PruneChat] Error pruning chat messages: {e}")
+
+        return pruned_count
+
+    @staticmethod
     async def find_all_target_documents_and_item(
         query: str, output_dir: str = "data/output", db: Optional[Any] = None
     ) -> Optional[Tuple[str, List[Dict[str, Any]]]]:
@@ -721,6 +864,154 @@ status       : {status}
             return False, f"Gagal membaca data dokumen: {str(e)}", None
 
     @staticmethod
+    def clean_markdown_text(text: str, targets: List[str], ing_kw: Optional[str] = None) -> str:
+        """
+        Surgically removes target products, sections, images, bullets, and table rows from markdown text.
+        Preserves other items and markdown structure intact.
+        """
+        if not text:
+            return ""
+        res = text
+        for t in targets:
+            if not t or len(t.strip()) < 2:
+                continue
+            esc = re.escape(t.strip())
+
+            # 1. Match preceding image (if any) + section heading + section body (up to next heading of same or higher level)
+            res = re.sub(
+                r'(?:^|\n)(?:[ \t]*!\[[^\]]*\]\([^\)]*\)[ \t]*\n\s*)?(#{1,4}\s*[^\n]*' + esc + r'[^\n]*\n(?:(?!^#{1,4}\s)[^\n]*\n?)*)',
+                '\n',
+                res,
+                flags=re.MULTILINE | re.IGNORECASE
+            )
+
+            # 2. Match standalone image tags where alt text or url contains the target
+            res = re.sub(
+                r'(?:^|\n)[ \t]*!\[[^\]]*' + esc + r'[^\]]*\]\([^\)]*\)[ \t]*(?=\n|$)',
+                '',
+                res,
+                flags=re.MULTILINE | re.IGNORECASE
+            )
+
+            # 3. Match bullet list items and nested sub-bullets mentioning target
+            res = re.sub(
+                r'(?:^|\n)[ \t]*[\*\-\+]\s*(?:\*\*)?[^\n]*' + esc + r'[^\n]*(?:\n[ \t]{2,}[^\n]*)*',
+                '',
+                res,
+                flags=re.MULTILINE | re.IGNORECASE
+            )
+
+            # 4. Match markdown table rows containing target
+            res = re.sub(
+                r'(?:^|\n)\|[^\n]*' + esc + r'[^\n]*\|?[ \t]*(?=\n|$)',
+                '',
+                res,
+                flags=re.MULTILINE | re.IGNORECASE
+            )
+
+            # 5. Standalone line mentioning target
+            res = re.sub(
+                rf'^[^\n]*{esc}[^\n]*$\n?',
+                '',
+                res,
+                flags=re.MULTILINE | re.IGNORECASE
+            )
+
+        # 6. If ingredient keyword provided, strip lines containing it
+        if ing_kw and len(ing_kw.strip()) > 1:
+            esc_ing = re.escape(ing_kw.strip())
+            res = re.sub(
+                rf'^[^\n]*\b{esc_ing}\b[^\n]*$\n?',
+                '',
+                res,
+                flags=re.MULTILINE | re.IGNORECASE
+            )
+
+        # 7. Collapse 3+ consecutive newlines into 2
+        return re.sub(r'\n{3,}', '\n\n', res).strip()
+
+    @staticmethod
+    async def prune_chat_messages_for_deleted_targets(
+        db: Optional[Any],
+        delete_targets: List[str],
+        session_id: Optional[Any] = None,
+        knowledge_id: Optional[str] = None
+    ):
+        """
+        Prunes or sanitizes ChatMessage rows in PostgreSQL so deleted products or documents
+        do not persist in conversation history and confuse the user or LLM context.
+        """
+        from app.models.chat import ChatMessage
+        from sqlalchemy import select, or_
+        import uuid as _uuid
+
+        if not delete_targets and not knowledge_id:
+            return
+
+        async def _prune(session):
+            try:
+                stmt = select(ChatMessage)
+                conditions = []
+                if session_id:
+                    try:
+                        s_uuid = _uuid.UUID(str(session_id).strip())
+                        conditions.append(ChatMessage.session_id == s_uuid)
+                    except Exception:
+                        pass
+
+                content_filters = []
+                for dt in delete_targets:
+                    if dt and len(dt.strip()) > 1:
+                        content_filters.append(ChatMessage.content.ilike(f"%{dt.strip()}%"))
+
+                if knowledge_id:
+                    content_filters.append(ChatMessage.content.ilike(f"%{knowledge_id.strip()}%"))
+
+                if not content_filters:
+                    return
+
+                stmt = stmt.where(or_(*content_filters))
+                if conditions:
+                    for cond in conditions:
+                        stmt = stmt.where(cond)
+
+                res = await session.execute(stmt)
+                messages = res.scalars().all()
+
+                for msg in messages:
+                    cleaned_content = GeneralKnowledgeService.clean_markdown_text(
+                        msg.content, delete_targets
+                    )
+                    stripped = re.sub(r'^[#\|\-\*\s\:\d\.]+', '', cleaned_content).strip()
+                    if len(stripped) < 15:
+                        await session.delete(msg)
+                    else:
+                        msg.content = cleaned_content
+                        if msg.attachments and isinstance(msg.attachments, dict):
+                            att = dict(msg.attachments)
+                            if "images" in att and isinstance(att["images"], list):
+                                att["images"] = [
+                                    img for img in att["images"]
+                                    if not any(dt.lower() in str(img).lower() for dt in delete_targets)
+                                ]
+                            msg.attachments = att
+
+                await session.commit()
+                logger.info(f"[GeneralKnowledgeService] Pruned/sanitized {len(messages)} ChatMessage records for targets {delete_targets}")
+            except Exception as pe:
+                logger.warning(f"[GeneralKnowledgeService] Error pruning chat messages: {pe}")
+
+        try:
+            if db:
+                await _prune(db)
+            else:
+                from app.core.database import AsyncSessionLocal
+                async with AsyncSessionLocal() as session:
+                    await _prune(session)
+        except Exception as e:
+            logger.warning(f"[GeneralKnowledgeService] Failed to run chat message pruning: {e}")
+
+    @staticmethod
     async def sync_knowledge_db(
         knowledge_id: str,
         existing_doc: Optional[Dict[str, Any]] = None,
@@ -771,6 +1062,8 @@ status       : {status}
                     meta["summary"] = existing_doc.get("summary")
                     if existing_doc.get("batch_summary"):
                         meta["batch_summary"] = existing_doc.get("batch_summary")
+                    if "initial_summary" in meta:
+                        meta["initial_summary"] = existing_doc.get("summary")
                     if "staging_history" in existing_doc:
                         meta["staging_history"] = existing_doc["staging_history"]
                     if "edit_history" in existing_doc:
@@ -1275,11 +1568,12 @@ status       : {status}
         bm25_index=None,
         target_item: Optional[str] = None,
         db=None,
-        scope: str = "SINGLE_ITEM"
+        scope: str = "SINGLE_ITEM",
+        session_id: Optional[Any] = None
     ) -> Dict[str, Any]:
         """
         Deletes a KB document or surgically deletes a specific item within a multi-item document.
-        Synchronizes local JSON, PostgreSQL, PGVector, MinIO, and BM25 index.
+        Synchronizes local JSON, PostgreSQL, PGVector, MinIO, BM25 index, and ChatMessages.
         """
         clean_target = (knowledge_id or "").strip().lower()
 
@@ -1348,55 +1642,36 @@ status       : {status}
                         unique_delete_targets.append(dt)
                 delete_targets = unique_delete_targets
 
-                # Helper to clean markdown sections, bullets, and table rows
-                def _clean_md(text: str, targets: list[str], ing_kw: Optional[str]) -> str:
-                    if not text:
-                        return ""
-                    res = text
-                    for t in targets:
-                        if not t or len(t.strip()) < 2:
-                            continue
-                        esc = re.escape(t.strip())
-                        res = re.sub(
-                            r'(?:^|\n)(#{1,4}\s*[^\n]*' + esc + r'[^\n]*\n(?:(?!^#{1,4}\s)[^\n]*\n?)*)',
-                            '\n',
-                            res,
-                            flags=re.MULTILINE | re.IGNORECASE
-                        )
-                        res = re.sub(
-                            rf'^[^\n]*{esc}[^\n]*$\n?',
-                            '',
-                            res,
-                            flags=re.MULTILINE | re.IGNORECASE
-                        )
-                    if ing_kw and len(ing_kw.strip()) > 1:
-                        esc_ing = re.escape(ing_kw.strip())
-                        res = re.sub(
-                            rf'^[^\n]*\b{esc_ing}\b[^\n]*$\n?',
-                            '',
-                            res,
-                            flags=re.MULTILINE | re.IGNORECASE
-                        )
-                    return re.sub(r'\n{3,}', '\n\n', res).strip()
-
                 # Clean summary
                 if summary:
-                    existing_doc["summary"] = _clean_md(summary, delete_targets, ing_keyword)
+                    existing_doc["summary"] = GeneralKnowledgeService.clean_markdown_text(summary, delete_targets, ing_keyword)
 
                 # Clean batch_summary
                 if existing_doc.get("batch_summary"):
-                    existing_doc["batch_summary"] = _clean_md(existing_doc["batch_summary"], delete_targets, ing_keyword)
-                    if "metadata" in existing_doc and isinstance(existing_doc["metadata"], dict):
-                        existing_doc["metadata"]["batch_summary"] = existing_doc["batch_summary"]
+                    existing_doc["batch_summary"] = GeneralKnowledgeService.clean_markdown_text(existing_doc["batch_summary"], delete_targets, ing_keyword)
 
-                # Clean staging_history
+                # Clean metadata
+                if "metadata" in existing_doc and isinstance(existing_doc["metadata"], dict):
+                    meta = existing_doc["metadata"]
+                    if existing_doc.get("batch_summary"):
+                        meta["batch_summary"] = existing_doc["batch_summary"]
+                    if "initial_summary" in meta and meta["initial_summary"]:
+                        meta["initial_summary"] = GeneralKnowledgeService.clean_markdown_text(meta["initial_summary"], delete_targets, ing_keyword)
+                    if "summary" in meta and meta["summary"]:
+                        meta["summary"] = existing_doc["summary"]
+                    if "chat_history" in meta and isinstance(meta["chat_history"], list):
+                        for turn in meta["chat_history"]:
+                            if isinstance(turn, dict) and turn.get("content"):
+                                turn["content"] = GeneralKnowledgeService.clean_markdown_text(turn["content"], delete_targets, ing_keyword)
+
+                # Clean staging_history & history
                 for hist_key in ("staging_history", "history"):
                     if hist_key in existing_doc and isinstance(existing_doc[hist_key], list):
                         for turn in existing_doc[hist_key]:
-                            if isinstance(turn, dict) and turn.get("role") == "assistant":
+                            if isinstance(turn, dict):
                                 orig_c = turn.get("content", "")
                                 if orig_c:
-                                    turn["content"] = _clean_md(orig_c, delete_targets, ing_keyword)
+                                    turn["content"] = GeneralKnowledgeService.clean_markdown_text(orig_c, delete_targets, ing_keyword)
 
                 original_chunks = existing_doc.get("chunks", [])
                 filtered_chunks = []
@@ -1424,7 +1699,7 @@ status       : {status}
                         continue
 
                     # For shared/table/catalog chunks, surgically clean target item text from chunk
-                    cleaned_chunk_text = _clean_md(chunk_text, delete_targets, ing_keyword)
+                    cleaned_chunk_text = GeneralKnowledgeService.clean_markdown_text(chunk_text, delete_targets, ing_keyword)
                     
                     # If chunk text was stripped of all meaningful content, discard it
                     stripped_clean = re.sub(r'^[#\|\-\*\s\:\d\.]+', '', cleaned_chunk_text).strip()
@@ -1472,6 +1747,12 @@ status       : {status}
                         delete_knowledge_images_and_assets(doc_kid, doc_data=existing_doc)
                     except Exception as s3_err:
                         logger.debug(f"[DedicatedService] MinIO delete note: {s3_err}")
+                    await GeneralKnowledgeService.prune_chat_messages_for_deleted_targets(
+                        db=db,
+                        delete_targets=delete_targets,
+                        session_id=session_id,
+                        knowledge_id=doc_kid
+                    )
                     await GeneralKnowledgeService.sync_knowledge_db(doc_kid, deleted=True, db=db)
                     return {
                         "success": True,
@@ -1499,6 +1780,14 @@ status       : {status}
                     upload_approved_json(doc_kid, existing_doc)
                 except Exception as s3_err:
                     logger.debug(f"[DedicatedService] MinIO update note: {s3_err}")
+
+                # Prune chat messages in DB so deleted products don't linger in conversation history
+                await GeneralKnowledgeService.prune_chat_messages_for_deleted_targets(
+                    db=db,
+                    delete_targets=delete_targets,
+                    session_id=session_id,
+                    knowledge_id=doc_kid
+                )
 
                 # Sync PostgreSQL Knowledge DB record directly and commit
                 await GeneralKnowledgeService.sync_knowledge_db(doc_kid, existing_doc=existing_doc, db=db)
@@ -1586,6 +1875,14 @@ status       : {status}
                 delete_knowledge_images_and_assets(target_kid, doc_data=f_data)
             except Exception as s3_err:
                 logger.debug(f"[DedicatedService] MinIO delete note: {s3_err}")
+
+            # Prune chat messages for this document
+            await GeneralKnowledgeService.prune_chat_messages_for_deleted_targets(
+                db=db,
+                delete_targets=[deleted_title, target_kid],
+                session_id=session_id,
+                knowledge_id=target_kid
+            )
 
             # Soft-delete in PostgreSQL Knowledge DB record directly and commit
             await GeneralKnowledgeService.sync_knowledge_db(target_kid, deleted=True, db=db)

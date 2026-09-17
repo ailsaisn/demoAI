@@ -10,19 +10,35 @@ export function resolveImageUrl(src?: string | null): string {
 		trimmed = trimmed.replace(/^https?:\/\/api\//i, "/api/");
 	}
 
-	if (
+	const backendBase = (process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api").replace(
+		/\/api\/?$/,
+		"",
+	);
+
+	// If URL contains an internal backend host (localhost, 127.0.0.1, minio) or storage path, normalize to relative path first
+	const isInternalHost = /^(?:https?:\/\/)?(?:localhost|127\.0\.0\.1|minio)(?::\d+)?/i.test(trimmed);
+	const hasStoragePath = trimmed.includes("/api/storage/") || trimmed.includes("/storage/");
+
+	if (hasStoragePath || isInternalHost) {
+		if (trimmed.includes("/api/storage/")) {
+			trimmed = `/api/storage/${trimmed.split("/api/storage/").pop()?.replace(/^\//, "")}`;
+		} else if (trimmed.includes("/storage/")) {
+			trimmed = `/api/storage/${trimmed.split("/storage/").pop()?.replace(/^\//, "")}`;
+		} else {
+			trimmed = trimmed.replace(/^(?:https?:\/\/)?(?:[^\/]+)/, "");
+		}
+	} else if (
 		trimmed.startsWith("http://") ||
 		trimmed.startsWith("https://") ||
 		trimmed.startsWith("data:") ||
 		trimmed.startsWith("blob:")
 	) {
+		// External 3rd party URL (e.g. CDN or public media)
 		return encodeURI(decodeURI(trimmed));
 	}
 
-	const backendBase = (process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api").replace(
-		/\/api\/?$/,
-		"",
-	);
+	// Strip known MinIO bucket names if extracted from direct S3/MinIO paths
+	trimmed = trimmed.replace(/^\/?(?:skin-clinic-chatbot-dev|knowledge-documents|staging|approved)\//i, "/");
 
 	// Normalize storage / images paths to /api/storage/...
 	let normalizedPath = trimmed;
@@ -38,8 +54,16 @@ export function resolveImageUrl(src?: string | null): string {
 		normalizedPath = `/api/storage${normalizedPath}`;
 	} else if (normalizedPath.startsWith("images/")) {
 		normalizedPath = `/api/storage/${normalizedPath}`;
-	} else if (!normalizedPath.startsWith("/")) {
-		normalizedPath = `/${normalizedPath}`;
+	} else {
+		// Bare filename or clean key without prefix e.g. "fa1234_product.png"
+		const clean = normalizedPath.replace(/^\//, "");
+		if (clean.includes("/")) {
+			normalizedPath = `/api/storage/${clean}`;
+		} else if (/\.(?:png|jpe?g|webp|gif|svg)$/i.test(clean)) {
+			normalizedPath = `/api/storage/images/${clean}`;
+		} else {
+			normalizedPath = `/api/storage/${clean}`;
+		}
 	}
 
 	const fullUrl = `${backendBase}${normalizedPath}`;
@@ -180,4 +204,43 @@ export function stripInternalMetadata(text?: string | null): string {
 	cleaned = cleaned.replace(/^[ \t]*[•●◦][ \t]*/gm, "- ");
 
 	return cleaned.trim();
+}
+
+export function cleanDeletedItemFromMarkdown(text?: string | null, targetItem?: string | null): string {
+	if (!text) return "";
+	if (!targetItem || targetItem.trim().length < 2) return text;
+
+	const target = targetItem.trim();
+	const targets = target.includes(",") ? target.split(",").map((s) => s.trim()).filter(Boolean) : [target];
+
+	let res = text;
+	for (const t of targets) {
+		if (t.length < 2) continue;
+		const escaped = t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+		// 1. Match optional preceding image tag + heading and section body
+		const secRegex = new RegExp(
+			`(?:^|\\n)(?:[ \\t]*!\\[[^\\]]*\\]\\([^\\)]*\\)[ \\t]*\\n\\s*)?(#{1,4}\\s*[^\\n]*${escaped}[^\\n]*\\n(?:(?!^#{1,4}\\s)[^\\n]*\\n?)*)`,
+			"gim",
+		);
+		res = res.replace(secRegex, "\n");
+
+		// 2. Match standalone image tag matching target
+		const imgRegex = new RegExp(`(?:^|\\n)[ \\t]*!\\[[^\\]]*${escaped}[^\\]]*\\]\\([^\\)]*\\)[ \\t]*(?=\\n|$)`, "gim");
+		res = res.replace(imgRegex, "");
+
+		// 3. Match bullet point item and its nested indented lines
+		const bulletRegex = new RegExp(`(?:^|\\n)[ \\t]*[\\*\\-\\+]\\s*(?:\\*\\*)?[^\\n]*${escaped}[^\\n]*(?:\\n[ \\t]{2,}[^\\n]*)*`, "gim");
+		res = res.replace(bulletRegex, "");
+
+		// 4. Match table row containing target
+		const tableRegex = new RegExp(`(?:^|\\n)\\|[^\\n]*${escaped}[^\\n]*\\|?[ \\t]*(?=\\n|$)`, "gim");
+		res = res.replace(tableRegex, "");
+
+		// 5. Standalone line containing target
+		const lineRegex = new RegExp(`^[^\\n]*${escaped}[^\\n]*$\\n?`, "gim");
+		res = res.replace(lineRegex, "");
+	}
+
+	return res.replace(/\n{3,}/g, "\n\n").trim();
 }
