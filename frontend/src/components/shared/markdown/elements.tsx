@@ -8,13 +8,59 @@ import { ImagePreviewDialog } from "../image-preview-dialog";
 
 function MarkdownImage({ src, alt, ...props }: React.ComponentProps<"img">) {
 	const [isOpen, setIsOpen] = useState(false);
+	const [isHidden, setIsHidden] = useState(false);
 	const strSrc = typeof src === "string" ? src.trim() : "";
-	if (!isValidImageUrl(strSrc)) {
+	if (!isValidImageUrl(strSrc) || isHidden) {
 		return null;
 	}
 
 	const resolvedSrc = resolveImageUrl(strSrc);
 	const altText = typeof alt === "string" ? alt : "Document Image";
+
+	const handleImageLoad = (e: React.SyntheticEvent<HTMLImageElement>) => {
+		try {
+			const img = e.currentTarget;
+			if (!img.naturalWidth || !img.naturalHeight) return;
+			// Filter out tiny placeholder/spacer images (< 15px)
+			if (img.naturalWidth < 15 || img.naturalHeight < 15) {
+				setIsHidden(true);
+				return;
+			}
+
+			// Offscreen canvas inspection to detect solid pitch-black or unicolor blocks
+			const canvas = document.createElement("canvas");
+			canvas.width = 16;
+			canvas.height = 16;
+			const ctx = canvas.getContext("2d", { willReadFrequently: true });
+			if (!ctx) return;
+			ctx.drawImage(img, 0, 0, 16, 16);
+			const imgData = ctx.getImageData(0, 0, 16, 16).data;
+
+			let visiblePixels = 0;
+			let nonBlackPixels = 0;
+			for (let i = 0; i < imgData.length; i += 4) {
+				const r = imgData[i];
+				const g = imgData[i + 1];
+				const b = imgData[i + 2];
+				const a = imgData[i + 3];
+				// Only consider non-transparent pixels
+				if (a > 25) {
+					visiblePixels++;
+					// If any visible pixel has non-black color (brightness above dark threshold 20)
+					if (r > 20 || g > 20 || b > 20) {
+						nonBlackPixels++;
+					}
+				}
+			}
+
+			// If image has visible pixels and all of them are pitch-black (r, g, b <= 20)
+			if (visiblePixels > 0 && nonBlackPixels === 0) {
+				setIsHidden(true);
+			}
+		} catch {
+			// Fail open on CORS or canvas errors
+		}
+	};
 
 	return (
 		<>
@@ -31,6 +77,8 @@ function MarkdownImage({ src, alt, ...props }: React.ComponentProps<"img">) {
 						alt={altText}
 						className="size-full object-contain block"
 						loading="lazy"
+						crossOrigin="anonymous"
+						onLoad={handleImageLoad}
 						onError={(e) => {
 							e.currentTarget.style.display = "none";
 							const fallback = e.currentTarget.nextElementSibling as HTMLElement;

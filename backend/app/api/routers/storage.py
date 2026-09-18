@@ -80,7 +80,8 @@ async def get_storage_asset(s3_key: str):
         if stream_gen:
             headers = {
                 "Cache-Control": "public, max-age=86400",
-                "Content-Disposition": "inline"
+                "Content-Disposition": "inline",
+                "Access-Control-Allow-Origin": "*",
             }
             if content_length is not None:
                 headers["Content-Length"] = str(content_length)
@@ -114,7 +115,8 @@ async def get_storage_asset(s3_key: str):
                     media_type=media_type,
                     headers={
                         "Cache-Control": "public, max-age=86400",
-                        "Content-Disposition": "inline"
+                        "Content-Disposition": "inline",
+                        "Access-Control-Allow-Origin": "*",
                     }
                 )
 

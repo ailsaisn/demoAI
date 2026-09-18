@@ -23,6 +23,50 @@ class ParseResult:
         return self.method == "docling"
 
 
+def _is_valid_image_content(img_bytes: bytes, min_dim: int = 40) -> Tuple[bool, bytes, str]:
+    """
+    Validates image bytes using Pillow:
+    1. Rejects tiny spacer/icon images (< min_dim in width or height).
+    2. Rejects solid black, pitch-black (>95% black), or flat unicolor blocks.
+    3. Converts WMF/EMF or palette formats to clean PNG.
+    Returns: (is_valid, cleaned_bytes, cleaned_ext)
+    """
+    if not img_bytes or len(img_bytes) < 100:
+        return False, b"", ""
+    try:
+        from PIL import Image
+        import io
+        with Image.open(io.BytesIO(img_bytes)) as im:
+            w, h = im.size
+            if w < min_dim or h < min_dim:
+                return False, b"", ""
+
+            # Check format & convert WMF/EMF/TIFF/BMP or palette formats to clean PNG
+            ext = (im.format or "png").lower()
+            out_bytes = img_bytes
+            if ext in ("wmf", "emf", "tiff", "bmp") or im.mode not in ("RGB", "RGBA", "L"):
+                buf = io.BytesIO()
+                im.convert("RGBA").save(buf, format="PNG")
+                out_bytes = buf.getvalue()
+                ext = "png"
+
+            # Check for solid pitch black or flat unicolor blocks
+            rgb = im.convert("RGB").resize((16, 16))
+            colors = rgb.getcolors(maxcolors=256)
+            if colors:
+                # If single color (flat unicolor rectangle/slide background)
+                if len(colors) == 1:
+                    return False, b"", ""
+                # If solid pitch black (all sampled pixels r, g, b < 18)
+                if all(c[1][0] < 18 and c[1][1] < 18 and c[1][2] < 18 for c in colors):
+                    return False, b"", ""
+
+            return True, out_bytes, ext
+    except Exception:
+        # Fallback: if Pillow fails, allow bytes if sufficiently large
+        return True, img_bytes, "png"
+
+
 class DocumentParser:
     """
     Smart Document Parser with two extraction paths:
@@ -262,10 +306,70 @@ class DocumentParser:
                         continue
                     seen_xrefs.add(xref)
                     
-                    base_img = doc.extract_image(xref)
-                    img_bytes = base_img.get("image")
+                    try:
+                        base_img = doc.extract_image(xref)
+                    except Exception:
+                        base_img = {}
+
+                    smask = base_img.get("smask", 0)
+                    img_bytes = None
                     img_ext = base_img.get("ext", "png")
-                    if not img_bytes or len(img_bytes) < 100:
+
+                    # PyMuPDF Pixmap handles transparency (/SMask), colorspace conversion, and solid black filtering
+                    try:
+                        pix = fitz.Pixmap(doc, xref)
+
+                        # Filter out tiny spacer/bullet images (<40px)
+                        if pix.width < 40 or pix.height < 40:
+                            continue
+
+                        # Filter out unicolor blocks (single-color background rectangles, lines, etc.)
+                        if getattr(pix, "is_unicolor", False):
+                            continue
+
+                        # Filter out solid pitch-black or near-black blocks (>95% black)
+                        if hasattr(pix, "color_topusage"):
+                            top_usage, top_color = pix.color_topusage()
+                            if top_usage >= 0.95 and isinstance(top_color, (bytes, bytearray)) and len(top_color) >= 3:
+                                if all(c < 18 for c in top_color[:3]):
+                                    continue
+
+                        # If there is a soft mask (transparency), composite it so transparent areas don't render as black!
+                        if smask and smask > 0:
+                            try:
+                                mask_pix = fitz.Pixmap(doc, smask)
+                                if pix.colorspace != fitz.csRGB:
+                                    pix = fitz.Pixmap(fitz.csRGB, pix)
+                                pix = fitz.Pixmap(pix, mask_pix)
+                                img_ext = "png"
+                            except Exception as mask_err:
+                                logger.debug(f"Failed to composite smask {smask}: {mask_err}")
+
+                        # If image is in CMYK or non-standard color space, convert to standard sRGB
+                        if pix.colorspace and pix.colorspace != fitz.csRGB and pix.colorspace != fitz.csGRAY:
+                            try:
+                                pix = fitz.Pixmap(fitz.csRGB, pix)
+                            except Exception:
+                                pass
+
+                        # Check again for unicolor after mask compositing
+                        if getattr(pix, "is_unicolor", False):
+                            continue
+
+                        # Extract bytes
+                        if img_ext.lower() in ("jpg", "jpeg") and not pix.alpha:
+                            img_bytes = pix.tobytes("jpeg")
+                        else:
+                            img_bytes = pix.tobytes("png")
+                            img_ext = "png"
+                    except Exception as pix_err:
+                        logger.debug(f"Pixmap processing fallback for xref {xref}: {pix_err}")
+                        img_bytes = base_img.get("image")
+                        img_ext = base_img.get("ext", "png")
+
+                    # Secondary Pillow verification for solid black / flat unicolor blocks & format normalization
+                    is_valid, img_bytes, img_ext = _is_valid_image_content(img_bytes, min_dim=40)
+                    if not is_valid or not img_bytes:
                         continue
                         
                     bbox = im.get("bbox", [0, 0, 0, 0])
@@ -376,13 +480,14 @@ class DocumentParser:
                     upload_batch = []
                     for idx, media_name in enumerate(media_files, start=1):
                         img_bytes = z.read(media_name)
-                        img_ext = os.path.splitext(media_name)[1].lower().replace(".", "")
-                        if img_ext in ["png", "jpg", "jpeg", "webp"]:
-                            upload_batch.append({
-                                "content": img_bytes,
-                                "filename": f"excel_img_{idx}_{os.path.basename(media_name)}",
-                                "content_type": f"image/{img_ext}"
-                            })
+                        is_valid, clean_bytes, img_ext = _is_valid_image_content(img_bytes, min_dim=40)
+                        if not is_valid or not clean_bytes:
+                            continue
+                        upload_batch.append({
+                            "content": clean_bytes,
+                            "filename": f"excel_img_{idx}_{os.path.basename(media_name).split('.')[0]}.{img_ext}",
+                            "content_type": f"image/{img_ext}"
+                        })
 
                     # Upload all images in parallel (1x client init, concurrent put_object)
                     if upload_batch:
@@ -564,7 +669,12 @@ class DocumentParser:
                         from app.services.storage import upload_image
                         img_obj = shape.image
                         img_bytes = img_obj.blob
-                        img_ext = img_obj.ext
+
+                        # Check image content with Pillow: filter out tiny spacer/icons, WMF/EMF, and solid black blocks
+                        is_valid, img_bytes, img_ext = _is_valid_image_content(img_bytes, min_dim=40)
+                        if not is_valid or not img_bytes:
+                            continue
+
                         role_tag = "before" if role == "CLINICAL_BEFORE" else ("after" if role == "CLINICAL_AFTER" else f"img_{img_idx}")
                         fname = f"pptx_s{slide_idx}_{role_tag}.{img_ext}"
                         upload_res = upload_image(img_bytes, fname, content_type=f"image/{img_ext}")
@@ -609,14 +719,15 @@ class DocumentParser:
                         upload_batch = []
                         for idx, media_name in enumerate(media_files, start=1):
                             img_bytes = z.read(media_name)
-                            img_ext = os.path.splitext(media_name)[1].lower().replace(".", "")
-                            if img_ext in ["png", "jpg", "jpeg", "webp"]:
-                                fname = f"pptx_img_{idx}_{os.path.basename(media_name)}"
-                                upload_batch.append({
-                                    "content": img_bytes,
-                                    "filename": fname,
-                                    "content_type": f"image/{img_ext}"
-                                })
+                            is_valid, clean_bytes, img_ext = _is_valid_image_content(img_bytes, min_dim=40)
+                            if not is_valid or not clean_bytes:
+                                continue
+                            fname = f"pptx_img_{idx}_{os.path.basename(media_name).split('.')[0]}.{img_ext}"
+                            upload_batch.append({
+                                "content": clean_bytes,
+                                "filename": fname,
+                                "content_type": f"image/{img_ext}"
+                            })
                         
                         if upload_batch:
                             results = upload_images_parallel(upload_batch)
