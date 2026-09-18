@@ -5,6 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, or_, update
 from typing import List, Optional
 import uuid
+import re
 try:
     from loguru import logger
 except ImportError:
@@ -17,7 +18,7 @@ from app.models.category import Category, UserCategoryExclusion
 from app.core.database import get_db
 from app.api.dependencies import get_current_user, get_current_user_from_proxy, get_current_user_flexible
 from app.models.user import User, UserType, UserTokenUsage
-from app.models.chat import ChatSession, ChatMessage, ChatStatus, ChatRating
+from app.models.chat import ChatSession, ChatMessage, ChatRole, ChatStatus, ChatRating
 from app.models.config import AppConfig
 from app.schemas.chat import (
     ChatSessionCreate, ChatSessionUpdate, ChatSessionResponse,
@@ -125,6 +126,11 @@ async def process_ai_response(session_id: uuid.UUID, user_query: str):
             )
             db.add(ai_msg)
             await db.commit()
+
+            # Trigger ChatGPT/Gemini-style title generation in background
+            import asyncio
+            from app.services.chat_title_service import generate_and_save_chat_title
+            asyncio.create_task(generate_and_save_chat_title(session_id, user_query, response_dict.get("answer")))
             
         except Exception as e:
             logger.error(f"Error generating AI response: {e}")
@@ -185,6 +191,16 @@ async def _build_doctor_filter_metadata(db: AsyncSession, user: User) -> dict:
 
     return filter_metadata
 
+from app.services.chat_title_service import (
+    clean_heuristic_title,
+    sanitize_llm_title,
+    generate_and_save_chat_title
+)
+
+def clean_and_shorten_session_title(text: Optional[str], max_len: int = 70) -> str:
+    """Compatibility wrapper around clean_heuristic_title."""
+    return clean_heuristic_title(text, max_len=max_len)
+
 async def _hydrate_chat_session(session: ChatSession, db: AsyncSession) -> dict:
     session_dict = {
         "id": session.id,
@@ -213,10 +229,38 @@ async def _hydrate_chat_session(session: ChatSession, db: AsyncSession) -> dict:
     result_count = await db.execute(stmt_count)
     session_dict["messages"] = result_count.scalar() or 0
     
-    # Get the very first message
-    stmt_first_msg = select(ChatMessage.content).where(ChatMessage.session_id == session.id).order_by(ChatMessage.created_at.asc()).limit(1)
-    result_msg = await db.execute(stmt_first_msg)
-    session_dict["query"] = result_msg.scalar() or ""
+    # 1. If LLM-generated title/summary already exists, use it directly (like Gemini/ChatGPT)
+    if session.summary and session.summary.strip():
+        session_dict["query"] = sanitize_llm_title(session.summary)
+    else:
+        # Prioritize the first USER message as the fallback
+        stmt_first_user = (
+            select(ChatMessage.content)
+            .where(ChatMessage.session_id == session.id, ChatMessage.role == ChatRole.USER)
+            .order_by(ChatMessage.created_at.asc())
+            .limit(1)
+        )
+        res_user_msg = await db.execute(stmt_first_user)
+        raw_query = res_user_msg.scalar_one_or_none()
+
+        # Fallback to the very first message if no user message found
+        if not raw_query:
+            stmt_first_msg = (
+                select(ChatMessage.content)
+                .where(ChatMessage.session_id == session.id)
+                .order_by(ChatMessage.created_at.asc())
+                .limit(1)
+            )
+            res_any_msg = await db.execute(stmt_first_msg)
+            raw_query = res_any_msg.scalar_one_or_none()
+
+        if raw_query:
+            session_dict["query"] = clean_heuristic_title(raw_query)
+            # Asynchronously schedule LLM title generation so future fetches use persistent LLM title
+            import asyncio
+            asyncio.create_task(generate_and_save_chat_title(session.id, raw_query))
+        else:
+            session_dict["query"] = "Percakapan Baru"
     
     # Get the user's name, user_type, and doctor type
     stmt_user = select(User.name, User.dr_type, User.type).where(User.id == session.user_id)
@@ -1021,6 +1065,12 @@ async def stream_chat_message(
                     input_tokens=in_tokens,
                     output_tokens=out_tokens
                 )
+
+                # Trigger ChatGPT/Gemini-style title generation in background if title not yet generated
+                if not chat_session.summary or chat_session.summary == "Percakapan Baru":
+                    import asyncio
+                    from app.services.chat_title_service import generate_and_save_chat_title
+                    asyncio.create_task(generate_and_save_chat_title(session_id, content, ai_response_text))
                 
             except Exception as e:
                 logger.error(f"Error streaming AI response: {e}")

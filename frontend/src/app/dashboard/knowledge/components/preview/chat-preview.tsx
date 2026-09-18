@@ -765,10 +765,10 @@ export function ChatPreview({
 					(att?.operation_status as string) ||
 					undefined;
 				if (m.role === "user") {
-					const cleaned = cleanMessageTurn(m.content);
+					const cleaned = cleanMessageTurn(m.content || "");
 					return {
 						role: "user",
-						content: cleaned.content,
+						content: cleaned.content || "",
 						attachmentName: cleaned.attachmentName,
 						attachmentNames: cleaned.attachmentNames,
 						action: m.action || undefined,
@@ -782,7 +782,7 @@ export function ChatPreview({
 				}
 				return {
 					role: m.role as "user" | "assistant",
-					content: m.content,
+					content: m.content || "",
 					action: m.action || undefined,
 					type: m.type || (att?.type as string) || undefined,
 					operation_id: m.operation_id || (att?.operation_id as string) || undefined,
@@ -1380,7 +1380,7 @@ export function ChatPreview({
 						...prev,
 						{
 							role: "assistant",
-							content: data.answer,
+							content: data.answer || data.message || "",
 							action: data.action,
 							type: data.type,
 							operation_id: data.operation_id,
@@ -1473,7 +1473,7 @@ export function ChatPreview({
 					{ signal: controller.signal },
 				);
 
-				setChatTurns((prev) => [...prev, { role: "assistant", content: response.data.answer }]);
+				setChatTurns((prev) => [...prev, { role: "assistant", content: response.data?.answer || response.data?.message || "" }]);
 			}
 		} catch (err: unknown) {
 			const isCanceled =
@@ -1575,7 +1575,7 @@ export function ChatPreview({
 					...prev,
 					{
 						role: "assistant",
-						content: res.message,
+						content: res.message || "",
 						action: res.action,
 					},
 				]);
@@ -1600,7 +1600,7 @@ export function ChatPreview({
 					...prev,
 					{
 						role: "assistant",
-						content: res.message,
+						content: res.message || "",
 						action: "cancelled",
 					},
 				]);
@@ -1701,8 +1701,11 @@ export function ChatPreview({
 	};
 
 	const renderAssistantContent = (index: number, msg: Message) => {
-		const isTargetForEdit = isEditMode && index === lastAssistantIndex;
-		const displayContent = localSummary || msg.content || aiSummary || knowledge?.ai_summary || "";
+		const isInitialTurn = index === firstAssistantIndex;
+		const isTargetForEdit = isEditMode && isInitialTurn;
+		const displayContent = isInitialTurn
+			? (localSummary || msg.content || aiSummary || knowledge?.ai_summary || "")
+			: (msg.content || "");
 
 		if (isTargetForEdit) {
 			if (!isManualEditing) {
@@ -1932,7 +1935,7 @@ export function ChatPreview({
 				{index === firstAssistantIndex && headerNode}
 				{index === firstAssistantIndex && renderConfidenceScore()}
 				<StreamingMarkdown
-					content={msg.content}
+					content={msg.content || ""}
 					animate={index === firstAssistantIndex && streamedDocs[knowledgeId || ""] === true}
 					onFinished={() => {
 						if (knowledgeId) {
@@ -2200,7 +2203,7 @@ export function ChatPreview({
 											>
 												{messages[0].role === "assistant"
 													? renderAssistantContent(0, messages[0])
-													: messages[0].content}
+													: (messages[0].content || "")}
 												{/* Inject Categories below initial summary if it's the latest assistant message */}
 												{0 === lastAssistantIndex && renderCategoriesBlock()}
 											</div>
@@ -2270,7 +2273,7 @@ export function ChatPreview({
 												>
 													{msg.role === "assistant"
 														? renderAssistantContent(actualIndex, msg)
-														: msg.content}
+														: (msg.content || "")}
 													{/* Inject Categories below this AI message if it's the latest assistant message */}
 													{actualIndex === lastAssistantIndex && renderCategoriesBlock()}
 												</div>

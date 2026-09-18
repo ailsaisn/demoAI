@@ -70,6 +70,24 @@ export function parseMarkdownSegments(markdown: string): Segment[] {
 		const items = parseBulletLines(bulletsText);
 		if (items.length === 0) continue;
 
+		// Prevent patient profiles, clinical case summaries, or slide intros from rendering as product cards
+		const isPatientProfile =
+			/^(?:slide\s*\d+\s*:\s*)?(?:profil\s+pasien|data\s+pasien|data\s*&\s*kondisi\s+awal)/i.test(headerLower) ||
+			items.some((item) => {
+				const k = item.key.toLowerCase();
+				const v = item.value.toLowerCase();
+				return (
+					k.includes("keluhan utama") ||
+					k.includes("riwayat & catatan") ||
+					k.includes("riwayat klinis") ||
+					k.includes("konsultasi awal") ||
+					(k.includes("pasien") && (v.includes("#") || v.includes("pt-")))
+				);
+			});
+		if (isPatientProfile) {
+			continue;
+		}
+
 		const hasProductAttributes = items.some((item) => {
 			const k = item.key.toLowerCase();
 			return (

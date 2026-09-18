@@ -12,43 +12,89 @@ export function useCisSyncListener() {
 	const queryClient = useQueryClient();
 
 	useEffect(() => {
-		// Use absolute URL targeting the Next.js API proxy or directly the backend if configured that way.
-		// Since NEXT_PUBLIC_API_URL is typically 'http://localhost:8000/api', we will construct it:
+		let isMounted = true;
+		let reconnectTimeout: NodeJS.Timeout | null = null;
+		let eventSource: EventSource | null = null;
 		const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api";
 
-		const eventSource = new EventSource(`${apiUrl}/events/sync`);
+		function connect() {
+			if (!isMounted) return;
 
-		eventSource.onmessage = (event) => {
-			if (event.data === "sync_completed") {
-				// Invalidate the relevant queries to instantly trigger a refetch
-				queryClient.invalidateQueries({ queryKey: userKeys.all });
-				queryClient.invalidateQueries({ queryKey: branchKeys.lists() });
-				queryClient.invalidateQueries({ queryKey: chatHistoryKeys.all });
-				toast.info("Data refreshed from CIS sync.");
-			} else if (event.data === "feedback_submitted") {
-				queryClient.invalidateQueries({ queryKey: NOTIFICATION_KEYS.all });
-				queryClient.invalidateQueries({ queryKey: chatHistoryKeys.all });
-				toast.info("New feedback received.");
-			} else {
-				try {
-					const parsed = JSON.parse(event.data);
-					if (parsed.event_type === "KNOWLEDGE_NOT_FOUND") {
+			if (eventSource) {
+				eventSource.onerror = null;
+				eventSource.close();
+				eventSource = null;
+			}
+
+			try {
+				eventSource = new EventSource(`${apiUrl}/events/sync`);
+
+				eventSource.onmessage = (event) => {
+					if (!isMounted) return;
+
+					if (event.data === "sync_completed") {
+						queryClient.invalidateQueries({ queryKey: userKeys.all });
+						queryClient.invalidateQueries({ queryKey: branchKeys.lists() });
+						queryClient.invalidateQueries({ queryKey: chatHistoryKeys.all });
+						toast.info("Data refreshed from CIS sync.");
+					} else if (event.data === "feedback_submitted") {
 						queryClient.invalidateQueries({ queryKey: NOTIFICATION_KEYS.all });
 						queryClient.invalidateQueries({ queryKey: chatHistoryKeys.all });
+						toast.info("New feedback received.");
+					} else {
+						try {
+							const parsed = JSON.parse(event.data);
+							if (parsed.event_type === "KNOWLEDGE_NOT_FOUND") {
+								queryClient.invalidateQueries({ queryKey: NOTIFICATION_KEYS.all });
+								queryClient.invalidateQueries({ queryKey: chatHistoryKeys.all });
+							}
+						} catch {
+							// Ignore non-json / comment messages
+						}
 					}
-				} catch {
-					// Ignore non-json messages
+				};
+
+				eventSource.onerror = () => {
+					// In EventSource, onerror is an empty event triggered during normal network reconnects or server restarts.
+					// Avoid console.error to prevent Next.js Turbopack dev error overlay popups.
+					if (!isMounted) return;
+
+					if (eventSource?.readyState === EventSource.CLOSED) {
+						eventSource.onerror = null;
+						eventSource.close();
+						eventSource = null;
+
+						if (!reconnectTimeout) {
+							reconnectTimeout = setTimeout(() => {
+								reconnectTimeout = null;
+								connect();
+							}, 5000);
+						}
+					}
+				};
+			} catch {
+				if (isMounted && !reconnectTimeout) {
+					reconnectTimeout = setTimeout(() => {
+						reconnectTimeout = null;
+						connect();
+					}, 5000);
 				}
 			}
-		};
+		}
 
-		eventSource.onerror = (err) => {
-			console.error("SSE connection error", err);
-			// The EventSource will automatically try to reconnect.
-		};
+		connect();
 
 		return () => {
-			eventSource.close();
+			isMounted = false;
+			if (reconnectTimeout) {
+				clearTimeout(reconnectTimeout);
+				reconnectTimeout = null;
+			}
+			if (eventSource) {
+				eventSource.onerror = null;
+				eventSource.close();
+				eventSource = null;
+			}
 		};
 	}, [queryClient]);
 }

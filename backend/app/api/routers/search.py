@@ -12,7 +12,7 @@ from app.models.user import User, UserType, Access, RoleAccess, UserRole
 from app.models.knowledge import Knowledge, KnowledgeChunk, KnowledgeCategory
 from app.models.category import Category
 from app.models.project import Project
-from app.models.chat import ChatSession, ChatMessage
+from app.models.chat import ChatSession, ChatMessage, ChatRole
 from app.models.branch import Branch
 from app.schemas.search import (
     UnifiedSearchResponse,
@@ -374,15 +374,30 @@ async def unified_search(
                 res_branch = await db.execute(stmt_branch)
                 branch_name = res_branch.scalar_one_or_none() or "Unknown Branch"
 
-            stmt_first_msg = (
-                select(ChatMessage.content)
-                .where(ChatMessage.session_id == session.id)
-                .order_by(ChatMessage.created_at.asc())
-                .limit(1)
-            )
-            res_first_msg = await db.execute(stmt_first_msg)
-            first_msg_content = res_first_msg.scalar_one_or_none()
-            title = session.summary or first_msg_content or "Chat Session"
+            from app.services.chat_title_service import sanitize_llm_title, clean_heuristic_title
+
+            if session.summary and session.summary.strip():
+                title = sanitize_llm_title(session.summary)
+            else:
+                stmt_first_msg = (
+                    select(ChatMessage.content)
+                    .where(ChatMessage.session_id == session.id, ChatMessage.role == ChatRole.USER)
+                    .order_by(ChatMessage.created_at.asc())
+                    .limit(1)
+                )
+                res_first_msg = await db.execute(stmt_first_msg)
+                first_msg_content = res_first_msg.scalar_one_or_none()
+                if not first_msg_content:
+                    stmt_fallback = (
+                        select(ChatMessage.content)
+                        .where(ChatMessage.session_id == session.id)
+                        .order_by(ChatMessage.created_at.asc())
+                        .limit(1)
+                    )
+                    res_fallback = await db.execute(stmt_fallback)
+                    first_msg_content = res_fallback.scalar_one_or_none()
+
+                title = clean_heuristic_title(first_msg_content) if first_msg_content else "Percakapan Baru"
 
             match_role = "SUMMARY"
             snippet = None

@@ -25,3 +25,5 @@ data/
 .pnpm-store
 **/.pnpm-store/
 
+scratch/
+

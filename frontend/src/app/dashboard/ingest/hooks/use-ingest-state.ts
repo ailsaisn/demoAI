@@ -80,6 +80,7 @@ export function useIngestState() {
 			if (value && value.trim()) {
 				formData.append("prompt", value.trim());
 			}
+			formData.append("replace_existing", "true");
 
 			if (targetProject) {
 				formData.append("project_id", targetProject);

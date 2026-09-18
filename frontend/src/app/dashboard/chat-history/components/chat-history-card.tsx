@@ -5,6 +5,41 @@ import type { ChatHistoryResponse } from "../api/types"
 import { useRouter } from "next/navigation"
 import { useCurrentUser } from "@/hooks/use-current-user"
 
+function formatCardTitle(rawText?: string | null, maxLen = 75): string {
+  if (!rawText || !rawText.trim()) return "Empty Chat"
+
+  let s = rawText.trim()
+  // 1. Remove markdown links [label](url) -> label
+  s = s.replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
+  // 2. Remove markdown images
+  s = s.replace(/!\[[^\]]*\]\([^)]*\)/g, '')
+  // 3. Strip bold/italics
+  s = s.replace(/[*_]{1,3}([^*_]+)[*_]{1,3}/g, '$1')
+
+  // Check structured key-value list like "- Brand: ERHA\n- Kategori: Jerawat"
+  const brandMatch = s.match(/(?:^|\n)\s*[-*•]?\s*Brand\s*:\s*([^\n\r]+)/i)
+  const catMatch = s.match(/(?:^|\n)\s*[-*•]?\s*Kategori\s*:\s*([^\n\r]+)/i)
+  if (brandMatch) {
+    const bVal = brandMatch[1].trim()
+    const cVal = catMatch ? catMatch[1].trim() : ''
+    const res = cVal ? `${bVal} - ${cVal}` : bVal
+    return res.slice(0, maxLen).trim()
+  }
+
+  // First non-empty line
+  const lines = s.split('\n').map(l => l.trim()).filter(Boolean)
+  if (!lines.length) return "Empty Chat"
+
+  let firstLine = lines[0].replace(/^[#>\s*\-+•\d\.]+/g, '').trim()
+  firstLine = firstLine.replace(/\s+/g, ' ').trim()
+
+  if (firstLine.length > maxLen) {
+    firstLine = firstLine.slice(0, maxLen).replace(/\s+\S*$/, '') + '...'
+  }
+
+  return firstLine || "Empty Chat"
+}
+
 export function ChatHistoryCard({ item }: { item: ChatHistoryResponse }) {
   const router = useRouter()
   const { data: currentUser } = useCurrentUser()
@@ -29,13 +64,15 @@ export function ChatHistoryCard({ item }: { item: ChatHistoryResponse }) {
     }
   }
 
+  const titleText = formatCardTitle(item.query)
+
   return (
     <Card 
       onClick={handleClick}
       className="p-4 flex flex-col gap-3 hover:border-blue-500 hover:shadow-sm transition-all cursor-pointer bg-white"
     >
-      <h3 className="text-sm font-medium text-foreground line-clamp-2">
-        {item.query || "Empty Chat"}
+      <h3 className="text-sm font-medium text-foreground line-clamp-1" title={titleText}>
+        {titleText}
       </h3>
       <div className="flex flex-wrap items-center gap-4 text-xs text-muted-foreground">
         <div className="flex items-center gap-1.5">

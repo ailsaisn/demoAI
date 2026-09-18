@@ -497,6 +497,29 @@ status       : {status}
             if anaphoric_clean in ("tersebut", "produk tersebut", "item tersebut", "dokumen tersebut", "ini", "itu", "nya", "produk ini", "produk itu"):
                 explicit_item_candidate = None
 
+        # Fetch soft-deleted and active IDs to avoid matching deleted knowledge documents
+        deleted_ids = set()
+        active_ids = set()
+        try:
+            from app.models.knowledge import Knowledge
+            from sqlalchemy import select
+            
+            async def _load_db_ids(sess):
+                del_res = await sess.execute(select(Knowledge.id).where(Knowledge.deleted_at.is_not(None)))
+                d_ids = {str(r).lower() for r in del_res.scalars().all() if r}
+                act_res = await sess.execute(select(Knowledge.id).where(Knowledge.deleted_at.is_(None)))
+                a_ids = {str(r).lower() for r in act_res.scalars().all() if r}
+                return d_ids, a_ids
+
+            if db:
+                deleted_ids, active_ids = await _load_db_ids(db)
+            else:
+                from app.core.database import AsyncSessionLocal
+                async with AsyncSessionLocal() as sess:
+                    deleted_ids, active_ids = await _load_db_ids(sess)
+        except Exception as db_err:
+            logger.debug(f"[GeneralKnowledgeService] Notice loading knowledge IDs: {db_err}")
+
         search_folders = [output_dir, os.path.join("backend", output_dir)]
         seen_doc_ids = set()
         matched_docs = []
@@ -515,7 +538,22 @@ status       : {status}
                     if not isinstance(doc, dict):
                         continue
 
-                    doc_id = str(doc.get("knowledge_id") or doc.get("id") or f.replace(".json", "").replace("_parsed", ""))
+                    doc_id = str(doc.get("knowledge_id") or doc.get("id") or f.replace(".json", "").replace("_parsed", "")).strip()
+                    doc_id_low = doc_id.lower()
+
+                    # 1. Skip and purge if document was soft-deleted in DB
+                    if doc_id_low in deleted_ids:
+                        try:
+                            os.remove(f_path)
+                            logger.info(f"[GeneralKnowledgeService] Purged stale soft-deleted file during scan: {f_path}")
+                        except Exception:
+                            pass
+                        continue
+
+                    # 2. If active IDs are known, skip any orphan file not belonging to an active document
+                    if active_ids and doc_id_low not in active_ids:
+                        continue
+
                     if doc_id in seen_doc_ids:
                         continue
 
@@ -549,6 +587,18 @@ status       : {status}
                         h_clean = re.sub(r'[\*\_]', '', h).strip()
                         if len(h_clean) > 2 and h_clean.lower() not in ("ringkasan dokumen", "penutup", "evaluasi hasil", "profil pasien", "detail perawatan"):
                             doc_candidates.append(h_clean)
+
+                    # Product names from modular bullet points in summary / corpus
+                    for p_m in re.findall(r'-\s*\*\*Nama(?:\s+Produk)?\*\*\s*:\s*([^\n]+)', full_text_corpus, re.IGNORECASE):
+                        p_clean = re.sub(r'[\*\_`]', '', p_m).strip()
+                        if len(p_clean) > 2:
+                            doc_candidates.append(p_clean)
+
+                    # Product names from image alt texts
+                    for alt_m in re.findall(r'!\[([^\]]+)\]\([^\)]+\)', full_text_corpus):
+                        alt_clean = re.sub(r'[\*\_`]', '', alt_m).strip()
+                        if len(alt_clean) > 2 and alt_clean.lower() not in ("image", "foto", "product", "foto produk", "dokumen", "document image"):
+                            doc_candidates.append(alt_clean)
 
                     # Chunks metadata
                     for chunk in doc.get("chunks", []):
@@ -774,6 +824,13 @@ status       : {status}
                                     resolved_entity_name = c
                                 break
 
+                        if score == 0 and (re.search(r'\b' + re.escape(cand_low) + r'\b', doc_own_corpus, re.IGNORECASE) or cand_low in doc_own_corpus.lower()):
+                            score += 350 + len(cand_low)
+                            match_type = "section"
+                            matched_item_for_doc = explicit_item_candidate
+                            if not resolved_entity_name:
+                                resolved_entity_name = explicit_item_candidate
+
                     if score == 0:
                         if doc_title and len(doc_title) > 3 and doc_title.lower() in q_lower:
                             score += 300 + len(doc_title)
@@ -951,7 +1008,7 @@ status       : {status}
         Prunes or sanitizes ChatMessage rows in PostgreSQL so deleted products or documents
         do not persist in conversation history and confuse the user or LLM context.
         """
-        from app.models.chat import ChatMessage
+        from app.models.chat import ChatMessage, ChatRole
         from sqlalchemy import select, or_
         import uuid as _uuid
 
@@ -960,7 +1017,7 @@ status       : {status}
 
         async def _prune(session):
             try:
-                stmt = select(ChatMessage)
+                stmt = select(ChatMessage).where(ChatMessage.role == ChatRole.ASSISTANT)
                 conditions = []
                 if session_id:
                     try:
@@ -1223,11 +1280,17 @@ status       : {status}
                         if clean_item_name and clean_item_name.lower() in curr_summary.lower():
                             curr_summary = re.sub(rf'\b{re.escape(clean_item_name)}\b', formatted_val, curr_summary, flags=re.IGNORECASE)
                         existing_doc["summary"] = curr_summary
-                    else:
-                        if bullet_attr_pattern.search(curr_summary):
-                            curr_summary = bullet_attr_pattern.sub(rf'\g<1>{formatted_val}', curr_summary, count=1)
-                        else:
-                            curr_summary = curr_summary.rstrip() + f"\n- **{field.capitalize()}:** {formatted_val}\n"
+                    elif clean_field in ("harga", "ukuran", "sku", "kategori", "deskripsi") and bullet_attr_pattern.search(curr_summary):
+                        curr_summary = bullet_attr_pattern.sub(rf'\g<1>{formatted_val}', curr_summary, count=1)
+                        existing_doc["summary"] = curr_summary
+                    elif clean_item_name and clean_item_name.lower() in curr_summary.lower():
+                        curr_summary = re.sub(rf'\b{re.escape(clean_item_name)}\b', formatted_val, curr_summary, flags=re.IGNORECASE)
+                        existing_doc["summary"] = curr_summary
+                    elif bullet_attr_pattern.search(curr_summary):
+                        curr_summary = bullet_attr_pattern.sub(rf'\g<1>{formatted_val}', curr_summary, count=1)
+                        existing_doc["summary"] = curr_summary
+                    elif clean_field not in ("summary", "text", "konten"):
+                        curr_summary = curr_summary.rstrip() + f"\n- **{field.capitalize()}:** {formatted_val}\n"
                         existing_doc["summary"] = curr_summary
 
                 elif clean_item_name and target_item_lower:
@@ -1243,11 +1306,14 @@ status       : {status}
                         target_sec = sections[matched_idx]
                         if is_name_rename:
                             target_sec = re.sub(rf'\b{re.escape(clean_item_name)}\b', formatted_val, target_sec, flags=re.IGNORECASE)
-                        else:
-                            if bullet_attr_pattern.search(target_sec):
-                                target_sec = bullet_attr_pattern.sub(rf'\g<1>{formatted_val}', target_sec, count=1)
-                            else:
-                                target_sec = target_sec.rstrip() + f"\n- **{field.capitalize()}**: {formatted_val}\n\n"
+                        elif clean_field in ("harga", "ukuran", "sku", "kategori", "deskripsi") and bullet_attr_pattern.search(target_sec):
+                            target_sec = bullet_attr_pattern.sub(rf'\g<1>{formatted_val}', target_sec, count=1)
+                        elif clean_item_name and clean_item_name.lower() in target_sec.lower():
+                            target_sec = re.sub(rf'\b{re.escape(clean_item_name)}\b', formatted_val, target_sec, flags=re.IGNORECASE)
+                        elif bullet_attr_pattern.search(target_sec):
+                            target_sec = bullet_attr_pattern.sub(rf'\g<1>{formatted_val}', target_sec, count=1)
+                        elif clean_field not in ("summary", "text", "konten"):
+                            target_sec = target_sec.rstrip() + f"\n- **{field.capitalize()}**: {formatted_val}\n\n"
                         sections[matched_idx] = target_sec
                         curr_summary = "".join(sections)
                         existing_doc["summary"] = curr_summary
@@ -1267,6 +1333,9 @@ status       : {status}
                                 flags=re.MULTILINE | re.IGNORECASE,
                                 count=1
                             )
+                            existing_doc["summary"] = curr_summary
+                        elif clean_item_name and clean_item_name.lower() in curr_summary.lower():
+                            curr_summary = re.sub(rf'\b{re.escape(clean_item_name)}\b', formatted_val, curr_summary, flags=re.IGNORECASE)
                             existing_doc["summary"] = curr_summary
 
             # 2. Update matching chunks ONLY
@@ -1289,17 +1358,18 @@ status       : {status}
                 if not chunk_belongs:
                     continue
 
-                if (is_name_rename or is_ingredient_rename) and clean_item_name and clean_item_name.lower() in chunk_text_lower:
+                if clean_field in ("harga", "ukuran", "sku", "kategori", "deskripsi") and bullet_attr_pattern.search(chunk_text):
+                    chunk["text"] = bullet_attr_pattern.sub(rf'\g<1>{formatted_val}', chunk_text, count=1)
+                elif clean_item_name and clean_item_name.lower() in chunk_text_lower:
                     chunk["text"] = re.sub(rf'\b{re.escape(clean_item_name)}\b', formatted_val, chunk_text, flags=re.IGNORECASE)
                     chunk_text = chunk["text"]
                     chunk_text_lower = chunk_text.lower()
                     if is_name_rename:
                         chunk["metadata"]["product_name"] = formatted_val
                         chunk["metadata"]["entity"] = formatted_val
-
-                if bullet_attr_pattern.search(chunk_text):
+                elif bullet_attr_pattern.search(chunk_text):
                     chunk["text"] = bullet_attr_pattern.sub(rf'\g<1>{formatted_val}', chunk_text, count=1)
-                else:
+                elif clean_field not in ("summary", "text", "konten"):
                     chunk["text"] = chunk_text.strip() + f"\n- **{field.capitalize()}**: {formatted_val}"
 
             # Synchronize last assistant turn in staging_history/history if present
@@ -1538,7 +1608,8 @@ status       : {status}
                     "target_item": target_item,
                     "old_value": str(old_value)[:200] if old_value else None,
                     "new_value": str(new_value)[:200],
-                    "message": f"Perubahan pada '{target_item or doc_kid}' berhasil diterapkan dan langsung aktif di RAG."
+                    "message": f"Perubahan pada '{target_item or doc_kid}' berhasil diterapkan dan langsung aktif di RAG.",
+                    "summary": existing_doc.get("summary", "")
                 }
             else:
                 # PENDING DRAFT: Dashboard Admin edit → Priority 4 versioning rule
@@ -1579,7 +1650,8 @@ status       : {status}
         target_item: Optional[str] = None,
         db=None,
         scope: str = "SINGLE_ITEM",
-        session_id: Optional[Any] = None
+        session_id: Optional[Any] = None,
+        delete_type: Optional[str] = None
     ) -> Dict[str, Any]:
         """
         Deletes a KB document or surgically deletes a specific item within a multi-item document.
@@ -1602,59 +1674,186 @@ status       : {status}
 
                 doc_kid = str(existing_doc.get("knowledge_id") or knowledge_id)
                 summary = existing_doc.get("summary", "")
-
-                # Build list of specific items to delete (supports comma-separated or ingredient queries)
+                deleted_products = []
                 delete_targets = []
-                if "," in target_item:
-                    for s in target_item.split(","):
-                        s_clean = s.strip()
-                        if s_clean and not s_clean.lower().startswith("produk dengan kandungan"):
-                            delete_targets.append(s_clean)
+                filtered_chunks = None
+                removed_count = 0
 
-                ing_m = re.search(r'(?:produk\s+(?:dengan\s+)?(?:yang\s+)?(?:mengandung|kandungan|bahan)\s+|kandungan\s+|bahan\s+)(.+)', target_item, re.IGNORECASE)
-                ing_keyword = ing_m.group(1).strip().lower() if ing_m else None
+                # Detect if this is an ingredient-based deletion
+                is_ing_delete = (delete_type == "ingredient")
+                ing_keyword = None
+                if not is_ing_delete:
+                    ing_m = re.search(r'(?:produk\s+(?:dengan\s+)?(?:yang\s+)?(?:mengandung|kandungan|bahan)\s+|kandungan\s+|bahan\s+)(.+)', target_item_clean, re.IGNORECASE)
+                    if ing_m:
+                        is_ing_delete = True
+                        ing_keyword = ing_m.group(1).strip().lower()
+                else:
+                    ing_keyword = target_item_clean.lower()
 
-                # If ingredient keyword is present, collect all specific product/section names containing it
-                if ing_keyword:
+                # Case A: Delete all products containing specific ingredient
+                if is_ing_delete and ing_keyword:
+                    prod_boundary_pattern = r'(?=(?:^|\n)#{1,3}\s+Detail\s+Produk|(?:^|\n)##\s+(?!Detail\s+Produk)[^\n]+|(?:^|\n)Informasi\s+Produk\s+[^\n]+)'
+                    sections = [s for s in re.split(prod_boundary_pattern, summary) if s.strip()]
+                    if len(sections) <= 1:
+                        sections = [s for s in re.split(r'(?=(?:^|\n)#{1,4}\s+[^\n]+)', summary) if s.strip()]
+
+                    kept_sections = []
                     ing_re = re.compile(rf'\b{re.escape(ing_keyword)}\b', re.IGNORECASE)
-                    doc_title_clean = str(existing_doc.get("title", "")).strip().lower()
-                    doc_fn_clean = str(existing_doc.get("file_name", "")).strip().lower()
 
-                    # 1. Section-level check: split summary into heading sections (H2+)
-                    sections = re.split(r'(?=(?:^|\n)##{1,3}\s+)', summary)
-                    for s in sections:
-                        if ing_re.search(s):
-                            m_h = re.search(r'^(?:##{1,3}\s+)([^\n\r]+)', s.strip())
-                            if m_h:
-                                h_name = re.sub(r'[\*\_]', '', m_h.group(1)).strip()
-                                h_name_lower = h_name.lower()
-                                if len(h_name) > 2 and h_name_lower not in ("ringkasan dokumen", "penutup", "evaluasi hasil", "profil pasien", "detail perawatan", doc_title_clean, doc_fn_clean):
-                                    delete_targets.append(h_name)
+                    for sec in sections:
+                        name_m = re.search(r'-\s*\*\*Nama(?:\s+Produk)?\*\*\s*:\s*([^\n]+)', sec, re.IGNORECASE)
+                        p_name = name_m.group(1).strip() if name_m else ""
+                        if not p_name:
+                            h_m = re.search(r'^#{1,4}\s+([^\n\r]+)', sec.strip())
+                            if h_m:
+                                cand_h = re.sub(r'[\*\_]', '', h_m.group(1)).strip()
+                                if cand_h.lower() not in ("detail produk", "informasi produk", "ringkasan dokumen", "penutup", "evaluasi hasil", "profil pasien", "detail perawatan"):
+                                    p_name = cand_h
 
-                    # 2. Table rows check
-                    for line in summary.splitlines():
-                        if "|" in line and ing_re.search(line):
-                            cols = [c.strip() for c in line.split("|") if c.strip()]
-                            if cols:
-                                item_col = re.sub(r'[\*\_#]', '', cols[0]).strip()
-                                if len(item_col) > 2 and item_col.lower() not in ("nama treatment", "nama produk", "produk", "treatment", "item", "nama", doc_title_clean, doc_fn_clean):
-                                    delete_targets.append(item_col)
+                        if ing_re.search(sec):
+                            disp_name = p_name or target_item_clean
+                            if disp_name not in deleted_products:
+                                deleted_products.append(disp_name)
+                        else:
+                            kept_sections.append(sec)
 
-                if not delete_targets:
-                    delete_targets = [target_item_clean]
+                    if deleted_products:
+                        existing_doc["summary"] = "".join(kept_sections).strip()
+                        delete_targets = list(deleted_products)
+                        delete_targets.append(ing_keyword)
+                        try:
+                            from app.rag.utils.summary_chunker import chunk_summary_markdown
+                            filtered_chunks = chunk_summary_markdown(
+                                summary=existing_doc["summary"],
+                                source_file=existing_doc.get("file_name", doc_kid),
+                                knowledge_id=doc_kid,
+                                batch_id=existing_doc.get("batch_id"),
+                                title=existing_doc.get("title", doc_kid),
+                                doc_type=existing_doc.get("document_type", "GENERAL")
+                            )
+                        except Exception as rc_err:
+                            logger.debug(f"[DedicatedService] Re-chunk fallback note on delete: {rc_err}")
+                            filtered_chunks = []
 
-                # Deduplicate delete_targets
-                unique_delete_targets = []
-                seen_dt = set()
-                for dt in delete_targets:
-                    if dt.lower() not in seen_dt:
-                        seen_dt.add(dt.lower())
-                        unique_delete_targets.append(dt)
-                delete_targets = unique_delete_targets
+                # Case B: Delete specific product by name
+                elif delete_type == "name" or any(w in target_item_lower for w in ("serum", "cream", "gel", "lotion", "toner", "wash", "cleanser", "facial", "sunscreen", "spot", "moisturizer", "acneact", "truwhite")):
+                    prod_boundary_pattern = r'(?=(?:^|\n)#{1,3}\s+Detail\s+Produk|(?:^|\n)##\s+(?!Detail\s+Produk)[^\n]+|(?:^|\n)Informasi\s+Produk\s+[^\n]+)'
+                    sections = [s for s in re.split(prod_boundary_pattern, summary) if s.strip()]
+                    if len(sections) <= 1:
+                        sections = [s for s in re.split(r'(?=(?:^|\n)#{1,4}\s+[^\n]+)', summary) if s.strip()]
 
-                # Clean summary
-                if summary:
-                    existing_doc["summary"] = GeneralKnowledgeService.clean_markdown_text(summary, delete_targets, ing_keyword)
+                    kept_sections = []
+                    target_words = [w for w in re.findall(r'\b[a-zA-Z0-9]{3,}\b', target_item_lower) if w not in ('produk', 'product', 'erha', 'the', 'and')]
+
+                    for sec in sections:
+                        name_m = re.search(r'-\s*\*\*Nama(?:\s+Produk)?\*\*\s*:\s*([^\n]+)', sec, re.IGNORECASE)
+                        p_name = name_m.group(1).strip() if name_m else ""
+                        if not p_name:
+                            h_m = re.search(r'^#{1,4}\s+([^\n\r]+)', sec.strip())
+                            if h_m:
+                                cand_h = re.sub(r'[\*\_]', '', h_m.group(1)).strip()
+                                if cand_h.lower() not in ("detail produk", "informasi produk", "ringkasan dokumen", "penutup", "evaluasi hasil", "profil pasien", "detail perawatan"):
+                                    p_name = cand_h
+
+                        is_match = False
+                        if p_name:
+                            p_lower = p_name.lower()
+                            if target_item_lower == p_lower:
+                                is_match = True
+                            elif target_item_lower in p_lower or (len(p_lower) > 5 and p_lower in target_item_lower):
+                                is_match = True
+                            else:
+                                generic_words = {
+                                    'produk', 'product', 'erha', 'the', 'and', 'for', 'with',
+                                    'new', 'version', 'series', 'edisi', 'baru', 'edition', 'care',
+                                    'cream', 'serum', 'gel', 'lotion', 'wash', 'cleanser', 'toner', 'facial', 'sunscreen', 'moisturizer'
+                                }
+                                distinctive_del_words = [w for w in re.findall(r'\b[a-zA-Z0-9]{3,}\b', target_item_lower) if w not in generic_words]
+                                if distinctive_del_words:
+                                    if all(w in p_lower for w in distinctive_del_words):
+                                        is_match = True
+                                elif target_words and sum(1 for w in target_words if w in p_lower) >= len(target_words):
+                                    is_match = True
+                        elif target_item_lower in sec.lower():
+                            is_match = True
+
+                        if is_match:
+                            disp_name = p_name or target_item_clean
+                            if disp_name not in deleted_products:
+                                deleted_products.append(disp_name)
+                        else:
+                            kept_sections.append(sec)
+
+                    if deleted_products:
+                        existing_doc["summary"] = "".join(kept_sections).strip()
+                        delete_targets = list(deleted_products)
+                        try:
+                            from app.rag.utils.summary_chunker import chunk_summary_markdown
+                            filtered_chunks = chunk_summary_markdown(
+                                summary=existing_doc["summary"],
+                                source_file=existing_doc.get("file_name", doc_kid),
+                                knowledge_id=doc_kid,
+                                batch_id=existing_doc.get("batch_id"),
+                                title=existing_doc.get("title", doc_kid),
+                                doc_type=existing_doc.get("document_type", "GENERAL")
+                            )
+                        except Exception as rc_err:
+                            logger.debug(f"[DedicatedService] Re-chunk fallback note on delete: {rc_err}")
+                            filtered_chunks = []
+
+                # Case C: Fallback to line-by-line / bullet cleanup
+                if not deleted_products:
+                    if "," in target_item:
+                        for s in target_item.split(","):
+                            s_clean = s.strip()
+                            if s_clean and not s_clean.lower().startswith("produk dengan kandungan"):
+                                delete_targets.append(s_clean)
+
+                    if not delete_targets:
+                        delete_targets = [target_item_clean]
+
+                    # Deduplicate delete_targets
+                    unique_delete_targets = []
+                    seen_dt = set()
+                    for dt in delete_targets:
+                        if dt.lower() not in seen_dt:
+                            seen_dt.add(dt.lower())
+                            unique_delete_targets.append(dt)
+                    delete_targets = unique_delete_targets
+
+                    # Clean summary
+                    if summary:
+                        existing_doc["summary"] = GeneralKnowledgeService.clean_markdown_text(summary, delete_targets, ing_keyword)
+
+                    original_chunks = existing_doc.get("chunks", [])
+                    filtered_chunks = []
+                    for chunk in original_chunks:
+                        chunk_text = chunk.get("text", "") if isinstance(chunk, dict) else ""
+                        chunk_lower = chunk_text.lower()
+                        meta = chunk.get("metadata", {}) if isinstance(chunk, dict) else {}
+
+                        is_dedicated_target_chunk = False
+                        for dt in delete_targets:
+                            dt_low = dt.lower()
+                            chunk_prod = str(meta.get("product_name", "")).lower()
+                            chunk_sec = str(meta.get("section", "")).lower()
+                            chunk_head = str(meta.get("heading", "")).lower()
+                            if dt_low and (dt_low in chunk_prod or dt_low in chunk_sec or dt_low in chunk_head or dt_low in chunk_lower):
+                                is_dedicated_target_chunk = True
+                                break
+
+                        if is_dedicated_target_chunk:
+                            removed_count += 1
+                            continue
+
+                        cleaned_chunk_text = GeneralKnowledgeService.clean_markdown_text(chunk_text, delete_targets, ing_keyword)
+                        stripped_clean = re.sub(r'^[#\|\-\*\s\:\d\.]+', '', cleaned_chunk_text).strip()
+                        if not stripped_clean or len(stripped_clean) < 10:
+                            removed_count += 1
+                            continue
+
+                        chunk["text"] = cleaned_chunk_text
+                        filtered_chunks.append(chunk)
 
                 # Clean batch_summary
                 if existing_doc.get("batch_summary"):
@@ -1683,45 +1882,9 @@ status       : {status}
                                 if orig_c:
                                     turn["content"] = GeneralKnowledgeService.clean_markdown_text(orig_c, delete_targets, ing_keyword)
 
-                original_chunks = existing_doc.get("chunks", [])
-                filtered_chunks = []
-                removed_count = 0
-                ing_re = re.compile(rf'\b{re.escape(ing_keyword)}\b', re.IGNORECASE) if ing_keyword else None
-
-                for chunk in original_chunks:
-                    chunk_text = chunk.get("text", "") if isinstance(chunk, dict) else ""
-                    chunk_lower = chunk_text.lower()
-                    meta = chunk.get("metadata", {}) if isinstance(chunk, dict) else {}
-
-                    # Check if chunk exclusively belongs to a deleted target
-                    is_dedicated_target_chunk = False
-                    for dt in delete_targets:
-                        dt_low = dt.lower()
-                        chunk_prod = str(meta.get("product_name", "")).lower()
-                        chunk_sec = str(meta.get("section", "")).lower()
-                        chunk_head = str(meta.get("heading", "")).lower()
-                        if dt_low and (dt_low in chunk_prod or dt_low in chunk_sec or dt_low in chunk_head or dt_low in chunk_lower):
-                            is_dedicated_target_chunk = True
-                            break
-
-                    if is_dedicated_target_chunk:
-                        removed_count += 1
-                        continue
-
-                    # For shared/table/catalog chunks, surgically clean target item text from chunk
-                    cleaned_chunk_text = GeneralKnowledgeService.clean_markdown_text(chunk_text, delete_targets, ing_keyword)
-                    
-                    # If chunk text was stripped of all meaningful content, discard it
-                    stripped_clean = re.sub(r'^[#\|\-\*\s\:\d\.]+', '', cleaned_chunk_text).strip()
-                    if not stripped_clean or len(stripped_clean) < 10:
-                        removed_count += 1
-                        continue
-
-                    chunk["text"] = cleaned_chunk_text
-                    filtered_chunks.append(chunk)
-
-                # If summary still has content but all chunks were removed, re-chunk from remaining summary
                 remaining_summary = (existing_doc.get("summary") or "").strip()
+                if filtered_chunks is None:
+                    filtered_chunks = []
                 if not filtered_chunks and remaining_summary and len(remaining_summary) > 20:
                     try:
                         from app.rag.utils.summary_chunker import chunk_summary_markdown
@@ -1807,7 +1970,9 @@ status       : {status}
                     "success": True,
                     "knowledge_id": doc_kid,
                     "target_item": target_item_clean,
-                    "title": f"Item '{target_item_clean}' berhasil dihapus dari basis pengetahuan."
+                    "deleted_products": deleted_products,
+                    "title": f"Item '{target_item_clean}' berhasil dihapus dari basis pengetahuan.",
+                    "summary": existing_doc.get("summary", "")
                 }
             except Exception as e:
                 logger.error(f"[DedicatedService] Item-level delete failed: {e}")

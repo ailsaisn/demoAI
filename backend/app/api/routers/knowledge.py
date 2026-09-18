@@ -319,6 +319,12 @@ async def send_general_chat_message(
     db.add(assistant_db_msg)
     await db.commit()
 
+    # Trigger ChatGPT/Gemini-style title generation in background if title not yet generated
+    if not session.summary or session.summary == "Percakapan Baru":
+        import asyncio
+        from app.services.chat_title_service import generate_and_save_chat_title
+        asyncio.create_task(generate_and_save_chat_title(session_id, payload.prompt, ai_res.answer))
+
     # Record token usage for the active user
     in_tokens = count_chat_prompt_tokens(
         user_query=payload.prompt,
@@ -2439,12 +2445,12 @@ async def refine_knowledge(
                             user_turn["attachmentName"] = active_attached_file_name
                             user_turn["attachmentNames"] = [active_attached_file_name]
                         full_history.append(user_turn)
-                    if res.get("summary"):
-                        full_history.append({
-                            "role": "assistant",
-                            "content": res.get("summary"),
-                            "created_at": datetime.now(timezone.utc).isoformat()
-                        })
+                    asst_pending = res.get("reply") or res.get("feedback") or res.get("answer") or "Dokumen berhasil diperbarui."
+                    full_history.append({
+                        "role": "assistant",
+                        "content": asst_pending,
+                        "created_at": datetime.now(timezone.utc).isoformat()
+                    })
 
                 full_history = sanitize_history_turns(full_history, default_attachment=active_attached_file_name)
                 k_entry.metadata_["history"] = full_history

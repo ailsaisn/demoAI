@@ -4,7 +4,7 @@ import React, { useEffect, useState, useRef } from "react";
 import { MarkdownContent } from "./markdown-content";
 
 export interface StreamingMarkdownProps {
-	content: string;
+	content?: string;
 	animate?: boolean;
 	speed?: number; // ms per step
 	wordsPerStep?: number;
@@ -13,15 +13,16 @@ export interface StreamingMarkdownProps {
 }
 
 export function StreamingMarkdown({
-	content,
+	content = "",
 	animate = false,
 	speed = 18,
 	wordsPerStep = 4,
 	onFinished,
 	className,
 }: StreamingMarkdownProps) {
-	const [displayedLength, setDisplayedLength] = useState(animate ? 0 : content.length);
-	const [isStreaming, setIsStreaming] = useState(animate);
+	const safeContent = content ?? "";
+	const [displayedLength, setDisplayedLength] = useState(animate && safeContent ? 0 : safeContent.length);
+	const [isStreaming, setIsStreaming] = useState(Boolean(animate && safeContent));
 	const onFinishedRef = useRef(onFinished);
 
 	useEffect(() => {
@@ -29,10 +30,16 @@ export function StreamingMarkdown({
 	}, [onFinished]);
 
 	useEffect(() => {
-		if (!animate || !content) return;
+		if (!animate || !safeContent) {
+			setIsStreaming(false);
+			return;
+		}
+
+		setIsStreaming(true);
+		setDisplayedLength(0);
 
 		// Split text by whitespace to stream word by word
-		const words = content.split(/(\s+)/);
+		const words = safeContent.split(/(\s+)/);
 		let currentWordIdx = 0;
 
 		const interval = setInterval(() => {
@@ -50,9 +57,9 @@ export function StreamingMarkdown({
 		return () => {
 			clearInterval(interval);
 		};
-	}, [content, animate, speed, wordsPerStep]);
+	}, [safeContent, animate, speed, wordsPerStep]);
 
-	const displayedText = animate && isStreaming ? content.substring(0, displayedLength) : content;
+	const displayedText = animate && isStreaming ? safeContent.substring(0, displayedLength) : safeContent;
 
 	return (
 		<div className={className}>

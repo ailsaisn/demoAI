@@ -630,6 +630,144 @@ def extract_product_deletion(user_prompt: str) -> tuple[Optional[str], Optional[
     return None, None, None
 
 
+def extract_product_cards_from_summary(summary: str, target_product_names: Optional[List[str]] = None) -> str:
+    """
+    Extracts modular product card markdown blocks from summary markdown.
+    If target_product_names is provided, extracts only matching product cards.
+    If target_product_names is None or empty, extracts all product cards found in summary.
+    """
+    import re
+    if not summary or not summary.strip():
+        return ""
+
+    clean_summary = strip_callout_banners(summary)
+    prod_boundary_pattern = r'(?=(?:^|\n)#{1,4}\s+[^\n]+)'
+    raw_sections = [s.strip() for s in re.split(prod_boundary_pattern, clean_summary) if s.strip()]
+
+    cards = []
+    
+    clean_targets = []
+    distinctive_targets = []
+    generic_words = {
+        'produk', 'product', 'erha', 'and', 'the', 'with', 'for',
+        'cream', 'serum', 'gel', 'lotion', 'toner', 'wash', 'cleanser',
+        'facial', 'sunscreen', 'moisturizer', 'spot', 'care', 'treatment'
+    }
+
+    if target_product_names:
+        for t in target_product_names:
+            if not t:
+                continue
+            t_clean = t.lower().strip()
+            clean_targets.append(t_clean)
+            dist_words = [w.lower() for w in re.findall(r'\b[a-zA-Z0-9]{3,}\b', t_clean) if w.lower() not in generic_words]
+            if dist_words:
+                distinctive_targets.append(dist_words)
+            else:
+                all_words = [w.lower() for w in re.findall(r'\b[a-zA-Z0-9]{3,}\b', t_clean) if w.lower() not in ('produk', 'product', 'erha', 'and', 'the')]
+                if all_words:
+                    distinctive_targets.append(all_words)
+
+    for sec in raw_sections:
+        sec_str = sec.strip()
+        # Reject non-product sections (Patient profiles, slide intros, procedure metrics, thank you slides, evaluation tables)
+        is_patient_or_non_product = bool(re.search(
+            r'(?:profil\s+pasien|data\s+pasien|-\s*\*\*Pasien\*\*|-\s*\*\*Keluhan\s+Utama|-\s*\*\*Riwayat\s*&?\s*Catatan|\bpasien\s*:\s*#|\bevaluasi\s+hasil\b|\btahapan\s+prosedur\b|\bprosedur\s*&|\bsesi\s+perawatan\b|\bminggu\s*\/\s*sesi\b|\bbulan\s+program\b|\bterima\s+kasih\b|\blaporan\s+hasil\s+perawatan\b)',
+            sec_str,
+            re.IGNORECASE
+        ))
+        if is_patient_or_non_product:
+            continue
+
+        has_name = re.search(r'-\s*\*\*Nama(?:\s+Produk)?\*\*\s*:\s*([^\n]+)', sec_str, re.IGNORECASE)
+        has_prod_attr = bool(re.search(r'-\s*\*\*(?:Brand|Kategori|Harga|Ukuran|Kandungan|Manfaat|Deskripsi|Metode Aplikasi|Indikasi|Cara Pakai)\*\*\s*:', sec_str, re.IGNORECASE))
+        is_prod_heading = bool(re.match(r'^#{1,4}\s+(?:Detail\s+Produk|Informasi\s+Produk|[A-Za-z0-9\s\-\+\%]+Serum|[A-Za-z0-9\s\-\+\%]+Cream|[A-Za-z0-9\s\-\+\%]+Gel|[A-Za-z0-9\s\-\+\%]+Lotion|[A-Za-z0-9\s\-\+\%]+Toner|[A-Za-z0-9\s\-\+\%]+Cleanser|[A-Za-z0-9\s\-\+\%]+Sunscreen|[A-Za-z0-9\s\-\+\%]+Moisturizer|[A-Za-z0-9\s\-\+\%]+Facial|[A-Za-z0-9\s\-\+\%]+Acne|[A-Za-z0-9\s\-\+\%]+Truwhite|[A-Za-z0-9\s\-\+\%]+GlowLift)', sec_str, re.IGNORECASE))
+
+        if not (has_prod_attr and (has_name or is_prod_heading or re.match(r'^#{1,4}\s+', sec_str))):
+            continue
+
+        prod_name = has_name.group(1).strip() if has_name else ""
+        p_lower = prod_name.lower()
+        p_full = (prod_name + " " + sec_str).lower()
+
+        if clean_targets:
+            matched = False
+            # 1. Exact or substring match of full target name or product name
+            for t_clean in clean_targets:
+                t_norm = re.sub(r'^(?:erha\s+|the\s+)', '', t_clean).strip()
+                p_norm = re.sub(r'^(?:erha\s+|the\s+)', '', p_lower).strip()
+                if t_norm in p_norm or p_norm in t_norm or t_clean in p_lower:
+                    matched = True
+                    break
+
+            # 2. Distinctive words match (ALL distinctive words of target must be present in section)
+            if not matched and distinctive_targets:
+                for dist_words in distinctive_targets:
+                    if all(w in p_full for w in dist_words):
+                        matched = True
+                        break
+
+            if not matched:
+                continue
+
+        card_text = sec_str
+        if not re.match(r'^#{1,4}\s+', card_text):
+            card_text = "### Detail Produk\n" + card_text
+        else:
+            card_text = re.sub(r'^#{1,4}\s+', '### ', card_text, count=1)
+        
+        cards.append(card_text)
+
+    return "\n\n".join(cards).strip()
+
+
+def format_chat_response_with_cards(
+    confirmation: str,
+    summary: str,
+    target_product_names: Optional[List[str]] = None,
+    intro_label: str = "Berikut adalah daftar produk yang diperbarui:"
+) -> str:
+    """
+    Formats an assistant chat reply turn to display:
+    1. Top: confirmation message (e.g. '✅ Produk X telah berhasil dihapus...')
+    2. Bottom: list of updated product cards from the document summary
+    """
+    confirmation = (confirmation or "").strip()
+    if not confirmation:
+        return ""
+
+    # Never append product cards or update headers if confirmation indicates
+    # an item was not found, operation failed, or nothing was modified.
+    negation_keywords = [
+        "tidak ditemukan",
+        "tidak ada",
+        "tidak terdapat",
+        "gagal",
+        "tidak berhasil",
+        "maaf",
+        "mohon maaf",
+        "not found",
+        "cannot be found",
+        "tidak dapat",
+        "belum terdaftar"
+    ]
+    conf_lower = confirmation.lower()
+    if any(k in conf_lower for k in negation_keywords):
+        return confirmation
+
+    if not summary or not summary.strip():
+        return confirmation
+    cards_md = extract_product_cards_from_summary(summary, target_product_names=target_product_names)
+    if not cards_md.strip() and not target_product_names:
+        cards_md = extract_product_cards_from_summary(summary)
+    
+    if not cards_md.strip():
+        return confirmation
+    
+    label = intro_label or "Berikut adalah detail yang diperbarui:"
+    return f"{confirmation}\n\n{label}\n\n{cards_md}".strip()
+
+
 def apply_refinements_to_content(
     user_prompt: str,
     summary: str,
@@ -719,9 +857,21 @@ def apply_refinements_to_content(
                     updated_summary = re.sub(r'(#{0,3}\s*Product Overview\b[^\n]*)', r'\1\n- **Harga**: ' + extracted_price, updated_summary, count=1, flags=re.IGNORECASE)
 
     if extracted_sku:
-        feedback_message = f"Nomor SKU berhasil diperbarui menjadi {extracted_sku}."
+        sku_msg = f"Nomor SKU berhasil diperbarui menjadi {extracted_sku}."
+        feedback_message = format_chat_response_with_cards(
+            confirmation=sku_msg,
+            summary=updated_summary,
+            target_product_names=[sku_target] if sku_target else None,
+            intro_label="Berikut adalah detail produk yang diperbarui:"
+        )
     elif extracted_price:
-        feedback_message = f"Harga berhasil diperbarui menjadi {extracted_price}."
+        price_msg = f"Harga berhasil diperbarui menjadi {extracted_price}."
+        feedback_message = format_chat_response_with_cards(
+            confirmation=price_msg,
+            summary=updated_summary,
+            target_product_names=[price_target] if price_target else None,
+            intro_label="Berikut adalah detail produk yang diperbarui:"
+        )
 
     # 3. Synchronize chunks with targeted SKU modifications
     for chunk in chunks:
@@ -824,7 +974,13 @@ def apply_refinements_to_content(
                     affected_products.append(t_p)
 
         if affected_products:
-            feedback_message = f"Berhasil mengubah \"{extracted_replace_old}\" menjadi \"{extracted_replace_new}\" pada seluruh produk terkait ({', '.join(affected_products)})."
+            rep_msg = f"Berhasil mengubah \"{extracted_replace_old}\" menjadi \"{extracted_replace_new}\" pada seluruh produk terkait ({', '.join(affected_products)})."
+            feedback_message = format_chat_response_with_cards(
+                confirmation=rep_msg,
+                summary=updated_summary,
+                target_product_names=affected_products,
+                intro_label="Berikut adalah daftar produk yang diperbarui:"
+            )
         else:
             feedback_message = f"Kandungan \"{extracted_replace_old}\" tidak ditemukan pada produk di dokumen ini."
 
@@ -854,11 +1010,28 @@ def apply_refinements_to_content(
                 if re.search(r'\b' + re.escape(del_ingr) + r'\b', sec, re.IGNORECASE):
                     should_delete = True
             elif del_type == "name" and del_name:
-                target_words = [w for w in re.findall(r'\b[a-zA-Z0-9]{3,}\b', del_name.lower()) if w not in ('produk', 'product', 'erha')]
-                if target_words and sum(1 for w in target_words if w in p_name.lower()) >= min(2, len(target_words)):
+                del_name_clean = del_name.lower().strip()
+                p_name_clean = p_name.lower().strip() if p_name else sec.lower().strip()
+
+                if del_name_clean == p_name_clean:
                     should_delete = True
-                elif del_name.lower() in p_name.lower() or (p_name and p_name.lower() in del_name.lower()):
+                elif del_name_clean in p_name_clean or (p_name and len(p_name_clean) > 5 and p_name_clean in del_name_clean):
                     should_delete = True
+                else:
+                    generic_words = {
+                        'produk', 'product', 'erha', 'the', 'and', 'for', 'with',
+                        'new', 'version', 'series', 'edisi', 'baru', 'edition', 'care',
+                        'cream', 'serum', 'gel', 'lotion', 'wash', 'cleanser', 'toner', 'facial', 'sunscreen', 'moisturizer'
+                    }
+                    distinctive_del_words = [w for w in re.findall(r'\b[a-zA-Z0-9]{3,}\b', del_name_clean) if w not in generic_words]
+                    all_del_words = [w for w in re.findall(r'\b[a-zA-Z0-9]{3,}\b', del_name_clean) if w not in ('produk', 'product', 'erha', 'the', 'and')]
+
+                    if distinctive_del_words:
+                        if all(w in p_name_clean for w in distinctive_del_words):
+                            should_delete = True
+                    elif all_del_words:
+                        if sum(1 for w in all_del_words if w in p_name_clean) >= len(all_del_words):
+                            should_delete = True
 
             if should_delete:
                 display_name = p_name or "Produk terkait"
@@ -867,13 +1040,17 @@ def apply_refinements_to_content(
             else:
                 kept_sections.append(sec)
 
+        updated_summary = "".join(kept_sections).strip()
         target_label = f' yang mengandung "{del_ingr}"' if del_ingr else f' "{del_name}"'
         if deleted_products:
-            feedback_message = f"Berhasil menghapus produk{target_label} ({', '.join(deleted_products)}) dari dokumen ini."
+            del_msg = f"Berhasil menghapus produk{target_label} ({', '.join(deleted_products)}) dari dokumen ini."
+            feedback_message = format_chat_response_with_cards(
+                confirmation=del_msg,
+                summary=updated_summary,
+                intro_label="Berikut adalah daftar produk yang diperbarui:"
+            )
         else:
             feedback_message = f"Produk{target_label} tidak ditemukan pada dokumen ini."
-
-        updated_summary = "".join(kept_sections).strip()
 
     return updated_summary, chunks, updated_title, extracted_sku, feedback_message
 
@@ -3263,7 +3440,7 @@ CRITICAL REQUIREMENT FOR THE "summary" FIELD:
 
         # Cross-document catalog deletion fallback if item not found in current pending document
         del_name, del_ingr, del_type = extract_product_deletion(request.prompt)
-        if del_type == "name" and del_name and refined_feedback and "tidak ditemukan pada dokumen ini" in refined_feedback:
+        if del_type in ("name", "ingredient") and refined_feedback and "tidak ditemukan pada dokumen ini" in refined_feedback:
             try:
                 matched_cat = await GeneralKnowledgeService.find_all_target_documents_and_item(request.prompt)
                 if matched_cat:
@@ -3273,12 +3450,16 @@ CRITICAL REQUIREMENT FOR THE "summary" FIELD:
                         catalog_doc = other_docs[0]
                         cat_kid = catalog_doc["knowledge_id"]
                         cat_title = catalog_doc.get("title") or catalog_doc.get("file_name") or "Katalog Produk"
+                        target_del_item = del_name if del_type == "name" else del_ingr
                         del_res = await GeneralKnowledgeService.apply_delete(
                             knowledge_id=cat_kid,
-                            target_item=del_name
+                            target_item=target_del_item,
+                            delete_type=del_type
                         )
                         if del_res.get("success"):
-                            refined_feedback = f"Produk \"{del_name}\" ditemukan pada dokumen katalog \"{cat_title}\" dan telah berhasil dihapus dari knowledge base. Dokumen ini tetap utuh."
+                            del_prods = del_res.get("deleted_products", [])
+                            prods_info = f" ({', '.join(del_prods)})" if del_prods else ""
+                            refined_feedback = f"Produk \"{target_del_item}\"{prods_info} ditemukan pada dokumen katalog \"{cat_title}\" dan telah berhasil dihapus dari knowledge base. Dokumen ini tetap utuh."
             except Exception as cat_del_err:
                 logger.debug(f"Catalog delete fallback note: {cat_del_err}")
 
@@ -3318,7 +3499,15 @@ CRITICAL REQUIREMENT FOR THE "summary" FIELD:
                 updated_data["summary"] = new_sum
                 t_label = f" untuk {t_name}" if t_name else ""
                 action_word = "diganti" if old_url else "ditambahkan"
-                updated_data["feedback"] = f"Gambar{t_label} berhasil {action_word} dengan file terlampir yang baru."
+                img_conf = f"Gambar{t_label} berhasil {action_word} dengan file terlampir yang baru."
+                formatted_img_reply = format_chat_response_with_cards(
+                    confirmation=img_conf,
+                    summary=new_sum,
+                    target_product_names=[t_name] if t_name else None,
+                    intro_label="Berikut adalah detail produk yang diperbarui:"
+                )
+                updated_data["feedback"] = formatted_img_reply
+                reply_message = formatted_img_reply
                 if old_url and old_url != new_img and old_url not in all_attached_images:
                     try:
                         from app.services.storage import delete_image_by_ref
@@ -3375,6 +3564,25 @@ CRITICAL REQUIREMENT FOR THE "summary" FIELD:
         # Robust Category validation against database
         raw_cats = updated_data.get("suggested_categories", staged_data.get("suggested_categories", []))
         raw_cats = resolve_matching_categories(raw_cats, db_categories, content_text=actual_summary)
+
+        # Ensure reply_message contains confirmation + product cards ONLY if actual changes occurred
+        # and it's not a negative/not-found result or conversational answer
+        is_negative_reply = any(
+            p in (reply_message or "").lower()
+            for p in ["tidak ditemukan", "tidak ada", "gagal", "tidak berhasil", "tidak terdapat", "maaf", "mohon maaf"]
+        )
+        prev_summary = staged_data.get("summary", "").strip()
+        curr_summary = updated_data.get("summary", "").strip()
+        summary_modified = prev_summary != curr_summary
+
+        if reply_message and summary_modified and not is_negative_reply and not ("### Detail Produk" in reply_message or "## Detail Produk" in reply_message):
+            reply_message = format_chat_response_with_cards(
+                confirmation=reply_message,
+                summary=updated_data.get("summary", ""),
+                intro_label="Berikut adalah daftar produk yang diperbarui:"
+            )
+        updated_data["reply"] = reply_message
+        updated_data["feedback"] = reply_message
 
         # Build updated multi-turn conversation history
         existing_hist = staged_data.get("history", [])
@@ -4248,29 +4456,14 @@ EDITING GUIDELINES:
      * You MUST completely delete that product/section's headings, text, tables, AND all associated markdown image tags `![...](url)` belonging to that product/section.
      * Do NOT retain, move, or dump that deleted product's images under other remaining sections or titles.
      * Keep all other untouched products in their modular `### Detail Produk` blocks with all bullet attributes intact.
-     * ALWAYS prepend a clear change notification at the very top of the summary:
-       > **Ringkasan Perubahan:**
-       > Berhasil menghapus produk yang mengandung "[Bahan]" / "[Nama Produk]":
-       > 1. [Nama Produk 1 Lengkap]
+     * Return pure clean Markdown for the updated document summary. NEVER prepend any change summary headers or callout blocks into the summary text.
 4. **STRICT CATEGORIES RULE**:
    - Update categories ONLY if the content changes topic and matches the "Available System Categories" list below.
    - NEVER invent or create new categories. NEVER output placeholder text like "category_name".
    - If NO category from the list genuinely matches this document, you MUST return an empty array: []!
 5. **PRESERVE UNCHANGED CONTENT**: Keep all other sections, bullet points, and facts from the existing document that were not requested to be changed.
 6. **CLEAN MARKDOWN**: Ensure the output is clean Markdown with headings (`#`, `##`), bullet points, tables, and blank lines before and after images.
-7. **CHANGE SUMMARY & AUDIT CALLOUT (TEST & ADMIN CLARITY RULE)**:
-   - When Admin instructs to change/replace an ingredient, attribute, price, or delete products (e.g. 'Ubah "Hyaluronic Acid" menjadi "Polyglutamic Acid (PGA)"', 'hapus seluruh produk yang mengandung "Betaine"', 'delete produk "Sakura FW New Version"'):
-     * ALWAYS prepend a clear change notification at the very top of the `summary` (before the first `#` heading):
-       For replacements:
-       > **Ringkasan Perubahan:**
-       > Berhasil mengubah "[Nilai Lama]" menjadi "[Nilai Baru]" pada produk berikut:
-       > 1. [Nama Produk 1 Lengkap]
-       > 2. [Nama Produk 2 Lengkap]
-       For deletions:
-       > **Ringkasan Perubahan:**
-       > Berhasil menghapus produk yang mengandung "[Bahan]" / "[Nama Produk]":
-       > 1. [Nama Produk yang Dihapus]
-       (If the requested ingredient or item is completely unrelated and cannot be found or applied, state: `> **Catatan:** Tidak ditemukan produk dengan kandungan "[Nilai Lama]" pada dokumen ini.` at the top).
+7. **FEEDBACK**: Write 1-2 short, polite Indonesian sentences explaining what was changed (e.g. "Produk telah berhasil dihapus dari dokumen.").
 
 Available System Categories from Database:
 {json.dumps(db_categories, ensure_ascii=False)}
@@ -4328,7 +4521,7 @@ CRITICAL REQUIREMENT FOR THE "summary" FIELD:
 
         # Cross-document catalog deletion fallback if item not found in current approved document
         del_name, del_ingr, del_type = extract_product_deletion(request.prompt)
-        if del_type == "name" and del_name and refined_feedback and "tidak ditemukan pada dokumen ini" in refined_feedback:
+        if del_type in ("name", "ingredient") and refined_feedback and "tidak ditemukan pada dokumen ini" in refined_feedback:
             try:
                 matched_cat = await GeneralKnowledgeService.find_all_target_documents_and_item(request.prompt)
                 if matched_cat:
@@ -4338,16 +4531,20 @@ CRITICAL REQUIREMENT FOR THE "summary" FIELD:
                         catalog_doc = other_docs[0]
                         cat_kid = catalog_doc["knowledge_id"]
                         cat_title = catalog_doc.get("title") or catalog_doc.get("file_name") or "Katalog Produk"
+                        target_del_item = del_name if del_type == "name" else del_ingr
                         del_res = await GeneralKnowledgeService.apply_delete(
                             knowledge_id=cat_kid,
-                            target_item=del_name,
+                            target_item=target_del_item,
+                            delete_type=del_type,
                             vector_store=vector_store,
                             bm25_index=bm25,
                             db=None
                         )
                         if del_res.get("success"):
-                            refined_feedback = f"Produk \"{del_name}\" ditemukan pada dokumen katalog \"{cat_title}\" dan telah berhasil dihapus dari knowledge base. Dokumen ini tetap utuh."
-                            logger.info(f"✅ Surgically deleted '{del_name}' from other catalog document '{cat_kid}' ({cat_title}).")
+                            del_prods = del_res.get("deleted_products", [])
+                            prods_info = f" ({', '.join(del_prods)})" if del_prods else ""
+                            refined_feedback = f"Produk \"{target_del_item}\"{prods_info} ditemukan pada dokumen katalog \"{cat_title}\" dan telah berhasil dihapus dari knowledge base. Dokumen ini tetap utuh."
+                            logger.info(f"✅ Surgically deleted '{target_del_item}' from other catalog document '{cat_kid}' ({cat_title}).")
             except Exception as cat_del_err:
                 logger.debug(f"Catalog delete fallback note: {cat_del_err}")
 
@@ -4399,6 +4596,16 @@ CRITICAL REQUIREMENT FOR THE "summary" FIELD:
                     attachment_name=getattr(file_attachment, "filename", None) if "file_attachment" in locals() and file_attachment else None
                 )
                 updated_summary = new_sum
+                t_label = f" untuk {t_name}" if t_name else ""
+                action_word = "diganti" if old_url else "ditambahkan"
+                img_conf = f"Gambar{t_label} berhasil {action_word} dengan file terlampir yang baru."
+                formatted_img_reply = format_chat_response_with_cards(
+                    confirmation=img_conf,
+                    summary=new_sum,
+                    target_product_names=[t_name] if t_name else None,
+                    intro_label="Berikut adalah detail produk yang diperbarui:"
+                )
+                reply_message = formatted_img_reply
                 if old_url and old_url != new_img and old_url not in all_attached_images:
                     try:
                         from app.services.storage import delete_image_by_ref
@@ -4417,7 +4624,7 @@ CRITICAL REQUIREMENT FOR THE "summary" FIELD:
             seen_img_urls_appr.add(u_t)
             return m.group(0)
         updated_summary = re.sub(r'!\[([^\]]*)\]\(([^\)]+)\)', _dedup_img_tag_appr, updated_summary)
-        updated_summary = re.sub(r'\n{3,}', '\n\n', updated_summary).strip()
+        updated_summary = strip_callout_banners(re.sub(r'\n{3,}', '\n\n', updated_summary).strip())
 
         # Dynamically synchronize image_urls from the updated summary (Single Source of Truth)
         # Any image of a deleted product/section or deleted image will naturally not be in the summary and thus cleanly excluded.
@@ -4499,6 +4706,21 @@ CRITICAL REQUIREMENT FOR THE "summary" FIELD:
                 "content": prompt_text,
                 "created_at": datetime.now(timezone.utc).isoformat()
             })
+        is_negative_reply = any(
+            p in (reply_message or "").lower()
+            for p in ["tidak ditemukan", "tidak ada", "gagal", "tidak berhasil", "tidak terdapat", "maaf", "mohon maaf"]
+        )
+        prev_summary = (existing_doc.get("summary", "") if isinstance(existing_doc, dict) else "").strip()
+        curr_summary = updated_summary.strip()
+        summary_modified = prev_summary != curr_summary
+
+        if reply_message and summary_modified and not is_negative_reply and not ("### Detail Produk" in reply_message or "## Detail Produk" in reply_message):
+            reply_message = format_chat_response_with_cards(
+                confirmation=reply_message,
+                summary=updated_summary,
+                intro_label="Berikut adalah daftar produk yang diperbarui:"
+            )
+
         if reply_message:
             new_edit_hist.append({
                 "role": "assistant",
@@ -5879,6 +6101,71 @@ async def query_general_endpoint(
                                 )
 
         # -------------------------------------------------------------
+        # PHASE 1.5: Clarification Follow-Up Interceptor
+        # -------------------------------------------------------------
+        # If the preceding assistant turn prompted the user to clarify multiple ambiguous documents:
+        # e.g.: "Silakan sebutkan ID dokumen/nama file mana yang ingin diubah/dihapus, atau tambahkan frasa 'di seluruh KB'..."
+        # and the user now answers with "di seluruh KB", "semua", an option number ("1", "nomor 2"), or a document name/UUID:
+        last_asst_msg = None
+        prev_user_cmd = None
+        if request.history and isinstance(request.history, list):
+            for msg in reversed(request.history):
+                if not isinstance(msg, dict):
+                    continue
+                role = str(msg.get("role") or "").lower()
+                content = str(msg.get("content") or "").strip()
+                if role == "assistant" and not last_asst_msg:
+                    last_asst_msg = content
+                elif role in ("user", "admin") and last_asst_msg and not prev_user_cmd:
+                    prev_user_cmd = content
+                    break
+
+        if last_asst_msg and prev_user_cmd:
+            last_asst_low = last_asst_msg.lower()
+            is_clarification_response = (
+                ("knowledge base dengan target" in last_asst_low or "ditemukan" in last_asst_low)
+                and ("di seluruh kb" in last_asst_low or "id dokumen" in last_asst_low or "nama file mana" in last_asst_low)
+            )
+            if is_clarification_response:
+                clean_ans = clean_user_prompt.strip().lower()
+                is_all_scope = bool(re.search(r'\b(?:di\s+seluruh|seluruh|semua|all|di\s+semua|semuanya)\b', clean_ans))
+                
+                # Extract options listed in assistant message:
+                # E.g. "1. [d60efdf1-...](url) — *Katalog Produk ERHA Acneact*"
+                option_matches = re.findall(r'(?:(\d+)\.\s*)?\[([0-9a-fA-F\-]{36})\]\([^\)]+\)\s*—\s*\*?([^\*\n\r]+)\*?', last_asst_msg)
+                
+                chosen_doc_id = None
+                chosen_doc_title = None
+
+                # Check if user picked by number (e.g. "1", "nomor 2", "opsi 1")
+                idx_m = re.search(r'\b(?:nomor|no|opsi|dokumen|pilihan)?\s*(\d+)\b', clean_ans)
+                if idx_m and option_matches:
+                    opt_idx = int(idx_m.group(1)) - 1
+                    if 0 <= opt_idx < len(option_matches):
+                        chosen_doc_id = option_matches[opt_idx][1]
+                        chosen_doc_title = option_matches[opt_idx][2].strip()
+                
+                if not chosen_doc_id and option_matches:
+                    for num, opt_id, opt_title in option_matches:
+                        opt_id_low = opt_id.lower()
+                        opt_title_low = opt_title.lower().strip()
+                        if opt_id_low in clean_ans or (len(opt_title_low) > 3 and opt_title_low in clean_ans):
+                            chosen_doc_id = opt_id
+                            chosen_doc_title = opt_title.strip()
+                            break
+
+                if is_all_scope:
+                    effective_prompt = f"{prev_user_cmd} di seluruh KB"
+                    clean_user_prompt = effective_prompt.lower()
+                    user_prompt = effective_prompt
+                    logger.info(f"🔗 [Clarification Follow-Up] User specified ALL documents -> effective_prompt: '{effective_prompt}'")
+                elif chosen_doc_id:
+                    effective_prompt = f"{prev_user_cmd} pada dokumen {chosen_doc_id}"
+                    clean_user_prompt = effective_prompt.lower()
+                    user_prompt = effective_prompt
+                    logger.info(f"🔗 [Clarification Follow-Up] User selected doc '{chosen_doc_id}' -> effective_prompt: '{effective_prompt}'")
+
+        # -------------------------------------------------------------
         # PHASE 2: Operation Intent Classifier (EDIT / DELETE Intent Detection)
         # -------------------------------------------------------------
         # Explicit action verbs for DELETE & EDIT
@@ -5920,8 +6207,9 @@ async def query_general_endpoint(
                     if unit_m:
                         new_val = unit_m.group(0).strip()
                 if new_val:
-                    # Strip trailing scope modifiers: e.g. "pada semua produk", "di semua produk", "di kb"
-                    new_val = re.sub(r'\s+(?:pada|di|dalam|untuk|bagi)\s+(?:semua|seluruh|setiap)?\s*(?:produk|item|dokumen|kb|knowledge|data)?$', '', new_val, flags=re.IGNORECASE).strip()
+                    # Strip trailing scope modifiers: e.g. "pada semua produk", "di semua produk", "di kb", "pada dokumen <uuid>"
+                    new_val = re.sub(r'\s+pada\s+dokumen\s+[0-9a-fA-F\-]+$', '', new_val, flags=re.IGNORECASE).strip()
+                    new_val = re.sub(r'\s+(?:pada|di|dalam|untuk|bagi)\s+(?:semua|seluruh|setiap)?\s*(?:produk|item|dokumen|kb|knowledge|data|semuanya)?$', '', new_val, flags=re.IGNORECASE).strip()
                     new_val = re.sub(r'[\s,\.]+(?:ya|dong|tolong|mohon|terima\s*kasih|thanks)$', '', new_val, flags=re.IGNORECASE).strip()
                     new_val = re.sub(r'^[`"\'“]+|[`"\'”]+$', '', new_val).strip()
                 else:
@@ -5951,12 +6239,55 @@ async def query_general_endpoint(
                     if field:
                         break
 
+                clean_target_item = (target_item or "").lower().strip()
                 if not field:
                     field_match = re.search(r'\b(?:ubah|ganti|edit|tukar|salin|update|perbarui|revisi)\s+([a-zA-Z_0-9\s]+?)(?:\s+produk|\s+item|\s+ke|\s+menjadi|\s+sebagai|\b)', clean_user_prompt)
                     if field_match:
                         candidate_field = field_match.group(1).lower().strip()
-                        if candidate_field not in ("data", "informasi", "dokumen", "item", "produk", "ke", "menjadi", "sebagai"):
+                        if candidate_field not in ("data", "informasi", "dokumen", "item", "produk", "ke", "menjadi", "sebagai") and candidate_field != clean_target_item and clean_target_item not in candidate_field:
                             field = candidate_field
+
+                # Inspect matched docs to detect attribute from bullet points (e.g. Kandungan Utama: ... Hyaluronic Acid)
+                # ONLY run this if field was not explicitly extracted from user prompt
+                detected_attr = None
+                if target_item and (not field or field in ("summary", "text", "konten")):
+                    for d in matched_docs:
+                        d_sum = (d.get("doc_data") or {}).get("summary") or d.get("summary") or ""
+                        bullet_m = re.search(
+                            r'-\s*\*\*([^\*\n:]+)\*\*\s*:\s*[^\n]*?\b' + re.escape(target_item.strip()) + r'\b',
+                            d_sum,
+                            re.IGNORECASE
+                        )
+                        if not bullet_m:
+                            bullet_m = re.search(
+                                r'-\s*\*\*([^\*\n:]+)\*\*\s*:\s*[^\n]*?' + re.escape(target_item.strip()),
+                                d_sum,
+                                re.IGNORECASE
+                            )
+                        if bullet_m:
+                            raw_attr = bullet_m.group(1).strip()
+                            raw_attr_lower = raw_attr.lower()
+                            if any(k in raw_attr_lower for k in ("kandungan", "bahan", "ingredient", "komposisi")):
+                                field = "kandungan"
+                                detected_attr = "Kandungan"
+                            elif any(k in raw_attr_lower for k in ("kategori", "category")):
+                                field = "kategori"
+                                detected_attr = "Kategori"
+                            elif any(k in raw_attr_lower for k in ("harga", "tarif", "biaya", "price")):
+                                field = "harga"
+                                detected_attr = "Harga"
+                            elif any(k in raw_attr_lower for k in ("ukuran", "size", "netto", "volume", "berat")):
+                                field = "ukuran"
+                                detected_attr = "Ukuran"
+                            elif any(k in raw_attr_lower for k in ("sku", "kode")):
+                                field = "sku"
+                                detected_attr = "SKU"
+                            elif any(k in raw_attr_lower for k in ("nama", "produk")):
+                                field = "nama"
+                                detected_attr = "Nama Produk"
+                            else:
+                                detected_attr = raw_attr
+                            break
 
                 if not field:
                     field = "summary"
@@ -5975,11 +6306,11 @@ async def query_general_endpoint(
                     "usage_instruction": "Instruksi Penggunaan",
                     "periode": "Periode Promo / Masa Berlaku",
                     "brand": "Brand",
-                    "kandungan": "Kandungan / Key Ingredients",
+                    "kandungan": "Kandungan",
                     "summary": "Ringkasan Dokumen"
                 }
-                field_display = field_display_names.get(field.lower(), field.capitalize())
-                scope = GeneralKnowledgeService.detect_mutation_scope(user_prompt)
+                field_display = detected_attr or field_display_names.get(field.lower(), field.capitalize())
+                scope = GeneralKnowledgeService.detect_mutation_scope(user_prompt) if GeneralKnowledgeService.detect_mutation_scope(user_prompt) == "GLOBAL" else GeneralKnowledgeService.detect_mutation_scope(effective_prompt)
 
                 explicit_doc_ref = False
                 uuid_matches = re.findall(r'[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}', user_prompt)
@@ -5987,7 +6318,6 @@ async def query_general_endpoint(
                     explicit_doc_ref = True
                     matched_docs = [d for d in matched_docs if d["knowledge_id"].lower() == uuid_matches[0].lower()]
 
-                clean_target_item = (target_item or "").lower()
                 if not explicit_doc_ref:
                     for d in list(matched_docs):
                         dt = (d.get("title") or "").lower()
@@ -6058,15 +6388,39 @@ async def query_general_endpoint(
 
                     any_succ = any(r.get("success") for r in edit_results)
                     if any_succ:
-                        if len(matched_docs) > 1:
-                            succ_msg = f"Perubahan pada '{target_item}' ({field_display}: {new_val}) berhasil diterapkan pada {len(matched_docs)} dokumen knowledge base. Knowledge base telah diperbarui."
+                        attr_label = detected_attr or (field_display if field and field not in ("summary", "text", "konten") else "")
+                        if attr_label:
+                            if len(matched_docs) > 1:
+                                succ_msg = f"{attr_label} '{target_item}' berhasil diubah menjadi '{new_val}' pada {len(matched_docs)} dokumen knowledge base. Knowledge base telah diperbarui."
+                            else:
+                                succ_msg = f"{attr_label} '{target_item}' berhasil diubah menjadi '{new_val}' pada dokumen **{doc_title}**. Knowledge base telah diperbarui."
                         else:
-                            succ_msg = f"Perubahan pada '{target_item}' ({field_display}: {new_val}) berhasil diterapkan pada dokumen **{doc_title}**. Knowledge base telah diperbarui."
+                            if len(matched_docs) > 1:
+                                succ_msg = f"Perubahan '{target_item}' menjadi '{new_val}' berhasil diterapkan pada {len(matched_docs)} dokumen knowledge base. Knowledge base telah diperbarui."
+                            else:
+                                succ_msg = f"Perubahan '{target_item}' menjadi '{new_val}' berhasil diterapkan pada dokumen **{doc_title}**. Knowledge base telah diperbarui."
+
+                        updated_doc_summaries = [r.get("summary", "") for r in edit_results if r.get("summary")]
+                        combined_summary = "\n\n".join(updated_doc_summaries) if updated_doc_summaries else ""
+                        
+                        target_names_for_cards = []
+                        if target_item:
+                            target_names_for_cards.append(target_item)
+                        if field in ("nama", "nama_produk", "title") and new_val:
+                            target_names_for_cards.append(new_val)
+
+                        formatted_ans = format_chat_response_with_cards(
+                            confirmation=succ_msg,
+                            summary=combined_summary,
+                            target_product_names=target_names_for_cards if target_names_for_cards else None,
+                            intro_label="Berikut adalah detail produk yang diperbarui:"
+                        )
+
                         return QueryGeneralResponse(
                             type="answer",
-                            message=succ_msg,
+                            message=formatted_ans,
                             prompt=user_prompt,
-                            answer=succ_msg,
+                            answer=formatted_ans,
                             action="edit_applied",
                             target_knowledge_id=target_kid,
                             total_found=len(matched_docs),
@@ -6099,8 +6453,14 @@ async def query_general_endpoint(
                 )
 
         elif is_delete_cmd:
+            del_name, del_ingr, del_type = extract_product_deletion(user_prompt)
+            if not del_type:
+                del_name, del_ingr, del_type = extract_product_deletion(effective_prompt)
+
+            search_query = del_ingr or del_name or user_prompt
             matched_res = (
-                await GeneralKnowledgeService.find_all_target_documents_and_item(user_prompt)
+                await GeneralKnowledgeService.find_all_target_documents_and_item(search_query)
+                or await GeneralKnowledgeService.find_all_target_documents_and_item(user_prompt)
                 or await GeneralKnowledgeService.find_all_target_documents_and_item(effective_prompt)
             )
 
@@ -6113,7 +6473,7 @@ async def query_general_endpoint(
                 batch_id = top_doc.get("batch_id")
                 context_label = doc_data.get("_matched_context_label") or target_item or doc_title
 
-                scope = GeneralKnowledgeService.detect_mutation_scope(user_prompt)
+                scope = GeneralKnowledgeService.detect_mutation_scope(user_prompt) if GeneralKnowledgeService.detect_mutation_scope(user_prompt) == "GLOBAL" else GeneralKnowledgeService.detect_mutation_scope(effective_prompt)
 
                 explicit_doc_ref = False
                 uuid_matches = re.findall(r'[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}', user_prompt)
@@ -6177,10 +6537,11 @@ async def query_general_endpoint(
                 async with AsyncSessionLocal() as db_session:
                     for d in matched_docs:
                         d_kid = d["knowledge_id"]
-                        d_target = d.get("target_item") or target_item
+                        d_target = del_ingr if del_type == "ingredient" else (del_name if del_type == "name" else (d.get("target_item") or target_item))
                         r_del = await GeneralKnowledgeService.apply_delete(
                             knowledge_id=d_kid,
                             target_item=d_target,
+                            delete_type=del_type,
                             vector_store=target_vs,
                             bm25_index=target_bm25,
                             db=db_session
@@ -6189,17 +6550,46 @@ async def query_general_endpoint(
 
                 any_succ = any(r.get("success") for r in del_results)
                 if any_succ:
-                    if len(matched_docs) > 1:
-                        doc_names = ", ".join([d.get("title") or d.get("file_name") or d["knowledge_id"] for d in matched_docs])
-                        succ_msg = f"Produk/kandungan \"{target_item}\" telah berhasil dihapus dari {len(matched_docs)} dokumen knowledge base ({doc_names}). Knowledge base telah diperbarui."
+                    all_deleted_products = []
+                    for r in del_results:
+                        for p in r.get("deleted_products", []):
+                            if p not in all_deleted_products:
+                                all_deleted_products.append(p)
+
+                    prods_str = f" ({', '.join(all_deleted_products)})" if all_deleted_products else ""
+
+                    if del_type == "ingredient":
+                        target_disp = del_ingr or target_item
+                        if len(matched_docs) > 1:
+                            succ_msg = f"Seluruh produk yang mengandung \"{target_disp}\"{prods_str} telah berhasil dihapus dari {len(matched_docs)} dokumen knowledge base. Knowledge base telah diperbarui."
+                        else:
+                            succ_msg = f"Seluruh produk yang mengandung \"{target_disp}\"{prods_str} telah berhasil dihapus dari dokumen **{doc_title}**. Knowledge base telah diperbarui."
+                    elif del_type == "name":
+                        target_name_disp = del_name or target_item
+                        if len(matched_docs) > 1:
+                            succ_msg = f"Produk \"{target_name_disp}\"{prods_str} telah berhasil dihapus dari {len(matched_docs)} dokumen knowledge base. Knowledge base telah diperbarui."
+                        else:
+                            succ_msg = f"Produk \"{target_name_disp}\"{prods_str} telah berhasil dihapus dari dokumen **{doc_title}**. Knowledge base telah diperbarui."
                     else:
-                        succ_msg = f"Produk \"{target_item}\" telah berhasil dihapus dari dokumen **{doc_title}**. Knowledge base telah diperbarui."
+                        if len(matched_docs) > 1:
+                            doc_names = ", ".join([d.get("title") or d.get("file_name") or d["knowledge_id"] for d in matched_docs])
+                            succ_msg = f"\"{target_item}\"{prods_str} telah berhasil dihapus dari {len(matched_docs)} dokumen knowledge base ({doc_names}). Knowledge base telah diperbarui."
+                        else:
+                            succ_msg = f"\"{target_item}\"{prods_str} telah berhasil dihapus dari dokumen **{doc_title}**. Knowledge base telah diperbarui."
+
+                    updated_doc_summaries = [r.get("summary", "") for r in del_results if r.get("summary")]
+                    combined_summary = "\n\n".join(updated_doc_summaries) if updated_doc_summaries else ""
+                    formatted_ans = format_chat_response_with_cards(
+                        confirmation=succ_msg,
+                        summary=combined_summary,
+                        intro_label="Berikut adalah daftar produk yang diperbarui:"
+                    )
 
                     return QueryGeneralResponse(
                         type="answer",
-                        message=succ_msg,
+                        message=formatted_ans,
                         prompt=user_prompt,
-                        answer=succ_msg,
+                        answer=formatted_ans,
                         action="delete_applied",
                         target_knowledge_id=target_kid,
                         total_found=len(matched_docs),
