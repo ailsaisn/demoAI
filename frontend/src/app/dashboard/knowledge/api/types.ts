@@ -76,13 +76,18 @@ export interface KnowledgeResponse {
 	ai_summary?: string | null;
 	ai_confidence?: number | null;
 	uploaded_by: string; // UUID
+	uploaded_by_name?: string | null;
 	approved_by?: string | null; // UUID
+	approved_at?: string | null;
 	project_id?: string | null; // UUID
 	metadata?: {
 		visibility_settings?: VisibilitySettings;
 		categories?: string[];
 		suggested_categories?: Array<{ id?: string | null; name: string }>;
 		chunks?: KnowledgeChunkItem[];
+		batch_id?: string;
+		upload_batch_id?: string;
+		batch_summary?: string;
 		[key: string]: unknown;
 	} | null;
 	created_at: string;

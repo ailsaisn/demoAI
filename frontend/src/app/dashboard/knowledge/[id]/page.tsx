@@ -115,10 +115,25 @@ export default function KnowledgeDetailPage({ params }: { params: Promise<{ id: 
 					>
 						<RiArrowLeftLine className="size-5" />
 					</Button>
-					<div className="flex-1 min-w-0 max-w-xl">
+					<div className="flex items-center gap-3 flex-1 min-w-0 max-w-xl">
 						<h1 className="text-base font-semibold text-zinc-900 truncate" title={formatDisplayTitle(isEditMode ? (pendingTitle || data?.title) : data?.title)}>
 							{formatDisplayTitle(isEditMode ? (pendingTitle || data?.title) : data?.title)}
 						</h1>
+						{data?.status === "APPROVED" && data?.approved_at && (
+							<div className="flex items-center gap-1.5 text-xs text-zinc-500 bg-gray-50 border border-gray-200 px-2.5 py-1 rounded-md shrink-0">
+								<span>Approved at:</span>
+								<span className="font-medium text-zinc-800">
+									{new Date(data.approved_at).toLocaleDateString("id-ID", {
+										day: "2-digit",
+										month: "short",
+										year: "numeric",
+										hour: "2-digit",
+										minute: "2-digit",
+									})}{" "}
+									WIB
+								</span>
+							</div>
+						)}
 					</div>
 				</div>
 
@@ -145,7 +160,7 @@ export default function KnowledgeDetailPage({ params }: { params: Promise<{ id: 
 							{data?.status === "REJECTED" ? "Delete Record" : "Delete Knowledge"}
 						</Button>
 					)}
-					{hasWriteAccess && data?.status === "APPROVED" && (
+					{hasWriteAccess && (data?.status === "APPROVED" || data?.status === "PENDING") && (
 						<div className="flex items-center gap-2">
 							{isEditMode && (
 								<Button
