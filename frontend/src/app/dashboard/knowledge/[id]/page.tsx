@@ -3,7 +3,7 @@
 import { ChatPreview } from "@/app/dashboard/knowledge/components/preview/chat-preview";
 import { ConfirmationModal } from "@/components/shared/confirmation-modal";
 import { Button } from "@/components/ui/button";
-import { RiArrowLeftLine, RiDeleteBin7Line, RiEdit2Line, RiCheckLine, RiStopCircleLine } from "@remixicon/react";
+import { RiArrowLeftLine, RiDeleteBin7Line, RiEdit2Line, RiCheckLine, RiStopCircleLine, RiAlertLine } from "@remixicon/react";
 
 import { use, useState, useEffect } from "react";
 import { useDeleteKnowledge, useKnowledgeDetail, useEditKnowledge } from "../hooks/use-knowledge";
@@ -94,8 +94,25 @@ export default function KnowledgeDetailPage({ params }: { params: Promise<{ id: 
 
 	if (error) {
 		return (
-			<div className="flex items-center justify-center h-full text-red-500">
-				Error loading document details
+			<div className="flex flex-col items-center justify-center h-full gap-4 p-6 text-center">
+				<div className="p-3 bg-red-50 text-red-600 rounded-full">
+					<RiAlertLine className="size-8" />
+				</div>
+				<div>
+					<h3 className="text-base font-semibold text-zinc-900">Gagal Memuat Dokumen</h3>
+					<p className="text-sm text-zinc-500 mt-1 max-w-md">
+						Dokumen mungkin telah dihapus, ID tidak valid, atau sesi login Anda telah berakhir.
+					</p>
+				</div>
+				<Button
+					variant="outline"
+					size="sm"
+					onClick={handleBack}
+					className="rounded-lg text-zinc-700"
+				>
+					<RiArrowLeftLine className="size-4 mr-1.5" />
+					Kembali ke Daftar Knowledge
+				</Button>
 			</div>
 		);
 	}

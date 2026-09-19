@@ -820,14 +820,23 @@ async def get_knowledge(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(RequireAccess("knowledge:read"))
 ):
-    # 1. Try fetching from DB
-    stmt = select(Knowledge).where(Knowledge.id == knowledge_id)
+    # 1. Try fetching from DB with user name joined
+    stmt = (
+        select(Knowledge, User.name)
+        .outerjoin(User, Knowledge.uploaded_by == User.id)
+        .where(Knowledge.id == knowledge_id)
+    )
     result = await db.execute(stmt)
-    knowledge = result.scalar_one_or_none()
+    row = result.first()
     
-    if knowledge:
+    if row:
+        knowledge, uploader_name = row
         if knowledge.deleted_at is not None:
             raise HTTPException(status_code=404, detail="Knowledge document not found")
+            
+        created_at_dt = knowledge.created_at
+        updated_at_dt = knowledge.updated_at or created_at_dt
+
         # OUT-OF-BAND SYNC: Fetch latest AI summary & metadata from RAG JSON files
         try:
             target_file = resolve_pending_file(str(knowledge_id)) or resolve_approved_file(str(knowledge_id))
@@ -844,9 +853,6 @@ async def get_knowledge(
                 if latest_title and knowledge.title != latest_title:
                     knowledge.title = latest_title
                     updated = True
-                if updated:
-                    await db.commit()
-                    await db.refresh(knowledge)
                 
                 if isinstance(data, dict):
                     merged_meta = dict(knowledge.metadata_) if isinstance(knowledge.metadata_, dict) else {}
@@ -882,17 +888,43 @@ async def get_knowledge(
                     if "suggested_categories" in merged_meta:
                         merged_meta["suggested_categories"] = await sanitize_knowledge_categories(db, merged_meta.get("suggested_categories"))
                     knowledge.metadata_ = merged_meta
+                
+                if updated:
+                    await db.commit()
+                    await db.refresh(knowledge)
+                    updated_at_dt = knowledge.updated_at or updated_at_dt
         except Exception as e:
             logger.warning(f"Error loading RAG JSON: {e}")
-            
-        uploader_name = None
-        if knowledge.uploaded_by:
-            u_stmt = select(User.name).where(User.id == knowledge.uploaded_by)
-            u_res = await db.execute(u_stmt)
-            uploader_name = u_res.scalar_one_or_none()
-        setattr(knowledge, "uploaded_by_name", uploader_name or "Admin")
-        setattr(knowledge, "approved_at", knowledge.updated_at if knowledge.status == KnowledgeStatus.APPROVED else None)
-        return knowledge
+
+        approved_at_dt = None
+        if knowledge.status == KnowledgeStatus.APPROVED:
+            approved_at_dt = updated_at_dt
+            if not approved_at_dt and isinstance(knowledge.metadata_, dict):
+                raw_app = knowledge.metadata_.get("approved_at")
+                if raw_app:
+                    approved_at_dt = parse_date_safely(raw_app)
+
+        return KnowledgeResponse(
+            id=knowledge.id,
+            title=knowledge.title,
+            content=knowledge.content,
+            file_name=knowledge.file_name,
+            original_path=knowledge.original_path,
+            mime_type=knowledge.mime_type,
+            file_size=knowledge.file_size,
+            type=knowledge.type,
+            status=knowledge.status,
+            ai_summary=knowledge.ai_summary,
+            ai_confidence=float(knowledge.ai_confidence) if knowledge.ai_confidence is not None else None,
+            uploaded_by=knowledge.uploaded_by,
+            uploaded_by_name=uploader_name or "Admin",
+            approved_by=knowledge.approved_by,
+            approved_at=approved_at_dt,
+            project_id=knowledge.project_id,
+            metadata_=knowledge.metadata_ if isinstance(knowledge.metadata_, dict) else {},
+            created_at=created_at_dt,
+            updated_at=updated_at_dt
+        )
 
     # 2. Fallback check in RAG staging files (data/pending or data/output)
     # Ensure ID is not soft-deleted
