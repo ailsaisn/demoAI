@@ -513,10 +513,11 @@ async def create_chat_session(
     stmt_config = select(AppConfig.value).where(AppConfig.key == "TIME_LIMIT_PER_SESSION")
     result_config = await db.execute(stmt_config)
     time_limit_str = result_config.scalar_one_or_none()
+    default_idle_timeout = int(os.environ.get("CHAT_SESSION_IDLE_TIMEOUT_MINUTES", "30"))
     try:
-        time_limit_minutes = int(time_limit_str) if time_limit_str else 5
+        time_limit_minutes = int(time_limit_str) if time_limit_str else default_idle_timeout
     except ValueError:
-        time_limit_minutes = 5
+        time_limit_minutes = default_idle_timeout
 
     # Look for existing active session
     stmt_active = select(ChatSession).where(
@@ -682,8 +683,8 @@ async def create_chat_message(
     # Enforce time limit
     stmt_config = select(AppConfig.value).where(AppConfig.key == "TIME_LIMIT_PER_SESSION")
     result_config = await db.execute(stmt_config)
-    time_limit_str = result_config.scalar_one_or_none()
-    time_limit_minutes = int(time_limit_str) if time_limit_str and time_limit_str.isdigit() else 5
+    default_idle_timeout = int(os.environ.get("CHAT_SESSION_IDLE_TIMEOUT_MINUTES", "30"))
+    time_limit_minutes = int(time_limit_str) if time_limit_str and time_limit_str.isdigit() else default_idle_timeout
 
     now = datetime.now(timezone.utc)
     session_updated_at = chat_session.updated_at.replace(tzinfo=timezone.utc) if chat_session.updated_at.tzinfo is None else chat_session.updated_at
@@ -957,8 +958,8 @@ async def stream_chat_message(
     # Enforce time limit
     stmt_config = select(AppConfig.value).where(AppConfig.key == "TIME_LIMIT_PER_SESSION")
     result_config = await db.execute(stmt_config)
-    time_limit_str = result_config.scalar_one_or_none()
-    time_limit_minutes = int(time_limit_str) if time_limit_str and time_limit_str.isdigit() else 5
+    default_idle_timeout = int(os.environ.get("CHAT_SESSION_IDLE_TIMEOUT_MINUTES", "30"))
+    time_limit_minutes = int(time_limit_str) if time_limit_str and time_limit_str.isdigit() else default_idle_timeout
 
     now = datetime.now(timezone.utc)
     session_updated_at = chat_session.updated_at.replace(tzinfo=timezone.utc) if chat_session.updated_at.tzinfo is None else chat_session.updated_at

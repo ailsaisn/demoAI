@@ -982,6 +982,21 @@ async def get_knowledge_batch(
     ).order_by(Knowledge.created_at.desc())
     result = await db.execute(stmt)
     docs = list(result.scalars().all())
+
+    # Fallback check if batch_id is in metadata JSON or brief grace sleep for redirect race conditions
+    if not docs:
+        from sqlalchemy import cast, String
+        alt_stmt = select(Knowledge).where(
+            Knowledge.deleted_at.is_(None),
+            cast(Knowledge.metadata_, String).ilike(f"%{batch_id}%")
+        ).order_by(Knowledge.created_at.desc())
+        alt_result = await db.execute(alt_stmt)
+        docs = list(alt_result.scalars().all())
+
+        if not docs:
+            await asyncio.sleep(0.35)
+            retry_result = await db.execute(stmt)
+            docs = list(retry_result.scalars().all())
     
     # Query soft-deleted IDs for this batch so they are never resurrected by directory scanning
     del_stmt = select(Knowledge.id).where(
@@ -997,8 +1012,17 @@ async def get_knowledge_batch(
     enriched_docs = []
     seen_ids = set(deleted_ids)
 
+    user_ids = {k.uploaded_by for k in docs if getattr(k, "uploaded_by", None)}
+    user_name_map = {}
+    if user_ids:
+        user_stmt = select(User.id, User.name).where(User.id.in_(user_ids))
+        user_res = await db.execute(user_stmt)
+        user_name_map = {row[0]: row[1] for row in user_res.all()}
+
     for knowledge in docs:
         seen_ids.add(str(knowledge.id))
+        uploader_name = user_name_map.get(knowledge.uploaded_by) or "Admin"
+        appr_at = knowledge.updated_at if knowledge.status == KnowledgeStatus.APPROVED else None
         try:
             target_file = resolve_pending_file(str(knowledge.id)) or resolve_approved_file(str(knowledge.id))
             if target_file and os.path.exists(target_file):
@@ -1009,6 +1033,8 @@ async def get_knowledge_batch(
                     knowledge.ai_summary = latest_summary
                 
                 knowledge_dict = KnowledgeResponse.model_validate(knowledge).model_dump(by_alias=False)
+                knowledge_dict["uploaded_by_name"] = uploader_name
+                knowledge_dict["approved_at"] = appr_at
                 # Merge existing DB metadata with JSON data, JSON takes precedence for RAG fields
                 db_meta = knowledge_dict.get("metadata_") or {}
                 merged_meta = {**db_meta, **data}
@@ -1024,8 +1050,12 @@ async def get_knowledge_batch(
                     knowledge_dict["status"] = new_status
                 enriched_docs.append(knowledge_dict)
             else:
+                setattr(knowledge, "uploaded_by_name", uploader_name)
+                setattr(knowledge, "approved_at", appr_at)
                 enriched_docs.append(knowledge)
         except Exception:
+            setattr(knowledge, "uploaded_by_name", uploader_name)
+            setattr(knowledge, "approved_at", appr_at)
             enriched_docs.append(knowledge)
             
     # Also scan data/pending and data/output for any staged JSON files matching this batch
@@ -1084,7 +1114,9 @@ async def get_knowledge_batch(
                                         ai_summary=summary,
                                         ai_confidence=95.0,
                                         uploaded_by=current_user.id,
+                                        uploaded_by_name=current_user.name or "Admin",
                                         approved_by=None,
+                                        approved_at=now if doc_status == KnowledgeStatus.APPROVED else None,
                                         metadata_=data,
                                         created_at=now,
                                         updated_at=now
@@ -1217,6 +1249,7 @@ async def approve_batch_knowledge(
     # Sync DB statuses for all matched documents
     from sqlalchemy.orm.attributes import flag_modified
     approved_ids = res.get("approved_ids", []) if isinstance(res, dict) else []
+    now_utc = datetime.now(timezone.utc)
     for aid in approved_ids:
         try:
             aid_uuid = uuid.UUID(aid)
@@ -1226,6 +1259,10 @@ async def approve_batch_knowledge(
             if doc_u:
                 doc_u.status = KnowledgeStatus.APPROVED
                 doc_u.approved_by = current_user.id
+                doc_u.updated_at = now_utc
+                if doc_u.metadata_ is None:
+                    doc_u.metadata_ = {}
+                doc_u.metadata_["approved_at"] = now_utc.isoformat()
                 
                 # Sync finalized summary, content, and title from approved output
                 a_file = resolve_approved_file(aid)
@@ -1250,20 +1287,22 @@ async def approve_batch_knowledge(
                         doc_u.metadata_ = {}
                     doc_u.metadata_["history"] = doc_histories[aid]
                     doc_u.metadata_["chat_history"] = doc_histories[aid]
-                    flag_modified(doc_u, "metadata_")
+                flag_modified(doc_u, "metadata_")
         except Exception:
             pass
 
     for doc in db_docs:
         doc.status = KnowledgeStatus.APPROVED
         doc.approved_by = current_user.id
+        doc.updated_at = now_utc
+        if doc.metadata_ is None:
+            doc.metadata_ = {}
+        doc.metadata_["approved_at"] = now_utc.isoformat()
         doc_str_id = str(doc.id)
         if doc_str_id in doc_histories:
-            if doc.metadata_ is None:
-                doc.metadata_ = {}
             doc.metadata_["history"] = doc_histories[doc_str_id]
             doc.metadata_["chat_history"] = doc_histories[doc_str_id]
-            flag_modified(doc, "metadata_")
+        flag_modified(doc, "metadata_")
 
     await db.commit()
     return res
@@ -1819,8 +1858,13 @@ async def approve_knowledge(
     result = await db.execute(stmt)
     k_entry = result.scalar_one_or_none()
     if k_entry:
+        now_utc = datetime.now(timezone.utc)
         k_entry.status = KnowledgeStatus.APPROVED
         k_entry.approved_by = current_user.id
+        k_entry.updated_at = now_utc
+        if k_entry.metadata_ is None:
+            k_entry.metadata_ = {}
+        k_entry.metadata_["approved_at"] = now_utc.isoformat()
         
         # Read the newly approved document to sync finalized summary, content, and title to DB
         a_file = resolve_approved_file(str(knowledge_id))
@@ -2007,6 +2051,10 @@ async def edit_knowledge(
             final_sum = (res.get("summary") if isinstance(res, dict) and res.get("summary") else payload.summary) or k_entry.ai_summary
             k_entry.ai_summary = final_sum
             k_entry.content = final_sum
+            k_entry.ai_confidence = 1.0
+            if k_entry.metadata_ is None:
+                k_entry.metadata_ = {}
+            k_entry.metadata_["is_manually_edited"] = True
 
         k_entry.type = KnowledgeType.GENERAL
             

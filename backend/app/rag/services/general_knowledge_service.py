@@ -135,6 +135,34 @@ def resolve_approved_file(knowledge_id: str, output_dir: str = "data/output") ->
     except Exception as db_e:
         logger.debug(f"[DedicatedService] DB hydration fallback note: {db_e}")
 
+def resolve_pending_file(knowledge_id: str, pending_dir: str = "data/pending") -> Optional[str]:
+    """Resolves physical JSON file path for a pending/staging document."""
+    if not knowledge_id:
+        return None
+    k_id = str(knowledge_id).strip()
+    candidate_dirs = [pending_dir, os.path.join("backend", pending_dir)]
+    for p_dir in candidate_dirs:
+        if not os.path.exists(p_dir):
+            continue
+        clean_p = os.path.join(p_dir, f"{k_id}.json")
+        if os.path.exists(clean_p) and os.path.isfile(clean_p):
+            return clean_p
+        parsed_p = os.path.join(p_dir, f"{k_id}_parsed.json")
+        if os.path.exists(parsed_p) and os.path.isfile(parsed_p):
+            return parsed_p
+        for f in os.listdir(p_dir):
+            if f.endswith(".json"):
+                full_p = os.path.join(p_dir, f)
+                name_no_ext = f[:-5]
+                if f.startswith(k_id) or name_no_ext == k_id or name_no_ext.replace("_parsed", "") == k_id:
+                    return full_p
+                try:
+                    with open(full_p, "r", encoding="utf-8") as fp:
+                        data = json.load(fp)
+                    if isinstance(data, dict) and (data.get("knowledge_id") == k_id or data.get("file_name") == k_id):
+                        return full_p
+                except Exception:
+                    pass
     return None
 
 
@@ -1664,9 +1692,9 @@ status       : {status}
             raw_item_clean = re.sub(r'^\*+|\*+$|^_+|_+$|^#+\s*', '', target_item.strip()).strip()
             target_item_clean = raw_item_clean
             target_item_lower = target_item_clean.lower()
-            approved_file = resolve_approved_file(knowledge_id)
+            approved_file = resolve_approved_file(knowledge_id) or resolve_pending_file(knowledge_id)
             if not approved_file:
-                return {"success": False, "error": f"Dokumen dengan ID '{knowledge_id}' tidak ditemukan di approved KB."}
+                return {"success": False, "error": f"Dokumen dengan ID '{knowledge_id}' tidak ditemukan di basis data knowledge."}
 
             try:
                 with open(approved_file, "r", encoding="utf-8") as f:
@@ -2021,28 +2049,53 @@ status       : {status}
                 "title": f"Berhasil menghapus {len(deleted_items)} promo kadaluarsa:\n" + "\n".join(f"- {d}" for d in deleted_items[:10])
             }
 
-        # 3. Full Document Deletion
-        approved_file = resolve_approved_file(knowledge_id)
-        if not approved_file:
-            return {"success": False, "error": f"Dokumen dengan ID/Nama '{knowledge_id}' tidak ditemukan di database."}
+        # 3. Full Document Deletion (supports both APPROVED and PENDING documents)
+        target_file = resolve_approved_file(knowledge_id) or resolve_pending_file(knowledge_id)
+        f_data = {}
+        target_kid = str(knowledge_id).strip()
+        deleted_title = target_kid
+
+        if target_file and os.path.exists(target_file):
+            try:
+                with open(target_file, "r", encoding="utf-8") as fp:
+                    f_data = json.load(fp)
+                target_kid = str(f_data.get("knowledge_id") or knowledge_id)
+                deleted_title = str(f_data.get("title", f_data.get("file_name", target_kid)))
+            except Exception as read_err:
+                logger.warning(f"[DedicatedService] Note reading file '{target_file}': {read_err}")
 
         try:
-            with open(approved_file, "r", encoding="utf-8") as fp:
-                f_data = json.load(fp)
-            target_kid = str(f_data.get("knowledge_id") or knowledge_id)
-            deleted_title = str(f_data.get("title", f_data.get("file_name", target_kid)))
+            # Delete local physical file safely
+            if target_file and os.path.exists(target_file):
+                try:
+                    os.remove(target_file)
+                except Exception as rm_err:
+                    logger.warning(f"[DedicatedService] Could not remove physical file '{target_file}': {rm_err}")
 
-            # Delete local file
-            os.remove(approved_file)
+            # Also purge any corresponding pending or output file in data/ and backend/data/
+            for p_dir in ["data/pending", "data/output", "backend/data/pending", "backend/data/output"]:
+                for fname in [f"{target_kid}.json", f"{target_kid}_parsed.json"]:
+                    dup_p = os.path.join(p_dir, fname)
+                    if os.path.exists(dup_p):
+                        try:
+                            os.remove(dup_p)
+                        except Exception:
+                            pass
 
-            # Clear Vector Store
+            # Clear Vector Store safely
             if vector_store:
-                vector_store.delete_document(target_kid)
+                try:
+                    vector_store.delete_document(target_kid)
+                except Exception as vs_err:
+                    logger.warning(f"[DedicatedService] Vector store delete note: {vs_err}")
 
-            # Clear BM25
+            # Clear BM25 safely
             if bm25_index:
-                bm25_index.remove_file_chunks(target_kid)
-                bm25_index.save(settings.bm25_index_path)
+                try:
+                    bm25_index.remove_file_chunks(target_kid)
+                    bm25_index.save(settings.bm25_index_path)
+                except Exception as bm_err:
+                    logger.warning(f"[DedicatedService] BM25 delete note: {bm_err}")
 
             # Delete from MinIO (including all embedded images and documents)
             try:
@@ -2052,15 +2105,21 @@ status       : {status}
                 logger.debug(f"[DedicatedService] MinIO delete note: {s3_err}")
 
             # Prune chat messages for this document
-            await GeneralKnowledgeService.prune_chat_messages_for_deleted_targets(
-                db=db,
-                delete_targets=[deleted_title, target_kid],
-                session_id=session_id,
-                knowledge_id=target_kid
-            )
+            try:
+                await GeneralKnowledgeService.prune_chat_messages_for_deleted_targets(
+                    db=db,
+                    delete_targets=[deleted_title, target_kid],
+                    session_id=session_id,
+                    knowledge_id=target_kid
+                )
+            except Exception as prune_err:
+                logger.debug(f"[DedicatedService] Prune chat note: {prune_err}")
 
             # Soft-delete in PostgreSQL Knowledge DB record directly and commit
-            await GeneralKnowledgeService.sync_knowledge_db(target_kid, deleted=True, db=db)
+            try:
+                await GeneralKnowledgeService.sync_knowledge_db(target_kid, deleted=True, db=db)
+            except Exception as db_sync_err:
+                logger.warning(f"[DedicatedService] sync_knowledge_db note: {db_sync_err}")
 
             return {
                 "success": True,
