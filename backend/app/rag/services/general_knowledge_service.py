@@ -1707,6 +1707,151 @@ status       : {status}
                 filtered_chunks = None
                 removed_count = 0
 
+                # Case 0: Delete product image only (Preserve product details 100%)
+                if delete_type == "image":
+                    deleted_images = []
+                    prod_boundary_pattern = r'(?=(?:^|\n)#{1,3}\s+Detail\s+Produk|(?:^|\n)##\s+(?!Detail\s+Produk)[^\n]+|(?:^|\n)Informasi\s+Produk\s+[^\n]+)'
+                    sections = [s for s in re.split(prod_boundary_pattern, summary) if s.strip()]
+                    if len(sections) <= 1:
+                        sections = [s for s in re.split(r'(?=(?:^|\n)#{1,4}\s+[^\n]+)', summary) if s.strip()]
+
+                    target_words = [w for w in re.findall(r'\b[a-zA-Z0-9]{3,}\b', target_item_lower) if w not in ('produk', 'product', 'erha', 'the', 'and', 'gambar', 'foto', 'image', 'picture')]
+
+                    new_sections = []
+                    image_removed_from_section = False
+
+                    for sec in sections:
+                        name_m = re.search(r'-\s*\*\*Nama(?:\s+Produk)?\*\*\s*:\s*([^\n]+)', sec, re.IGNORECASE)
+                        p_name = name_m.group(1).strip() if name_m else ""
+                        if not p_name:
+                            h_m = re.search(r'^#{1,4}\s+([^\n\r]+)', sec.strip())
+                            if h_m:
+                                cand_h = re.sub(r'[\*\_]', '', h_m.group(1)).strip()
+                                if cand_h.lower() not in ("detail produk", "informasi produk", "ringkasan dokumen", "penutup", "evaluasi hasil", "profil pasien", "detail perawatan"):
+                                    p_name = cand_h
+
+                        is_match = False
+                        if not target_item_clean:
+                            is_match = True
+                        elif p_name:
+                            p_lower = p_name.lower()
+                            if target_item_lower == p_lower or target_item_lower in p_lower or p_lower in target_item_lower:
+                                is_match = True
+                            elif target_words and all(w in p_lower for w in target_words):
+                                is_match = True
+                        elif target_words and all(w in sec.lower() for w in target_words):
+                            is_match = True
+
+                        if is_match:
+                            img_tags = list(re.finditer(r'!\[([^\]]*)\]\(([^\)]+)\)', sec))
+                            sec_mod = sec
+                            for itag in img_tags:
+                                img_url = itag.group(2).strip()
+                                if img_url and img_url not in deleted_images:
+                                    deleted_images.append(img_url)
+                                sec_mod = sec_mod.replace(itag.group(0), "")
+                            sec_mod = re.sub(r'\n{3,}', '\n\n', sec_mod)
+                            if sec_mod != sec:
+                                image_removed_from_section = True
+                            new_sections.append(sec_mod)
+                        else:
+                            new_sections.append(sec)
+
+                    if image_removed_from_section:
+                        existing_doc["summary"] = "".join(new_sections).strip()
+                    else:
+                        # Fallback for single product or unsectioned summary: match image tag by target words or remove image
+                        updated_sum = summary
+                        img_tags = list(re.finditer(r'!\[([^\]]*)\]\(([^\)]+)\)', summary))
+                        for itag in img_tags:
+                            alt = itag.group(1)
+                            url = itag.group(2).strip()
+                            if not target_words or any(tw in alt.lower() or tw in url.lower() for tw in target_words) or len(img_tags) == 1:
+                                if url not in deleted_images:
+                                    deleted_images.append(url)
+                                updated_sum = updated_sum.replace(itag.group(0), "")
+                        existing_doc["summary"] = re.sub(r'\n{3,}', '\n\n', updated_sum).strip()
+
+                    # Purge from MinIO storage
+                    for d_url in deleted_images:
+                        try:
+                            from app.services.storage import delete_image_by_ref
+                            delete_image_by_ref(d_url, knowledge_id=doc_kid)
+                            logger.info(f"🗑️ [ImageDelete] Purged image '{d_url}' from MinIO for doc '{doc_kid}'")
+                        except Exception as s3_err:
+                            logger.debug(f"[ImageDelete] MinIO delete note: {s3_err}")
+
+                    # Clean metadata
+                    if "image_urls" in existing_doc and isinstance(existing_doc["image_urls"], list):
+                        existing_doc["image_urls"] = [u for u in existing_doc["image_urls"] if u not in deleted_images]
+                    if existing_doc.get("image_url") in deleted_images:
+                        existing_doc["image_url"] = existing_doc["image_urls"][0] if existing_doc.get("image_urls") else None
+
+                    if "metadata" in existing_doc and isinstance(existing_doc["metadata"], dict):
+                        meta = existing_doc["metadata"]
+                        if "images" in meta and isinstance(meta["images"], list):
+                            meta["images"] = [
+                                img for img in meta["images"]
+                                if (isinstance(img, dict) and img.get("url") not in deleted_images and img.get("s3_key") not in deleted_images)
+                                or (isinstance(img, str) and img not in deleted_images)
+                            ]
+                        if "image_urls" in meta and isinstance(meta["image_urls"], list):
+                            meta["image_urls"] = [u for u in meta["image_urls"] if u not in deleted_images]
+                        meta["summary"] = existing_doc["summary"]
+
+                    # Clean chunks text & metadata (WITHOUT deleting the product chunk!)
+                    original_chunks = existing_doc.get("chunks", [])
+                    filtered_chunks = []
+                    for chunk in original_chunks:
+                        if isinstance(chunk, dict):
+                            c_text = chunk.get("text", "")
+                            for d_url in deleted_images:
+                                c_text = re.sub(rf'!\[[^\]]*\]\({re.escape(d_url)}\)', '', c_text)
+                            c_meta = chunk.get("metadata", {})
+                            c_prod = str(c_meta.get("product_name", "")).lower()
+                            if target_item_lower and target_item_lower in c_prod:
+                                c_text = re.sub(r'!\[[^\]]*\]\([^\)]+\)', '', c_text)
+                            chunk["text"] = re.sub(r'\n{3,}', '\n\n', c_text).strip()
+                            if "image_url" in c_meta and c_meta["image_url"] in deleted_images:
+                                c_meta["image_url"] = None
+                            if "image_urls" in c_meta and isinstance(c_meta["image_urls"], list):
+                                c_meta["image_urls"] = [u for u in c_meta["image_urls"] if u not in deleted_images]
+                            filtered_chunks.append(chunk)
+
+                    existing_doc["chunks"] = filtered_chunks
+
+                    with open(approved_file, "w", encoding="utf-8") as f:
+                        json.dump(existing_doc, f, indent=4, ensure_ascii=False)
+
+                    if vector_store:
+                        vector_store.delete_document(doc_kid)
+                        if filtered_chunks:
+                            vector_store.insert_chunks(filtered_chunks)
+
+                    if bm25_index:
+                        bm25_index.remove_file_chunks(doc_kid)
+                        if filtered_chunks:
+                            bm25_index.add_chunks(filtered_chunks)
+                        bm25_index.save(settings.bm25_index_path)
+
+                    try:
+                        from app.services.storage import upload_approved_json
+                        upload_approved_json(doc_kid, existing_doc)
+                    except Exception as s3_err:
+                        logger.debug(f"[ImageDelete] MinIO update note: {s3_err}")
+
+                    await GeneralKnowledgeService.sync_knowledge_db(doc_kid, existing_doc=existing_doc, db=db)
+
+                    logger.info(f"✅ [DedicatedService] Successfully deleted image(s) {deleted_images} for '{target_item_clean}' in doc '{doc_kid}'. Product info preserved.")
+                    return {
+                        "success": True,
+                        "knowledge_id": doc_kid,
+                        "target_item": target_item_clean,
+                        "deleted_images": deleted_images,
+                        "summary": existing_doc["summary"],
+                        "delete_type": "image"
+                    }
+
                 # Detect if this is an ingredient-based deletion
                 is_ing_delete = (delete_type == "ingredient")
                 ing_keyword = None

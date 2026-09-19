@@ -583,15 +583,30 @@ def extract_product_deletion(user_prompt: str) -> tuple[Optional[str], Optional[
     """
     Extracts product deletion instructions from user prompt.
     Returns (target_name, target_ingredient, deletion_type).
-    deletion_type can be 'ingredient' or 'name'.
+    deletion_type can be 'image', 'ingredient' or 'name'.
     """
     import re
     if not user_prompt:
         return None, None, None
 
+    # 0. By image deletion: e.g. hapus gambar produk ERHA Acneact Gentle Acne Moisturizer, hapus foto "ERHA Acneact", hilangkan gambar
+    m_img = re.search(
+        r'\b(?:hapus|delete|hilangkan|remove|buang|bersihkan|tiadakan)\s+(?:semua\s+|seluruh\s+)?(?:gambar|foto|image|picture|visual|banner)\s*(?:dari|pada|untuk)?\s*(?:produk|item|barang)?\s*(?:["\'“]([^"\'”]+)["\'”]|([A-Za-z0-9\s\-_]{3,60}))?',
+        user_prompt,
+        re.IGNORECASE
+    )
+    if m_img:
+        target_name = (m_img.group(1) or m_img.group(2) or "").strip()
+        target_name = re.split(r'\b(?:pada|dari|di|dokumen|katalog|kb|database)\b', target_name, flags=re.IGNORECASE)[0]
+        target_name = re.sub(r'^[\s\*_\`"\'“”.,]+|[\s\*_\`"\'“”.,]+$', '', target_name).strip()
+        forbidden = ("yang", "semua", "seluruh", "ini", "itu", "nya", "produk", "item", "barang")
+        if target_name and any(target_name.lower() == f for f in forbidden):
+            target_name = None
+        return target_name or None, None, "image"
+
     # 1. By ingredient: e.g. hapus seluruh produk yang mengandung "Betaine" or *Betaine*
     m_ingr = re.search(
-        r'\b(?:hapus|delete|hilangkan|remove|buang|bersihkan|tiadakan)\s+(?:seluruh\s+|semua\s+)?(?:produk|item|barang)?\s*(?:yang\s+)?(?:mengandung|memuat|berisi|memiliki|ada\s+kandungan|kandungan|berbahan|dengan\s+ingredients?)\s+([^\n\r]+)',
+        r'\b(?:hapus|delete|hilangkan|remove|buang|bersihkan|tiadakan)\s+(?:seluruh\s+|semua\s+)?(?:produk|item|barang)?\s*(?:yang\s+)?(?:mengandung|memuat|berisi|memiliki|ada\s+kandungan|(?:dengan\s+)?kandungan|berbahan|(?:dengan\s+)?ingredients?)\s+([^\n\r]+)',
         user_prompt,
         re.IGNORECASE
     )
@@ -623,7 +638,7 @@ def extract_product_deletion(user_prompt: str) -> tuple[Optional[str], Optional[
         raw_name = m_unquoted.group(1).strip()
         raw_name = re.split(r'\b(?:pada|dari|di|dokumen|katalog|kb|database)\b', raw_name, flags=re.IGNORECASE)[0]
         target_name = re.sub(r'^[\s\*_\`"\'“”.,]+|[\s\*_\`"\'“”.,]+$', '', raw_name).strip()
-        forbidden = ("gambar", "foto", "image", "picture", "tabel", "section", "bagian", "warning", "warnings", "yang", "semua", "seluruh")
+        forbidden = ("gambar", "foto", "image", "picture", "tabel", "section", "bagian", "warning", "warnings", "yang", "semua", "seluruh", "dengan")
         if target_name and not any(target_name.lower().startswith(f) for f in forbidden):
             return target_name, None, "name"
 
@@ -984,9 +999,65 @@ def apply_refinements_to_content(
         else:
             feedback_message = f"Kandungan \"{extracted_replace_old}\" tidak ditemukan pada produk di dokumen ini."
 
-    # 5. Product Deletion
+    # 5. Image or Product Deletion
     del_name, del_ingr, del_type = extract_product_deletion(user_prompt)
-    if del_type:
+    if del_type == "image":
+        target_base = updated_summary
+        if base_summary and "Detail Produk" in base_summary and "Detail Produk" not in updated_summary:
+            target_base = base_summary
+
+        clean_base_summary = strip_callout_banners(target_base)
+        prod_boundary_pattern = r'(?=(?:^|\n)#{1,3}\s+Detail\s+Produk|(?:^|\n)##\s+(?!Detail\s+Produk)[^\n]+|(?:^|\n)Informasi\s+Produk\s+[^\n]+)'
+        sections = [s for s in re.split(prod_boundary_pattern, clean_base_summary) if s.strip()]
+
+        target_clean = del_name.lower().strip() if del_name else ""
+        target_words = [w for w in re.findall(r'\b[a-zA-Z0-9]{3,}\b', target_clean) if w not in ('produk', 'product', 'erha', 'the', 'and', 'gambar', 'foto', 'image')]
+
+        new_sections = []
+        image_removed = False
+
+        for sec in sections:
+            name_m = re.search(r'-\s*\*\*Nama(?:\s+Produk)?\*\*\s*:\s*([^\n]+)', sec)
+            p_name = name_m.group(1).strip() if name_m else ""
+            if not p_name:
+                h_m = re.search(r'^#{1,4}\s+([^\n\r]+)', sec.strip())
+                if h_m:
+                    p_name = re.sub(r'[\*\_]', '', h_m.group(1)).strip()
+
+            is_target = False
+            if not target_clean:
+                is_target = True
+            elif p_name:
+                p_low = p_name.lower()
+                if target_clean == p_low or target_clean in p_low or p_low in target_clean:
+                    is_target = True
+                elif target_words and all(tw in p_low for tw in target_words):
+                    is_target = True
+            elif target_words and all(tw in sec.lower() for tw in target_words):
+                is_target = True
+
+            if is_target:
+                sec_mod = re.sub(r'!\[[^\]]*\]\([^\)]+\)', '', sec)
+                if sec_mod != sec:
+                    image_removed = True
+                new_sections.append(sec_mod)
+            else:
+                new_sections.append(sec)
+
+        updated_summary = "".join(new_sections).strip()
+        if not image_removed:
+            updated_summary = re.sub(r'!\[[^\]]*\]\([^\)]+\)', '', updated_summary).strip()
+
+        target_label = f' untuk produk "{del_name}"' if del_name else ''
+        del_msg = f"Gambar{target_label} telah berhasil dihapus. Informasi produk tetap tersimpan."
+        feedback_message = format_chat_response_with_cards(
+            confirmation=del_msg,
+            summary=updated_summary,
+            target_product_names=[del_name] if del_name else None,
+            intro_label="Berikut adalah detail produk yang diperbarui:"
+        )
+
+    elif del_type:
         target_base = updated_summary
         if base_summary:
             has_cards_in_base = "Detail Produk" in base_summary
@@ -3471,7 +3542,7 @@ CRITICAL REQUIREMENT FOR THE "summary" FIELD:
                         if del_res.get("success"):
                             del_prods = del_res.get("deleted_products", [])
                             prods_info = f" ({', '.join(del_prods)})" if del_prods else ""
-                            refined_feedback = f"Produk \"{target_del_item}\"{prods_info} ditemukan pada dokumen katalog \"{cat_title}\" dan telah berhasil dihapus dari knowledge base. Dokumen ini tetap utuh."
+                            refined_feedback = f"Produk \"{target_del_item}\"{prods_info} telah berhasil dihapus dari knowledge base."
             except Exception as cat_del_err:
                 logger.debug(f"Catalog delete fallback note: {cat_del_err}")
 
@@ -4555,7 +4626,7 @@ CRITICAL REQUIREMENT FOR THE "summary" FIELD:
                         if del_res.get("success"):
                             del_prods = del_res.get("deleted_products", [])
                             prods_info = f" ({', '.join(del_prods)})" if del_prods else ""
-                            refined_feedback = f"Produk \"{target_del_item}\"{prods_info} ditemukan pada dokumen katalog \"{cat_title}\" dan telah berhasil dihapus dari knowledge base. Dokumen ini tetap utuh."
+                            refined_feedback = f"Produk \"{target_del_item}\"{prods_info} telah berhasil dihapus dari knowledge base."
                             logger.info(f"✅ Surgically deleted '{target_del_item}' from other catalog document '{cat_kid}' ({cat_title}).")
             except Exception as cat_del_err:
                 logger.debug(f"Catalog delete fallback note: {cat_del_err}")
@@ -6405,15 +6476,9 @@ async def query_general_endpoint(
                     if any_succ:
                         attr_label = detected_attr or (field_display if field and field not in ("summary", "text", "konten") else "")
                         if attr_label:
-                            if len(matched_docs) > 1:
-                                succ_msg = f"{attr_label} '{target_item}' berhasil diubah menjadi '{new_val}' pada {len(matched_docs)} dokumen knowledge base. Knowledge base telah diperbarui."
-                            else:
-                                succ_msg = f"{attr_label} '{target_item}' berhasil diubah menjadi '{new_val}' pada dokumen **{doc_title}**. Knowledge base telah diperbarui."
+                            succ_msg = f"{attr_label} '{target_item}' berhasil diubah menjadi '{new_val}'. Knowledge base telah diperbarui."
                         else:
-                            if len(matched_docs) > 1:
-                                succ_msg = f"Perubahan '{target_item}' menjadi '{new_val}' berhasil diterapkan pada {len(matched_docs)} dokumen knowledge base. Knowledge base telah diperbarui."
-                            else:
-                                succ_msg = f"Perubahan '{target_item}' menjadi '{new_val}' berhasil diterapkan pada dokumen **{doc_title}**. Knowledge base telah diperbarui."
+                            succ_msg = f"Perubahan '{target_item}' menjadi '{new_val}' berhasil diterapkan. Knowledge base telah diperbarui."
 
                         updated_doc_summaries = [r.get("summary", "") for r in edit_results if r.get("summary")]
                         combined_summary = "\n\n".join(updated_doc_summaries) if updated_doc_summaries else ""
@@ -6552,7 +6617,7 @@ async def query_general_endpoint(
                 async with AsyncSessionLocal() as db_session:
                     for d in matched_docs:
                         d_kid = d["knowledge_id"]
-                        d_target = del_ingr if del_type == "ingredient" else (del_name if del_type == "name" else (d.get("target_item") or target_item))
+                        d_target = del_ingr if del_type == "ingredient" else (del_name if del_type in ("name", "image") else (d.get("target_item") or target_item))
                         r_del = await GeneralKnowledgeService.apply_delete(
                             knowledge_id=d_kid,
                             target_item=d_target,
@@ -6573,31 +6638,28 @@ async def query_general_endpoint(
 
                     prods_str = f" ({', '.join(all_deleted_products)})" if all_deleted_products else ""
 
-                    if del_type == "ingredient":
-                        target_disp = del_ingr or target_item
-                        if len(matched_docs) > 1:
-                            succ_msg = f"Seluruh produk yang mengandung \"{target_disp}\"{prods_str} telah berhasil dihapus dari {len(matched_docs)} dokumen knowledge base. Knowledge base telah diperbarui."
+                    if del_type == "image":
+                        target_prod_disp = target_item or del_name
+                        if target_prod_disp:
+                            succ_msg = f"Gambar untuk produk \"{target_prod_disp}\" telah berhasil dihapus. Informasi produk tetap tersimpan di knowledge base."
                         else:
-                            succ_msg = f"Seluruh produk yang mengandung \"{target_disp}\"{prods_str} telah berhasil dihapus dari dokumen **{doc_title}**. Knowledge base telah diperbarui."
+                            succ_msg = "Gambar telah berhasil dihapus dari knowledge base. Informasi produk tetap tersimpan."
+                    elif del_type == "ingredient":
+                        target_disp = del_ingr or target_item
+                        succ_msg = f"Seluruh produk yang mengandung \"{target_disp}\"{prods_str} telah berhasil dihapus dari knowledge base. Knowledge base telah diperbarui."
                     elif del_type == "name":
                         target_name_disp = del_name or target_item
-                        if len(matched_docs) > 1:
-                            succ_msg = f"Produk \"{target_name_disp}\"{prods_str} telah berhasil dihapus dari {len(matched_docs)} dokumen knowledge base. Knowledge base telah diperbarui."
-                        else:
-                            succ_msg = f"Produk \"{target_name_disp}\"{prods_str} telah berhasil dihapus dari dokumen **{doc_title}**. Knowledge base telah diperbarui."
+                        succ_msg = f"Produk \"{target_name_disp}\"{prods_str} telah berhasil dihapus dari knowledge base. Knowledge base telah diperbarui."
                     else:
-                        if len(matched_docs) > 1:
-                            doc_names = ", ".join([d.get("title") or d.get("file_name") or d["knowledge_id"] for d in matched_docs])
-                            succ_msg = f"\"{target_item}\"{prods_str} telah berhasil dihapus dari {len(matched_docs)} dokumen knowledge base ({doc_names}). Knowledge base telah diperbarui."
-                        else:
-                            succ_msg = f"\"{target_item}\"{prods_str} telah berhasil dihapus dari dokumen **{doc_title}**. Knowledge base telah diperbarui."
+                        succ_msg = f"\"{target_item}\"{prods_str} telah berhasil dihapus dari knowledge base. Knowledge base telah diperbarui."
 
                     updated_doc_summaries = [r.get("summary", "") for r in del_results if r.get("summary")]
                     combined_summary = "\n\n".join(updated_doc_summaries) if updated_doc_summaries else ""
                     formatted_ans = format_chat_response_with_cards(
                         confirmation=succ_msg,
                         summary=combined_summary,
-                        intro_label="Berikut adalah daftar produk yang diperbarui:"
+                        target_product_names=[target_prod_disp] if del_type == "image" and target_prod_disp else None,
+                        intro_label="Berikut adalah detail produk yang diperbarui:" if del_type == "image" else "Berikut adalah daftar produk yang diperbarui:"
                     )
 
                     return QueryGeneralResponse(
