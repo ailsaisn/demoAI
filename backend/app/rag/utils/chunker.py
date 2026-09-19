@@ -427,6 +427,9 @@ class CustomChunker:
                     "entity": current_entity,
                     "page": page_num
                 }
+                if current_section and current_section.lower().startswith("sheet:"):
+                    meta["sheet_name"] = current_section.split(":", 1)[1].strip()
+
                 extracted_urls = []
                 if chunk_text:
                     found_matches = re.findall(r'!\[.*?\]\(([^\s\)]+)\)', chunk_text)
@@ -520,18 +523,22 @@ class CustomChunker:
                 if not current_table_lines:
                     return
 
+                prefix = f"## {current_section}\n\n" if (current_section and current_section.lower() != "general") else ""
+
                 if len(current_table_lines) > 10:
                     sub_tables = self._split_large_table(current_table_lines, max_rows_per_chunk=6)
                     for tbl in sub_tables:
+                        full_tbl = f"{prefix}{tbl}" if prefix and not tbl.startswith("#") else tbl
                         processed_chunks.append({
-                            "text": tbl,
-                            "metadata": _build_meta(tbl)
+                            "text": full_tbl,
+                            "metadata": _build_meta(full_tbl)
                         })
                 else:
                     table_txt = "\n".join(current_table_lines)
+                    full_tbl = f"{prefix}{table_txt}" if prefix and not table_txt.startswith("#") else table_txt
                     processed_chunks.append({
-                        "text": table_txt,
-                        "metadata": _build_meta(table_txt)
+                        "text": full_tbl,
+                        "metadata": _build_meta(full_tbl)
                     })
                 current_table_lines = []
 

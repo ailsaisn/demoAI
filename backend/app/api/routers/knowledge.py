@@ -620,6 +620,13 @@ async def list_knowledge(
             item.project_id = None
             updated_db = True
 
+    user_ids = {item.uploaded_by for item in db_items if item.uploaded_by}
+    user_name_map = {}
+    if user_ids:
+        user_stmt = select(User.id, User.name).where(User.id.in_(user_ids))
+        user_res = await db.execute(user_stmt)
+        user_name_map = {row[0]: row[1] for row in user_res.all()}
+
     for item in db_items:
         k_id_str = str(item.id)
         if item.status == KnowledgeStatus.APPROVED:
@@ -663,7 +670,9 @@ async def list_knowledge(
             ai_summary=item.ai_summary,
             ai_confidence=item.ai_confidence,
             uploaded_by=item.uploaded_by,
+            uploaded_by_name=user_name_map.get(item.uploaded_by) or "Admin",
             approved_by=item.approved_by,
+            approved_at=item.updated_at if item.status == KnowledgeStatus.APPROVED else None,
             project_id=item.project_id,
             metadata_=item_metadata,
             created_at=item.created_at,
@@ -735,7 +744,9 @@ async def list_knowledge(
                                     ai_summary=summary,
                                     ai_confidence=95.0,
                                     uploaded_by=current_user.id,
+                                    uploaded_by_name=current_user.name or "Admin",
                                     approved_by=None,
+                                    approved_at=now if doc_status == KnowledgeStatus.APPROVED else None,
                                     metadata_=data,
                                     created_at=now,
                                     updated_at=now
@@ -764,34 +775,40 @@ async def list_knowledge(
                         for c in item.metadata_["suggested_categories"]
                         if str(c.get("name") if isinstance(c, dict) else c).strip().lower() in active_cat_set
                     ]
-    except Exception as err:
-        logger.warning(f"Error sanitizing categories in list_knowledge: {err}")
+    except Exception as e:
+        logger.warning(f"Failed to sanitize categories in list_knowledge: {e}")
 
-    if status and status != "ALL":
-        all_items = [item for item in all_items if item.status == status]
+    # 4. Optional Project Filter
+    if project_id:
+        all_items = [item for item in all_items if item.project_id == project_id]
 
-    if search:
-        s_clean = search.lower().strip()
+    # 5. Optional In-Memory Status Filter
+    if status and status.upper() != "ALL":
+        all_items = [item for item in all_items if str(item.status.value if hasattr(item.status, "value") else item.status).upper() == status.upper()]
+
+    # 6. Optional Search Filter
+    if search and search.strip():
+        q = search.strip().lower()
         all_items = [
-            item for item in all_items
-            if s_clean in (item.title or "").lower()
-            or s_clean in (item.file_name or "").lower()
-            or s_clean in (item.ai_summary or "").lower()
-            or s_clean in (item.content or "").lower()
+            item for item in all_items 
+            if q in item.title.lower() 
+            or q in item.file_name.lower() 
+            or (item.ai_summary and q in item.ai_summary.lower())
         ]
 
-    if page is not None:
-        p_size = page_size or 10
+    # 7. Pagination Support
+    if page is not None and page_size is not None:
         total = len(all_items)
-        total_pages = max(1, math.ceil(total / p_size))
-        start_idx = (page - 1) * p_size
-        items = all_items[start_idx : start_idx + p_size]
+        total_pages = math.ceil(total / page_size) if total > 0 else 1
+        start = (page - 1) * page_size
+        end = start + page_size
+        items_page = all_items[start:end]
 
         return PaginatedResponse[KnowledgeResponse](
-            items=items,
+            items=items_page,
             total=total,
             page=page,
-            page_size=p_size,
+            page_size=page_size,
             total_pages=total_pages
         )
 
@@ -868,6 +885,13 @@ async def get_knowledge(
         except Exception as e:
             logger.warning(f"Error loading RAG JSON: {e}")
             
+        uploader_name = None
+        if knowledge.uploaded_by:
+            u_stmt = select(User.name).where(User.id == knowledge.uploaded_by)
+            u_res = await db.execute(u_stmt)
+            uploader_name = u_res.scalar_one_or_none()
+        setattr(knowledge, "uploaded_by_name", uploader_name or "Admin")
+        setattr(knowledge, "approved_at", knowledge.updated_at if knowledge.status == KnowledgeStatus.APPROVED else None)
         return knowledge
 
     # 2. Fallback check in RAG staging files (data/pending or data/output)
@@ -908,7 +932,9 @@ async def get_knowledge(
                     ai_summary=summary,
                     ai_confidence=95.0,
                     uploaded_by=current_user.id,
+                    uploaded_by_name=current_user.name or "Admin",
                     approved_by=None,
+                    approved_at=now if doc_status == KnowledgeStatus.APPROVED else None,
                     metadata_=data,
                     created_at=now,
                     updated_at=now
@@ -930,7 +956,9 @@ async def get_knowledge(
         ai_summary="Document processing in progress...",
         ai_confidence=0.0,
         uploaded_by=current_user.id,
+        uploaded_by_name=current_user.name or "Admin",
         approved_by=None,
+        approved_at=None,
         metadata_={"status": "PROCESSING"},
         created_at=now,
         updated_at=now
@@ -2619,7 +2647,15 @@ async def delete_knowledge(
         })
 
     # 4. Clean any remaining physical files from data/pending, data/output, data/approved, data/temp, data/storage
-    for folder in ["data/pending", "data/output", "data/approved", "data/temp", "data/storage", "data/uploads", "data/images"]:
+    for folder in [
+        "data/pending", "backend/data/pending",
+        "data/output", "backend/data/output",
+        "data/approved", "backend/data/approved",
+        "data/temp", "backend/data/temp",
+        "data/storage", "backend/data/storage",
+        "data/uploads", "backend/data/uploads",
+        "data/images", "backend/data/images"
+    ]:
         if os.path.exists(folder):
             for f in os.listdir(folder):
                 f_path = os.path.join(folder, f)
@@ -2715,6 +2751,7 @@ async def delete_knowledge(
     # 8. Mark soft-deleted in current PostgreSQL session and commit
     if knowledge:
         knowledge.deleted_at = datetime.now(timezone.utc)
+    await db.flush()
     await db.commit()
                 
     return None

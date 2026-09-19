@@ -411,6 +411,8 @@ class PromptContextBuilder:
         total_chars = 0
         MAX_CONTEXT_CHARS = 20000  # ~5,000 tokens budget reserved for context (OpenAI GPT-5.4)
 
+        seen_table_rows = set()
+
         for idx, hit in enumerate(hits, start=1):
             metadata = hit.get("metadata", {})
             source_file = metadata.get("source_file", "unknown")
@@ -442,6 +444,26 @@ class PromptContextBuilder:
                 if img_matches:
                     image_url = img_matches[0]
 
+            # Deduplicate table rows across chunks to prevent duplicate table outputs
+            if "|" in text:
+                clean_lines = []
+                for line in text.splitlines():
+                    stripped = line.strip()
+                    if stripped.startswith("|") and stripped.endswith("|"):
+                        # Table separator line e.g. |---|---|
+                        if re.match(r"^\|[\s\-:|]+\|$", stripped):
+                            clean_lines.append(line)
+                            continue
+                        # Normalize cells for fingerprinting
+                        row_fingerprint = "|".join(c.strip().lower() for c in stripped.strip("|").split("|"))
+                        if row_fingerprint in seen_table_rows:
+                            continue
+                        seen_table_rows.add(row_fingerprint)
+                        clean_lines.append(line)
+                    else:
+                        clean_lines.append(line)
+                text = "\n".join(clean_lines)
+
             # Smart chunk trimming: limit individual chunk text to 1,400 chars (~350 tokens) to ensure room for multiple documents
             if len(text) > 1400:
                 text = text[:1400] + "\n... [bagian detail dipadatkan]"
@@ -460,11 +482,10 @@ class PromptContextBuilder:
             price = metadata.get("price")
             price_header = f" | Price: {price}" if price else ""
 
-            kid = metadata.get("knowledge_id") or source_file
-            id_header = f"ID: {kid} | " if kid else ""
+            # Exclude raw filename and internal system IDs from context header to prevent LLM leaking them
             img_header = f" | Image: {image_url}" if image_url else ""
             part = (
-                f"[{idx}] {id_header}Type: {doc_type} | Title: {product_name}{cat_header}{sku_header}{price_header}{ind_header}{promo_header}{img_header}{rel_prods_header}{rel_treats_header} | Section: {section} | Source: {source_file}\n"
+                f"[{idx}] Type: {doc_type} | Title: {product_name}{cat_header}{sku_header}{price_header}{ind_header}{promo_header}{img_header}{rel_prods_header}{rel_treats_header} | Section: {section}\n"
                 f"Content:\n{text.strip()}"
             )
 

@@ -6,6 +6,8 @@ from sqlalchemy import select, func, or_, update
 from typing import List, Optional
 import uuid
 import re
+import asyncio
+import json
 try:
     from loguru import logger
 except ImportError:
@@ -793,42 +795,84 @@ async def create_chat_message(
                 ai_response_text = ""
                 context_chunks = []
                 
-                # We consume the generator token by token
-                async for chunk in pipeline.generate_answer_stream(
-                    query=effective_query,
-                    top_k=5,
-                    rerank=True,
-                    history=history,
-                    filter_metadata=doctor_filter or None
-                ):
-                    if await request.is_disconnected():
-                        logger.info(f"Client disconnected from chat session {session_id}")
-                        break
+                # Immediately yield keep-alive comment so reverse proxy/client connection never times out
+                yield ": keep-alive\n\n"
 
-                    # check if the chunk is the initial JSON context string
-                    if chunk.startswith('{"type": "context"'):
-                        yield f"data: {chunk}\n\n"
+                token_queue = asyncio.Queue()
+                generator_done = asyncio.Event()
+
+                async def keep_alive_task():
+                    while not generator_done.is_set():
                         try:
-                            ctx_json = json.loads(chunk)
-                            context_chunks = [c.get("content", "") for c in ctx_json.get("chunks", [])]
-                        except Exception:
-                            pass
-                    else:
-                        ai_response_text += chunk
-                        # Send text token
-                        payload = json.dumps({"type": "token", "content": chunk})
-                        yield f"data: {payload}\n\n"
+                            await asyncio.wait_for(generator_done.wait(), timeout=5.0)
+                        except asyncio.TimeoutError:
+                            if not generator_done.is_set():
+                                await token_queue.put(("keep_alive", None))
+
+                async def stream_producer():
+                    try:
+                        async for chunk in pipeline.generate_answer_stream(
+                            query=effective_query,
+                            top_k=5,
+                            rerank=True,
+                            history=history,
+                            filter_metadata=doctor_filter or None
+                        ):
+                            await token_queue.put(("chunk", chunk))
+                    except Exception as prod_err:
+                        await token_queue.put(("error", prod_err))
+                    finally:
+                        generator_done.set()
+                        await token_queue.put(("done", None))
+
+                producer_task = asyncio.create_task(stream_producer())
+                pinger_task = asyncio.create_task(keep_alive_task())
+
+                try:
+                    while True:
+                        msg_type, data = await token_queue.get()
+                        if msg_type == "keep_alive":
+                            if await request.is_disconnected():
+                                logger.info(f"Client disconnected during keep-alive for session {session_id}")
+                                break
+                            yield ": keep-alive\n\n"
+                        elif msg_type == "chunk":
+                            if await request.is_disconnected():
+                                logger.info(f"Client disconnected from chat session {session_id}")
+                                break
+                            chunk = data
+                            if chunk.startswith('{"type": "context"'):
+                                yield f"data: {chunk}\n\n"
+                                try:
+                                    ctx_json = json.loads(chunk)
+                                    context_chunks = [c.get("content", "") for c in ctx_json.get("chunks", [])]
+                                except Exception:
+                                    pass
+                            else:
+                                ai_response_text += chunk
+                                payload = json.dumps({"type": "token", "content": chunk})
+                                yield f"data: {payload}\n\n"
+                        elif msg_type == "error":
+                            raise data
+                        elif msg_type == "done":
+                            break
+                finally:
+                    generator_done.set()
+                    producer_task.cancel()
+                    pinger_task.cancel()
                 
                 # Signal end of stream
                 yield f"data: {json.dumps({'type': 'done'})}\n\n"
                 
-                # Save the final AI message to the DB
+                # Save the final AI message to the DB and update session activity
                 ai_msg = ChatMessage(
                     session_id=session_id,
                     role="ASSISTANT",
                     content=ai_response_text
                 )
                 session.add(ai_msg)
+                stmt_upd = update(ChatSession).where(ChatSession.id == session_id).values(updated_at=datetime.now(timezone.utc))
+                await session.execute(stmt_upd)
                 
                 # Accurately calculate Input & Output tokens and record usage
                 in_tokens = count_chat_prompt_tokens(
@@ -1019,36 +1063,84 @@ async def stream_chat_message(
                 ai_response_text = ""
                 context_chunks = []
                 
-                async for chunk in pipeline.generate_answer_stream(
-                    query=effective_query,
-                    top_k=5,
-                    rerank=True,
-                    history=history,
-                    filter_metadata=doctor_filter or None
-                ):
-                    if await request.is_disconnected():
-                        logger.info(f"Client disconnected from chat session {session_id}")
-                        break
+                # Immediately yield keep-alive comment so reverse proxy/client connection never times out
+                yield ": keep-alive\n\n"
 
-                    if chunk.startswith('{"type": "context"'):
-                        yield f"data: {chunk}\n\n"
+                token_queue = asyncio.Queue()
+                generator_done = asyncio.Event()
+
+                async def keep_alive_task():
+                    while not generator_done.is_set():
                         try:
-                            ctx_json = json.loads(chunk)
-                            context_chunks = [c.get("content", "") for c in ctx_json.get("chunks", [])]
-                        except Exception:
-                            pass
-                    else:
-                        ai_response_text += chunk
-                        yield f"data: {json.dumps({'type': 'token', 'content': chunk})}\n\n"
+                            await asyncio.wait_for(generator_done.wait(), timeout=5.0)
+                        except asyncio.TimeoutError:
+                            if not generator_done.is_set():
+                                await token_queue.put(("keep_alive", None))
+
+                async def stream_producer():
+                    try:
+                        async for chunk in pipeline.generate_answer_stream(
+                            query=effective_query,
+                            top_k=5,
+                            rerank=True,
+                            history=history,
+                            filter_metadata=doctor_filter or None
+                        ):
+                            await token_queue.put(("chunk", chunk))
+                    except Exception as prod_err:
+                        await token_queue.put(("error", prod_err))
+                    finally:
+                        generator_done.set()
+                        await token_queue.put(("done", None))
+
+                producer_task = asyncio.create_task(stream_producer())
+                pinger_task = asyncio.create_task(keep_alive_task())
+
+                try:
+                    while True:
+                        msg_type, data = await token_queue.get()
+                        if msg_type == "keep_alive":
+                            if await request.is_disconnected():
+                                logger.info(f"Client disconnected during keep-alive for session {session_id}")
+                                break
+                            yield ": keep-alive\n\n"
+                        elif msg_type == "chunk":
+                            if await request.is_disconnected():
+                                logger.info(f"Client disconnected from chat session {session_id}")
+                                break
+                            chunk = data
+                            if chunk.startswith('{"type": "context"'):
+                                yield f"data: {chunk}\n\n"
+                                try:
+                                    ctx_json = json.loads(chunk)
+                                    context_chunks = [c.get("content", "") for c in ctx_json.get("chunks", [])]
+                                except Exception:
+                                    pass
+                            else:
+                                ai_response_text += chunk
+                                payload = json.dumps({"type": "token", "content": chunk})
+                                yield f"data: {payload}\n\n"
+                        elif msg_type == "error":
+                            raise data
+                        elif msg_type == "done":
+                            break
+                finally:
+                    generator_done.set()
+                    producer_task.cancel()
+                    pinger_task.cancel()
                 
+                # Signal end of stream
                 yield f"data: {json.dumps({'type': 'done'})}\n\n"
                 
+                # Save the final AI message to the DB and update session activity
                 ai_msg = ChatMessage(
                     session_id=session_id,
                     role="ASSISTANT",
                     content=ai_response_text
                 )
                 session.add(ai_msg)
+                stmt_upd = update(ChatSession).where(ChatSession.id == session_id).values(updated_at=datetime.now(timezone.utc))
+                await session.execute(stmt_upd)
                 
                 # Accurately calculate Input & Output tokens and record usage
                 in_tokens = count_chat_prompt_tokens(

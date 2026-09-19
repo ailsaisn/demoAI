@@ -50,7 +50,9 @@ class KnowledgeResponse(KnowledgeBase):
     ai_summary: Optional[str] = None
     ai_confidence: Optional[float] = None
     uploaded_by: UUID
+    uploaded_by_name: Optional[str] = None
     approved_by: Optional[UUID] = None
+    approved_at: Optional[datetime] = None
     project_id: Optional[UUID] = None
     metadata_: Optional[Dict[str, Any]] = Field(default=None, serialization_alias="metadata")
     created_at: datetime

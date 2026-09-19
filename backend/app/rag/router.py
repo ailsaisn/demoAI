@@ -1477,38 +1477,42 @@ def align_chunks_with_multitreatment(
 
 
 def resolve_pending_file(knowledge_id: str) -> Optional[str]:
-    pending_dir = "data/pending"
-    if not os.path.exists(pending_dir):
-        os.makedirs(pending_dir, exist_ok=True)
-    clean_p = os.path.join(pending_dir, f"{knowledge_id}.json")
-    if os.path.exists(clean_p):
-        return clean_p
-    parsed_p = os.path.join(pending_dir, f"{knowledge_id}_parsed.json")
-    if os.path.exists(parsed_p):
-        return parsed_p
-    for f in os.listdir(pending_dir):
-        if f.endswith(".json"):
-            full_p = os.path.join(pending_dir, f)
-            name_no_ext = f[:-5]
-            if f.startswith(knowledge_id) or name_no_ext == knowledge_id or name_no_ext.replace("_parsed", "") == knowledge_id:
-                return full_p
-            try:
-                with open(full_p, "r", encoding="utf-8") as fp:
-                    data = json.load(fp)
-                if isinstance(data, dict) and (data.get("knowledge_id") == knowledge_id or data.get("file_name") == knowledge_id):
+    candidate_dirs = ["data/pending", "backend/data/pending"]
+    for pending_dir in candidate_dirs:
+        if not os.path.exists(pending_dir):
+            continue
+        clean_p = os.path.join(pending_dir, f"{knowledge_id}.json")
+        if os.path.exists(clean_p):
+            return clean_p
+        parsed_p = os.path.join(pending_dir, f"{knowledge_id}_parsed.json")
+        if os.path.exists(parsed_p):
+            return parsed_p
+        for f in os.listdir(pending_dir):
+            if f.endswith(".json"):
+                full_p = os.path.join(pending_dir, f)
+                name_no_ext = f[:-5]
+                if f.startswith(knowledge_id) or name_no_ext == knowledge_id or name_no_ext.replace("_parsed", "") == knowledge_id:
                     return full_p
-                elif isinstance(data, list) and data and isinstance(data[0], dict):
-                    meta = data[0].get("metadata", {})
-                    if meta.get("knowledge_id") == knowledge_id or meta.get("source_file") == knowledge_id:
+                try:
+                    with open(full_p, "r", encoding="utf-8") as fp:
+                        data = json.load(fp)
+                    if isinstance(data, dict) and (data.get("knowledge_id") == knowledge_id or data.get("file_name") == knowledge_id):
                         return full_p
-            except Exception:
-                pass
+                    elif isinstance(data, list) and data and isinstance(data[0], dict):
+                        meta = data[0].get("metadata", {})
+                        if meta.get("knowledge_id") == knowledge_id or meta.get("source_file") == knowledge_id:
+                            return full_p
+                except Exception:
+                    pass
 
     # MinIO Source of Truth Hydration fallback
     try:
         from app.services.storage import get_staging_json
         staged_data = get_staging_json(knowledge_id)
         if staged_data:
+            target_dir = "data/pending" if os.path.exists("data") else "backend/data/pending"
+            os.makedirs(target_dir, exist_ok=True)
+            clean_p = os.path.join(target_dir, f"{knowledge_id}.json")
             with open(clean_p, "w", encoding="utf-8") as fp:
                 json.dump(staged_data, fp, indent=4, ensure_ascii=False)
             return clean_p
@@ -1518,46 +1522,47 @@ def resolve_pending_file(knowledge_id: str) -> Optional[str]:
     return None
 
 def resolve_approved_file(knowledge_id: str) -> Optional[str]:
-    approved_dir = "data/output"
-    if not os.path.exists(approved_dir):
-        os.makedirs(approved_dir, exist_ok=True)
-    clean_p = os.path.join(approved_dir, f"{knowledge_id}.json")
-    if os.path.exists(clean_p):
-        return clean_p
-    parsed_p = os.path.join(approved_dir, f"{knowledge_id}_parsed.json")
-    if os.path.exists(parsed_p):
-        return parsed_p
-    
+    candidate_dirs = ["data/output", "backend/data/output"]
     clean_k_id = knowledge_id.strip().lower()
     fallback_match = None
 
-    for f in os.listdir(approved_dir):
-        if f.endswith(".json") and f != "bm25_index.pkl":
-            full_p = os.path.join(approved_dir, f)
-            name_no_ext = f[:-5]
-            if f.startswith(knowledge_id) or name_no_ext == knowledge_id or name_no_ext.replace("_parsed", "") == knowledge_id:
-                return full_p
-            try:
-                with open(full_p, "r", encoding="utf-8") as fp:
-                    data = json.load(fp)
-                if isinstance(data, dict):
-                    doc_kid = str(data.get("knowledge_id", "")).strip().lower()
-                    doc_fname = str(data.get("file_name", "")).strip().lower()
-                    doc_title = str(data.get("title", "")).strip().lower()
-                    
-                    if clean_k_id in (doc_kid, doc_fname, doc_title):
-                        return full_p
-                    if doc_title and (clean_k_id in doc_title or doc_title in clean_k_id):
-                        fallback_match = full_p
-                elif isinstance(data, list) and data:
-                    meta = data[0].get("metadata", {})
-                    doc_kid = str(meta.get("knowledge_id", "")).strip().lower()
-                    doc_source = str(meta.get("source_file", "")).strip().lower()
-                    doc_title = str(meta.get("title", "")).strip().lower()
-                    if clean_k_id in (doc_kid, doc_source, doc_title):
-                        return full_p
-            except Exception:
-                pass
+    for approved_dir in candidate_dirs:
+        if not os.path.exists(approved_dir):
+            continue
+        clean_p = os.path.join(approved_dir, f"{knowledge_id}.json")
+        if os.path.exists(clean_p):
+            return clean_p
+        parsed_p = os.path.join(approved_dir, f"{knowledge_id}_parsed.json")
+        if os.path.exists(parsed_p):
+            return parsed_p
+        
+        for f in os.listdir(approved_dir):
+            if f.endswith(".json") and f != "bm25_index.pkl":
+                full_p = os.path.join(approved_dir, f)
+                name_no_ext = f[:-5]
+                if f.startswith(knowledge_id) or name_no_ext == knowledge_id or name_no_ext.replace("_parsed", "") == knowledge_id:
+                    return full_p
+                try:
+                    with open(full_p, "r", encoding="utf-8") as fp:
+                        data = json.load(fp)
+                    if isinstance(data, dict):
+                        doc_kid = str(data.get("knowledge_id", "")).strip().lower()
+                        doc_fname = str(data.get("file_name", "")).strip().lower()
+                        doc_title = str(data.get("title", "")).strip().lower()
+                        
+                        if clean_k_id in (doc_kid, doc_fname, doc_title):
+                            return full_p
+                        if doc_title and (clean_k_id in doc_title or doc_title in clean_k_id):
+                            fallback_match = full_p
+                    elif isinstance(data, list) and data:
+                        meta = data[0].get("metadata", {})
+                        doc_kid = str(meta.get("knowledge_id", "")).strip().lower()
+                        doc_source = str(meta.get("source_file", "")).strip().lower()
+                        doc_title = str(meta.get("title", "")).strip().lower()
+                        if clean_k_id in (doc_kid, doc_source, doc_title):
+                            return full_p
+                except Exception:
+                    pass
 
     if fallback_match:
         return fallback_match
@@ -1567,6 +1572,9 @@ def resolve_approved_file(knowledge_id: str) -> Optional[str]:
         from app.services.storage import get_approved_json
         approved_data = get_approved_json(knowledge_id)
         if approved_data:
+            target_dir = "data/output" if os.path.exists("data") else "backend/data/output"
+            os.makedirs(target_dir, exist_ok=True)
+            clean_p = os.path.join(target_dir, f"{knowledge_id}.json")
             with open(clean_p, "w", encoding="utf-8") as fp:
                 json.dump(approved_data, fp, indent=4, ensure_ascii=False)
             return clean_p
@@ -1575,9 +1583,10 @@ def resolve_approved_file(knowledge_id: str) -> Optional[str]:
 
     # PostgreSQL Database Hydration fallback
     try:
-        from app.core.database import engine
-        from sqlalchemy import text
-        with engine.connect() as conn:
+        from app.rag.config import settings as rag_settings
+        from sqlalchemy import create_engine, text
+        sync_eng = create_engine(rag_settings.pg_conn_str, pool_pre_ping=True)
+        with sync_eng.connect() as conn:
             row = conn.execute(
                 text("SELECT id, title, file_name, ai_summary, metadata FROM knowledge WHERE id::text = :k_id AND status = 'APPROVED' AND deleted_at IS NULL LIMIT 1"),
                 {"k_id": knowledge_id}
@@ -1604,11 +1613,14 @@ def resolve_approved_file(knowledge_id: str) -> Optional[str]:
                     "categories": m_dict.get("categories", []),
                     "visibility_settings": m_dict.get("visibility_settings", {})
                 }
+                target_dir = "data/output" if os.path.exists("data") else "backend/data/output"
+                os.makedirs(target_dir, exist_ok=True)
+                clean_p = os.path.join(target_dir, f"{knowledge_id}.json")
                 with open(clean_p, "w", encoding="utf-8") as fp:
                     json.dump(doc, fp, indent=4, ensure_ascii=False)
                 return clean_p
     except Exception as db_e:
-        logger.debug(f"DB hydration fallback note: {db_e}")
+        logger.debug(f"DB approved hydration note: {db_e}")
 
     return None
 
@@ -5262,15 +5274,18 @@ async def delete_document_endpoint(
         await reset_database(vector_store=target_store, bm25=bm25)
         return {"status": "success", "message": "Successfully deleted all documents.", "deleted_ids": ["all"]}
 
-    pending_dir = "data/pending"
-    approved_dir = "data/output"
+    target_folders = [
+        "data/pending", "backend/data/pending",
+        "data/output", "backend/data/output",
+        "data/temp", "backend/data/temp"
+    ]
     total_images_deleted = 0
 
     for k_id in raw_targets:
         was_deleted = False
 
         # 1. Scan JSON files in pending and output by exact knowledge_id OR exact file_name
-        for folder in [pending_dir, approved_dir]:
+        for folder in target_folders:
             if os.path.exists(folder):
                 for f in os.listdir(folder):
                     if f.endswith(".json"):
