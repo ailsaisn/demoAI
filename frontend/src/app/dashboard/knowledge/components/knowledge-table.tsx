@@ -6,6 +6,7 @@ import {
 	useDeleteKnowledge,
 	useKnowledgeBaseList,
 } from "@/app/dashboard/knowledge/hooks/use-knowledge";
+import { Checkbox } from "@/components/ui/checkbox";
 import { ConfirmationModal } from "@/components/shared/confirmation-modal";
 import { DataTablePagination } from "@/components/shared/data-table-pagination";
 import { SortableTableHead } from "@/components/shared/sortable-table-head";
@@ -58,6 +59,8 @@ interface DisplayRowItem {
 	title: string;
 	status: string;
 	created_at?: string;
+	approved_at?: string | null;
+	uploadedByName?: string | null;
 	description: string;
 	documentCount?: number;
 	rawItem: KnowledgeResponse;
@@ -96,6 +99,11 @@ export function KnowledgeTable({
 	// Delete Confirmation Modal State
 	const [deleteModalOpen, setDeleteModalOpen] = useState(false);
 	const [itemToDelete, setItemToDelete] = useState<DisplayRowItem | null>(null);
+
+	// Bulk Delete Selection State
+	const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+	const [isBulkDeleteModalOpen, setIsBulkDeleteModalOpen] = useState(false);
+	const [isBulkDeleting, setIsBulkDeleting] = useState(false);
 
 	// Attach Project Modal State
 	const [isAttachModalOpen, setIsAttachModalOpen] = useState(false);
@@ -187,6 +195,8 @@ export function KnowledgeTable({
 					title: doc.title || doc.file_name,
 					status: doc.status,
 					created_at: doc.created_at,
+					approved_at: doc.approved_at,
+					uploadedByName: doc.uploaded_by_name || "Admin",
 					description: doc.ai_summary || doc.content || "No description available.",
 					documentCount: 1,
 					rawItem: doc,
@@ -225,6 +235,16 @@ export function KnowledgeTable({
 					return new Date(d.created_at) > new Date(latest) ? d.created_at : latest;
 				}, docs[0].created_at);
 
+				const uploader =
+					docs.find((d) => Boolean(d.uploaded_by_name))?.uploaded_by_name ||
+					docs[0].uploaded_by_name ||
+					"Admin";
+				const mostRecentApprovedAt = docs.reduce((latest, d) => {
+					if (!latest) return d.approved_at;
+					if (!d.approved_at) return latest;
+					return new Date(d.approved_at) > new Date(latest) ? d.approved_at : latest;
+				}, docs[0].approved_at);
+
 				// Determine batch projectId: if any doc in batch has projectId
 				const batchProjectId = docs.find((d) => Boolean(d.project_id))?.project_id || null;
 
@@ -235,6 +255,8 @@ export function KnowledgeTable({
 					title: displayTitle,
 					status: aggStatus,
 					created_at: mostRecentDate,
+					approved_at: mostRecentApprovedAt,
+					uploadedByName: uploader,
 					description: batchSummary || `Batch upload containing ${docs.length} documents.`,
 					documentCount: docs.length,
 					rawItem: docs[0],
@@ -254,6 +276,8 @@ export function KnowledgeTable({
 				title: doc.title || doc.file_name,
 				status: doc.status,
 				created_at: doc.created_at,
+				approved_at: doc.approved_at,
+				uploadedByName: doc.uploaded_by_name || "Admin",
 				description: doc.ai_summary || doc.content || "No description available.",
 				documentCount: 1,
 				rawItem: doc,
@@ -299,6 +323,48 @@ export function KnowledgeTable({
 		startIndex,
 		endIndex,
 	} = usePagination<DisplayRowItem>({ items: filteredList, initialPageSize: 10 });
+
+	const currentPageDocIds = useMemo(() => {
+		return paginatedItems.flatMap((item) =>
+			item.allDocIds && item.allDocIds.length > 0 ? item.allDocIds : [item.id],
+		);
+	}, [paginatedItems]);
+
+	const isAllCurrentPageSelected = useMemo(() => {
+		if (currentPageDocIds.length === 0) return false;
+		return currentPageDocIds.every((id) => selectedIds.has(id));
+	}, [currentPageDocIds, selectedIds]);
+
+	const handleSelectAllCurrentPage = () => {
+		setSelectedIds((prev) => {
+			const next = new Set(prev);
+			if (isAllCurrentPageSelected) {
+				currentPageDocIds.forEach((id) => next.delete(id));
+			} else {
+				currentPageDocIds.forEach((id) => next.add(id));
+			}
+			return next;
+		});
+	};
+
+	const handleConfirmBulkDelete = async () => {
+		const ids = Array.from(selectedIds);
+		if (ids.length === 0) return;
+
+		setIsBulkDeleting(true);
+		try {
+			await Promise.all(
+				ids.map((id) => deleteMutation.mutateAsync({ id, hideToast: true })),
+			);
+			toast.success(`Successfully deleted ${ids.length} documents!`);
+			setSelectedIds(new Set());
+		} catch {
+			toast.error("An error occurred while deleting selected documents.");
+		} finally {
+			setIsBulkDeleting(false);
+			setIsBulkDeleteModalOpen(false);
+		}
+	};
 
 	const hasActiveFilters =
 		statusFilter !== "ALL" || categoryFilter !== "ALL" || !!selectedProjectId;
@@ -517,11 +583,51 @@ export function KnowledgeTable({
 				</div>
 			</div>
 
+			{/* Bulk Action Floating Bar */}
+			{selectedIds.size > 0 && (
+				<div className="flex items-center justify-between gap-3 px-4 py-2.5 mb-3 bg-blue-50/80 border border-blue-200 rounded-lg animate-in fade-in slide-in-from-top-2 duration-200">
+					<div className="flex items-center gap-2">
+						<span className="text-xs font-semibold text-blue-900 bg-blue-200/80 px-2 py-0.5 rounded-full">
+							{selectedIds.size} selected
+						</span>
+						<span className="text-xs text-blue-800">documents selected across the knowledge base</span>
+					</div>
+					<div className="flex items-center gap-2">
+						<Button
+							variant="ghost"
+							size="sm"
+							className="text-xs text-zinc-600 hover:text-zinc-900 h-8 cursor-pointer"
+							onClick={() => setSelectedIds(new Set())}
+						>
+							Clear Selection
+						</Button>
+						<Button
+							variant="destructive"
+							size="sm"
+							className="gap-1.5 text-xs h-8 px-3 bg-red-600 hover:bg-red-700 text-white shadow-none cursor-pointer"
+							onClick={() => setIsBulkDeleteModalOpen(true)}
+						>
+							<RiDeleteBinLine className="size-3.5" />
+							<span>Delete Selected ({selectedIds.size})</span>
+						</Button>
+					</div>
+				</div>
+			)}
+
 			{/* Table */}
 			<div className="border border-gray-200 rounded-lg bg-white overflow-hidden shadow-none">
 				<Table className="[&_tr]:border-gray-100">
 					<TableHeader className="bg-gray-50/50">
 						<TableRow className="bg-gray-50/50 hover:bg-gray-50/50">
+							<TableHead className="w-10 px-3">
+								<div className="flex items-center justify-center">
+									<Checkbox
+										checked={isAllCurrentPageSelected}
+										onCheckedChange={handleSelectAllCurrentPage}
+										aria-label="Select all rows on current page"
+									/>
+								</div>
+							</TableHead>
 							<SortableTableHead
 								sortKey="title"
 								currentSortKey={sortKey}
@@ -532,6 +638,7 @@ export function KnowledgeTable({
 								Knowledge Title
 							</SortableTableHead>
 							<TableHead className="w-37.5 font-medium text-gray-700">Category</TableHead>
+							<TableHead className="w-36 font-medium text-gray-700">Uploaded By</TableHead>
 							<SortableTableHead
 								sortKey="created_at"
 								currentSortKey={sortKey}
@@ -557,7 +664,7 @@ export function KnowledgeTable({
 					<TableBody>
 						{isLoading && (
 							<TableRow>
-								<TableCell colSpan={6} className="text-center py-8 text-zinc-600">
+								<TableCell colSpan={8} className="text-center py-8 text-zinc-600">
 									<div className="flex items-center justify-center">
 										<RiLoader4Line className="w-5 h-5 animate-spin mr-2" />
 										Loading knowledge base...
@@ -568,7 +675,7 @@ export function KnowledgeTable({
 
 						{isError && (
 							<TableRow>
-								<TableCell colSpan={6} className="text-center py-8 text-red-600">
+								<TableCell colSpan={8} className="text-center py-8 text-red-600">
 									Failed to load knowledge base documents.
 								</TableCell>
 							</TableRow>
@@ -576,7 +683,7 @@ export function KnowledgeTable({
 
 						{!isLoading && !isError && filteredList?.length === 0 && (
 							<TableRow>
-								<TableCell colSpan={6} className="text-center py-12 text-zinc-600">
+								<TableCell colSpan={8} className="text-center py-12 text-zinc-600">
 									<div className="flex flex-col items-center justify-center gap-2">
 										<p className="text-sm">No knowledge base documents matching your filters.</p>
 										{hasActiveFilters && (
@@ -602,6 +709,34 @@ export function KnowledgeTable({
 									className="hover:bg-gray-50/60 cursor-pointer"
 									onClick={() => handleRowClick(row)}
 								>
+									<TableCell className="w-10 px-3" onClick={(e) => e.stopPropagation()}>
+										<div className="flex items-center justify-center">
+											<Checkbox
+												checked={
+													row.allDocIds && row.allDocIds.length > 0
+														? row.allDocIds.every((id) => selectedIds.has(id))
+														: selectedIds.has(row.id)
+												}
+												onCheckedChange={() => {
+													const targetIds =
+														row.allDocIds && row.allDocIds.length > 0
+															? row.allDocIds
+															: [row.id];
+													setSelectedIds((prev) => {
+														const next = new Set(prev);
+														const hasAll = targetIds.every((id) => next.has(id));
+														if (hasAll) {
+															targetIds.forEach((id) => next.delete(id));
+														} else {
+															targetIds.forEach((id) => next.add(id));
+														}
+														return next;
+													});
+												}}
+												aria-label={`Select row ${row.title}`}
+											/>
+										</div>
+									</TableCell>
 									<TableCell>
 										<div className="flex items-center gap-2 min-w-0 max-w-50 sm:max-w-62.5">
 											{row.isBatch && row.documentCount && row.documentCount > 1 ? (
@@ -653,14 +788,50 @@ export function KnowledgeTable({
 											)}
 										</div>
 									</TableCell>
+									<TableCell>
+										<div className="flex items-center gap-2">
+											<div className="size-6 rounded-full bg-blue-100 text-blue-700 flex items-center justify-center text-[11px] font-semibold shrink-0">
+												{(row.uploadedByName || "A").charAt(0).toUpperCase()}
+											</div>
+											<span
+												className="text-xs font-medium text-zinc-700 truncate max-w-28"
+												title={row.uploadedByName || "Admin"}
+											>
+												{row.uploadedByName || "Admin"}
+											</span>
+										</div>
+									</TableCell>
 									<TableCell className="whitespace-nowrap text-sm text-zinc-600">
-										{row.created_at
-											? new Date(row.created_at).toLocaleDateString("en-GB", {
-													day: "2-digit",
-													month: "short",
-													year: "numeric",
-												})
-											: "-"}
+										<div className="flex flex-col gap-0.5">
+											<span className="text-xs text-zinc-900 font-medium">
+												{row.created_at
+													? new Date(row.created_at).toLocaleDateString("en-GB", {
+															day: "2-digit",
+															month: "short",
+															year: "numeric",
+													  })
+													: "-"}
+											</span>
+											{row.status === "APPROVED" && (row.approved_at || row.rawItem.approved_at) && (
+												<span
+													className="text-[10px] text-emerald-700 flex items-center gap-1"
+													title={`Approved on ${new Date(row.approved_at || row.rawItem.approved_at!).toLocaleString("id-ID")}`}
+												>
+													<RiCheckLine className="size-3 shrink-0" />
+													<span>
+														Appr:{" "}
+														{new Date(row.approved_at || row.rawItem.approved_at!).toLocaleDateString("en-GB", {
+															day: "2-digit",
+															month: "short",
+														})}{" "}
+														{new Date(row.approved_at || row.rawItem.approved_at!).toLocaleTimeString("en-GB", {
+															hour: "2-digit",
+															minute: "2-digit",
+														})}
+													</span>
+												</span>
+											)}
+										</div>
 									</TableCell>
 									<TableCell className="max-w-xl">
 										<p
@@ -756,6 +927,18 @@ export function KnowledgeTable({
 				variant="destructive"
 				isLoading={deleteMutation.isPending}
 				onConfirm={handleConfirmDelete}
+			/>
+
+			<ConfirmationModal
+				isOpen={isBulkDeleteModalOpen}
+				onOpenChange={setIsBulkDeleteModalOpen}
+				title={`Delete ${selectedIds.size} Documents?`}
+				description={`Are you sure you want to delete ${selectedIds.size} selected document(s)? All vector embeddings, chunks, and uploaded files will be permanently removed.`}
+				confirmText={`Delete ${selectedIds.size} Documents`}
+				cancelText="Cancel"
+				variant="destructive"
+				isLoading={isBulkDeleting}
+				onConfirm={handleConfirmBulkDelete}
 			/>
 		</div>
 	);

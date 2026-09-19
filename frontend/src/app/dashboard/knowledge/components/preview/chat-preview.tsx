@@ -345,14 +345,14 @@ export function ChatPreview({
 		onChangeSummary?.(val);
 	};
 
-	// const handleStartManualEdit = (currentDisplayContent: string) => {
-	// 	const initialText = localSummary || currentDisplayContent;
-	// 	setBackupManualSummary(initialText);
-	// 	if (!localSummary) {
-	// 		setLocalSummary(initialText);
-	// 	}
-	// 	setIsManualEditing(true);
-	// };
+	const handleStartManualEdit = (currentDisplayContent: string) => {
+		const initialText = localSummary || currentDisplayContent;
+		setBackupManualSummary(initialText);
+		if (!localSummary) {
+			setLocalSummary(initialText);
+		}
+		setIsManualEditing(true);
+	};
 
 	const handleCancelManualEdit = () => {
 		setLocalSummary(backupManualSummary);
@@ -1714,8 +1714,8 @@ export function ChatPreview({
 						{index === firstAssistantIndex && headerNode}
 						{index === firstAssistantIndex && renderConfidenceScore()}
 
-						{/* Primary Manual Edit Trigger Button (hidden for now) */}
-						{/* <div className="flex items-center justify-end mb-3">
+						{/* Primary Manual Edit Trigger Button */}
+						<div className="flex items-center justify-end mb-3">
 							<Button
 								type="button"
 								size="sm"
@@ -1726,7 +1726,7 @@ export function ChatPreview({
 								<RiEdit2Line className="size-3.5" />
 								Manual Edit
 							</Button>
-						</div> */}
+						</div>
 
 						<MarkdownContent content={displayContent} />
 						{renderOperationActions(msg)}
