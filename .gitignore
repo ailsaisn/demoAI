@@ -39,3 +39,7 @@ backend/*.pptx
 backend/generate_dummy_docs.py
 backend/ingest_dummy_to_db.py
 backend/test_dummy_parse.py
+*DUMMY*
+*dummy*
+DUMMY_TEST_*
+
