@@ -1,5 +1,6 @@
 import os
 import time
+import re
 from typing import Optional, Tuple
 from loguru import logger
 
@@ -65,6 +66,448 @@ def _is_valid_image_content(img_bytes: bytes, min_dim: int = 40) -> Tuple[bool, 
     except Exception:
         # Fallback: if Pillow fails, allow bytes if sufficiently large
         return True, img_bytes, "png"
+
+
+def _is_ornamental_pdf_image(
+    pix_width: int,
+    pix_height: int,
+    bbox: list,
+    page_height: float,
+    page_idx: int,
+    nearby_text: str,
+    prod_label: str
+) -> bool:
+    """
+    Detects and filters out non-substantive ornamental PDF images such as:
+    - Publisher/journal logos in headers/footers (e.g. HJKK, Elsevier, Springer logos)
+    - DOI badges & icons (e.g. 44x44 DOI icon)
+    - Creative Commons / copyright license banners (e.g. 133x46 CC-BY-SA badge)
+    - Social media icons / tiny badges (< 50px or banner aspect with tiny height)
+    Preserves genuine product photos, clinical figures, histology, charts, and diagrams.
+    """
+    # 1. Dimension checks
+    # Tiny icons/badges (e.g. DOI icon 44x44, favicons, bullets)
+    if pix_width < 50 or pix_height < 50:
+        return True
+    
+    # License / copyright banner aspect ratio (e.g. CC badge 133x46, 88x31)
+    if pix_height <= 55 and pix_width <= 220:
+        return True
+
+    # 2. Textual pattern checks on label and nearby text
+    combined_text = f"{prod_label} {nearby_text}".lower()
+    
+    # Obvious ornamental / metadata badges
+    badge_keywords = [
+        "doi.org", "http://doi", "https://doi", "creative commons", "creativecommons",
+        "cc-by", "cc by", "cc_by", "crossmark", "open access", "openaccess",
+        "issn", "e-issn", "p-issn", "scopus", "sinta", "pubmed"
+    ]
+    if any(kw in combined_text for kw in badge_keywords):
+        return True
+
+    # 3. Header & Footer checks (especially on Page 1)
+    is_header = bbox[3] < (page_height * 0.18) if page_height > 0 else False
+    is_footer = bbox[1] > (page_height * 0.88) if page_height > 0 else False
+
+    # Check if this image has an explicit scientific figure/chart caption (e.g. Figure 1, Gambar 2)
+    has_figure_caption = bool(re.search(r'\b(?:figure|fig\.|gambar|diagram|bagan|grafik|chart)\s+[ivx0-9]+', combined_text))
+    
+    if (is_header or is_footer) and not has_figure_caption:
+        # In header/footer, if nearby text mentions journal, publisher, volume, or education/university
+        header_meta_words = [
+            "journal", "jurnal", "volume", "vol.", "issue", "no.", "published",
+            "penerbit", "universitas", "university", "fakultas", "faculty",
+            "kependidikan", "kimia", "department", "departemen", "hydrogen"
+        ]
+        if any(hw in combined_text for hw in header_meta_words):
+            return True
+
+    # 4. Signatures, Paraf, Official Stamps, and Approval block images
+    sig_keywords = [
+        "tanda tangan", "tandatangan", "signature", "signed", "paraf", "ttd",
+        "lembar persetujuan", "lembar pengesahan", "approval sheet",
+        "dibuat oleh", "diperiksa oleh", "disetujui oleh", "diketahui oleh",
+        "disahkan oleh", "diajukan oleh", "mengetahui", "approved by",
+        "reviewed by", "prepared by", "checked by"
+    ]
+    if any(sk in combined_text for sk in sig_keywords):
+        sig_indicators = ["tanggal:", "tanggal :", "nama /", "nama terapis", "supervisor", "pic klinik", "(___", "_____", "nama/"]
+        if any(si in combined_text for si in sig_indicators) or any(k in combined_text for k in ["tanda tangan", "tandatangan", "signature", "paraf", "disetujui", "diperiksa", "dibuat oleh"]):
+            return True
+
+    return False
+
+
+def _strip_references_from_pages(pages: list) -> list:
+    """
+    Strips out 'References', 'Daftar Pustaka', 'Bibliography', and literature citations
+    from parsed pages of academic papers and journals.
+    Ensures that LLM context window, knowledge summary in FE, and chunk storage
+    are dedicated purely to the scientific content (Introduction, Methods, Results, Discussion, Conclusion).
+    """
+    if not pages:
+        return pages
+
+    total_pages = len(pages)
+    # References always appear towards the back half of an academic document
+    min_page = max(1, total_pages // 2 - 1) if total_pages >= 4 else 0
+
+    ref_heading_pattern = re.compile(
+        r'^(?:#{1,3}\s*)?(?:REFERENCES?|DAFTAR\s+(?:PUSTAKA|REFERENSI|RUJUKAN)|BIBLIOGRAPHY|LITERATURE\s+CITED|CITED\s+LITERATURE|PUSTAKA\s+ACUAN|SENARAI\s+PUSTAKA|RUJUKAN)\s*$',
+        re.IGNORECASE
+    )
+
+    cutoff_page = None
+    cutoff_line_idx = None
+
+    for p_idx in range(min_page, total_pages):
+        text = pages[p_idx].get("text", "")
+        lines = text.splitlines()
+        for l_idx, line in enumerate(lines):
+            clean = line.strip()
+            if ref_heading_pattern.match(clean):
+                # Verify that following lines are actual citations, not table contents
+                following = [lines[j].strip() for j in range(l_idx + 1, min(l_idx + 25, len(lines))) if lines[j].strip()]
+                numbered_hits = sum(1 for f in following if re.match(r'^(?:\[\d+\]|\d+[\.\)])\s*', f))
+                doi_hits = sum(1 for f in following if 'doi:' in f.lower() or 'doi.org' in f.lower() or 'http' in f.lower())
+                author_hits = sum(1 for f in following if 'et al' in f.lower() or re.search(r'\b(19\d\d|20\d\d)\b', f))
+                has_table_words = any(w in " ".join(following).lower() for w in ['cleanser', 'moisturizer', 'sunscreen', 'table ', 'tabel '])
+
+                if (numbered_hits >= 2 or doi_hits >= 1 or author_hits >= 2) and not has_table_words:
+                    cutoff_page = p_idx
+                    cutoff_line_idx = l_idx
+                    break
+        if cutoff_page is not None:
+            break
+
+    if cutoff_page is None:
+        return pages
+
+    logger.info(f"📚 Stripping references/daftar pustaka starting at page {cutoff_page + 1}, line {cutoff_line_idx + 1} (Total pages: {total_pages} -> {cutoff_page + 1})")
+
+    cleaned_pages = []
+    for p_idx in range(cutoff_page):
+        cleaned_pages.append(pages[p_idx])
+
+    # For the cutoff page, keep lines prior to the references heading
+    cutoff_p_text = pages[cutoff_page].get("text", "")
+    lines = cutoff_p_text.splitlines()
+    kept_lines = lines[:cutoff_line_idx]
+    kept_text = "\n".join(kept_lines).strip()
+    if kept_text:
+        new_page = dict(pages[cutoff_page])
+        new_page["text"] = kept_text
+        cleaned_pages.append(new_page)
+
+    return cleaned_pages
+
+
+def _strip_signature_and_approval_blocks(pages: list) -> list:
+    """
+    Strips out bureaucratic signature blocks, 'Lembar Persetujuan', 'Lembar Pengesahan',
+    and approval sheets from SOPs, clinical protocols, and official letters.
+    Keeps actionable clinical procedures, monitoring, aftercare, and treatment guidelines.
+    """
+    if not pages:
+        return pages
+
+    approval_heading_pattern = re.compile(
+        r'^(?:#{1,4}\s*)?(?:\d+[\.\)]\s*)?(?:PERSETUJUAN\s+DAN\s+TANDA\s+TANGAN|LEMBAR\s+(?:PENGESAHAN|PERSETUJUAN)|HALAMAN\s+PENGESAHAN|TANDA\s+TANGAN\s+(?:DAN\s+)?PENGESAHAN|TANDA\s+TANGAN|SIGNATURES?|APPROVAL\s+SHEET|SIGN-?OFF)\s*$',
+        re.IGNORECASE
+    )
+
+    sig_table_header_pattern = re.compile(
+        r'^(?:Dibuat\s+Oleh|Disiapkan\s+Oleh|Diajukan\s+Oleh)\s+(?:Diperiksa\s+Oleh|Diketahui\s+Oleh)?\s*(?:Disetujui\s+Oleh|Disahkan\s+Oleh)',
+        re.IGNORECASE
+    )
+
+    letter_closing_pattern = re.compile(
+        r'^(?:Hormat\s+kami|Mengetahui|Disetujui\s+oleh|Disahkan\s+oleh)\s*[,:]?\s*$',
+        re.IGNORECASE
+    )
+
+    cleaned_pages = []
+
+    for p_idx, page in enumerate(pages):
+        text = page.get("text", "")
+        if not text:
+            cleaned_pages.append(page)
+            continue
+
+        lines = text.splitlines()
+
+        # Check if the entire page is an approval sheet / lembar pengesahan
+        page_first_lines = [l.strip() for l in lines[:6] if l.strip()]
+        is_full_approval_page = any(
+            re.match(r'^(?:#{1,3}\s*)?(?:LEMBAR\s+(?:PENGESAHAN|PERSETUJUAN)|HALAMAN\s+PENGESAHAN|APPROVAL\s+SHEET)\s*$', l, re.IGNORECASE)
+            for l in page_first_lines
+        ) and any(w in text.lower() for w in ["disetujui oleh", "diperiksa oleh", "tanda tangan", "mengetahui", "dibuat oleh"])
+
+        if is_full_approval_page:
+            logger.info(f"📋 Stripping entire approval sheet page {p_idx + 1}")
+            continue
+
+        cutoff_line = None
+        for l_idx, line in enumerate(lines):
+            clean = line.strip()
+            # 1. Heading match
+            if approval_heading_pattern.match(clean):
+                following = [lines[j].strip() for j in range(l_idx + 1, min(l_idx + 20, len(lines))) if lines[j].strip()]
+                following_text = " ".join(following).lower()
+                if any(w in following_text for w in ["tanda tangan", "dibuat oleh", "disetujui oleh", "diperiksa oleh", "tanggal:", "terapis", "supervisor", "(___", "_____"]):
+                    cutoff_line = l_idx
+                    break
+            # 2. Signature table header match without explicit section heading
+            if sig_table_header_pattern.match(clean):
+                cutoff_line = l_idx
+                break
+            # 3. Official letter closing signature match
+            if letter_closing_pattern.match(clean):
+                following = [lines[j].strip() for j in range(l_idx + 1, min(l_idx + 8, len(lines))) if lines[j].strip()]
+                following_text = " ".join(following).lower()
+                if any(w in following_text for w in ["(___", ".....", "direktur", "kepala", "manajer", "pic", "dokter", "terapis"]):
+                    cutoff_line = l_idx
+                    break
+
+        if cutoff_line is not None:
+            logger.info(f"📋 Stripping signature block on page {p_idx + 1} starting at line {cutoff_line + 1}: '{lines[cutoff_line].strip()}'")
+            kept_lines = lines[:cutoff_line]
+            kept_text = "\n".join(kept_lines).strip()
+            if kept_text:
+                new_page = dict(page)
+                new_page["text"] = kept_text
+                # Clean up any image URLs in page metadata that were exclusively in the stripped signature block
+                if "image_urls" in new_page and isinstance(new_page["image_urls"], list):
+                    valid_urls = [u for u in new_page["image_urls"] if u in kept_text]
+                    new_page["image_urls"] = valid_urls
+                    new_page["image_url"] = valid_urls[0] if valid_urls else None
+                cleaned_pages.append(new_page)
+        else:
+            cleaned_pages.append(page)
+
+    return cleaned_pages
+
+
+def _is_valid_grid_table(table, page_height: float) -> bool:
+    """
+    Validates whether a candidate table from PyMuPDF find_tables is an actual data table
+    and not a false grouping of multi-column narrative paragraphs or horizontal decorative rules.
+    """
+    data = table.extract()
+    if not data or len(data) < 2 or len(data[0]) < 2:
+        return False
+    headers = [str(c or '').strip() for c in data[0]]
+    cols = len(headers)
+    rows = len(data)
+
+    # 1. Reject if more than 25% of column headers are empty
+    empty_headers = sum(1 for h in headers if not h)
+    if (empty_headers / cols) > 0.25:
+        return False
+
+    # 2. Reject if any header is longer than 12 words (indicates a paragraph in cell)
+    for h in headers:
+        if len(h.split()) > 12:
+            return False
+
+    # 3. Reject if header is a major section title (e.g. METHOD, ABSTRACT, INTRODUCTION)
+    section_kws = {'method', 'methods', 'abstract', 'introduction', 'results', 'discussion', 'conclusion', 'references'}
+    for h in headers:
+        if h.lower().strip() in section_kws:
+            return False
+
+    # 4. Sparsity and narrative density check
+    total_cells = rows * cols
+    empty_cells = sum(1 for r in data for c in r if not str(c or '').strip())
+    long_narrative = sum(1 for r in data for c in r if len(str(c or '').strip().split()) > 25)
+    if total_cells >= 8 and (empty_cells / total_cells) > 0.65:
+        return False
+
+    tbl_height = table.bbox[3] - table.bbox[1]
+    if page_height > 0 and (tbl_height / page_height) > 0.40 and long_narrative >= 2:
+        return False
+
+    return True
+
+
+def _extract_in_paragraph_tables(page, non_footers: list, h_lines: list) -> Tuple[list, set]:
+    """
+    Extracts in-paragraph open / academic three-line tables (e.g. Table 1, Table 2, Table 3)
+    embedded within scientific papers and clinical reports.
+    Reconstructs them as clean Markdown tables with captions and footnotes,
+    and returns (academic_tables, consumed_block_indices).
+    """
+    import fitz
+    academic_tables = []
+    consumed = set()
+
+    caption_candidates = []
+    for bi, b in enumerate(non_footers):
+        text = b[4].strip()
+        first_line = text.splitlines()[0] if text else ''
+        m = re.match(r'^(?:Table|Tabel)\s+(\d+)[\.:]\s*(.+)', first_line, re.I)
+        if m:
+            caption_candidates.append((bi, b, m.group(0).strip()))
+
+    for ci, (c_bi, c_block, full_cap) in enumerate(caption_candidates):
+        y0 = c_block[1]
+        next_cap_y = caption_candidates[ci + 1][1][1] if ci + 1 < len(caption_candidates) else page.rect.height - 45
+        candidates = [l for l in h_lines if l.y0 >= c_block[3] - 4 and l.y1 < next_cap_y]
+        if not candidates:
+            continue
+
+        t_lines = [candidates[0]]
+        for l in candidates[1:]:
+            if l.y0 - t_lines[-1].y0 < 100:
+                t_lines.append(l)
+            else:
+                break
+
+        y_top = min(l.y0 for l in t_lines)
+        y_bottom = max(l.y1 for l in t_lines)
+        top_segs = [l for l in t_lines if abs(l.y0 - y_top) < 3]
+        top_segs.sort(key=lambda s: s.x0)
+        x0 = min(l.x0 for l in t_lines) - 4
+        x1 = max(l.x1 for l in t_lines) + 4
+
+        footnote = ''
+        fn_b = None
+        fn_bi = None
+        for bi, b in enumerate(non_footers):
+            if bi == c_bi or bi in consumed:
+                continue
+            if y_bottom - 2 <= b[1] <= y_bottom + 35:
+                fl = b[4].strip().splitlines()[0]
+                if re.match(r'^(?:\([+-]\)\s*:|\*|\†|Note:|\bKet\b|\bKeterangan\b)', fl, re.I):
+                    footnote = fl
+                    fn_b = b
+                    fn_bi = bi
+                    break
+
+        tbl_rect = fitz.Rect(x0, y_top + 1.0, x1, y_bottom - 0.5)
+        words = page.get_text('words', clip=tbl_rect)
+        if fn_b:
+            words = [w for w in words if w[3] <= fn_b[1] + 2]
+
+        rows_dict = {}
+        for w in words:
+            y_mid = (w[1] + w[3]) / 2.0
+            matched = None
+            for ry in rows_dict:
+                if abs(ry - y_mid) < 4:
+                    matched = ry
+                    break
+            if matched is None:
+                rows_dict[y_mid] = [w]
+            else:
+                rows_dict[matched].append(w)
+
+        sorted_rys = sorted(rows_dict.keys())
+        if len(sorted_rys) < 2:
+            continue
+
+        col_bounds = []
+        if len(top_segs) >= 3:
+            for i, seg in enumerate(top_segs):
+                c_min = seg.x0 - 5
+                c_max = seg.x1 + 5 if i == len(top_segs) - 1 else (seg.x1 + top_segs[i + 1].x0) / 2.0
+                col_bounds.append((c_min, c_max))
+        else:
+            best_row = None
+            max_items = 0
+            for ry in sorted_rys:
+                rw = sorted(rows_dict[ry], key=lambda x: x[0])
+                if len(rw) > max_items:
+                    max_items = len(rw)
+                    best_row = rw
+            if best_row and max_items >= 4:
+                sym_idxs = [idx for idx, w in enumerate(best_row) if w[4] in ('+', '-', '–')]
+                if sym_idxs:
+                    first_sym_idx = sym_idxs[0]
+                    label_end = best_row[first_sym_idx - 1][2]
+                    sym_start = best_row[first_sym_idx][0]
+                    col_bounds.append((x0, (label_end + sym_start) / 2.0))
+                    for si in range(first_sym_idx, len(best_row)):
+                        w = best_row[si]
+                        c_min = col_bounds[-1][1]
+                        c_max = x1 if si == len(best_row) - 1 else (w[2] + best_row[si + 1][0]) / 2.0
+                        col_bounds.append((c_min, c_max))
+
+        if not col_bounds or len(col_bounds) < 2:
+            continue
+
+        num_cols = len(col_bounds)
+        rows_grid = []
+        for ry in sorted_rys:
+            rw = sorted(rows_dict[ry], key=lambda x: x[0])
+            cells = [''] * num_cols
+            for w in rw:
+                w_mid = (w[0] + w[2]) / 2.0
+                for ci, (cmin, cmax) in enumerate(col_bounds):
+                    if cmin <= w_mid < cmax:
+                        cells[ci] = (cells[ci] + ' ' + w[4]).strip()
+                        break
+            if any(cells):
+                rows_grid.append(cells)
+
+        if not rows_grid:
+            continue
+
+        header_lines = [l for l in t_lines if abs(l.y0 - y_top) > 5 and abs(l.y1 - y_bottom) > 5]
+        y_hdr_sep = min(l.y0 for l in header_lines) if header_lines else None
+
+        header_rows = []
+        data_rows = []
+        if y_hdr_sep is not None:
+            for ry, cells in zip(sorted_rys, rows_grid):
+                if ry <= y_hdr_sep + 3:
+                    header_rows.append(cells)
+                else:
+                    data_rows.append(cells)
+        else:
+            header_rows = [rows_grid[0]]
+            data_rows = rows_grid[1:]
+
+        merged_headers = [''] * num_cols
+        for hr in header_rows:
+            for ci, val in enumerate(hr):
+                if val:
+                    if ci >= 3 and num_cols == 8:
+                        nums = re.findall(r'\b\d+(?:\.\d+)?\b', val)
+                        if nums:
+                            merged_headers[ci] = f'{nums[-1]}%'
+                            continue
+                    merged_headers[ci] = (merged_headers[ci] + ' ' + val).strip()
+
+        headers = [h if h else f'Kolom {ci+1}' for ci, h in enumerate(merged_headers)]
+        aligns = [':---' if ci == 0 else ':---:' for ci in range(num_cols)]
+
+        md_lines = [f'### {full_cap}', '', '| ' + ' | '.join(headers) + ' |', '| ' + ' | '.join(aligns) + ' |']
+        for dr in data_rows:
+            md_lines.append('| ' + ' | '.join(dr) + ' |')
+        if footnote:
+            md_lines.append('')
+            md_lines.append(f'*{footnote}*')
+
+        consumed.add(c_bi)
+        if fn_bi is not None:
+            consumed.add(fn_bi)
+        for bi, b in enumerate(non_footers):
+            if bi in consumed:
+                continue
+            b_cx = (b[0] + b[2]) / 2.0
+            b_cy = (b[1] + b[3]) / 2.0
+            if x0 - 5 <= b_cx <= x1 + 5 and y_top - 2 <= b_cy <= y_bottom + 10:
+                consumed.add(bi)
+
+        academic_tables.append({
+            'y0': y0,
+            'md': '\n'.join(md_lines),
+            'bbox': (x0, y0, x1, y_bottom)
+        })
+
+    return academic_tables, consumed
 
 
 class DocumentParser:
@@ -235,6 +678,8 @@ class DocumentParser:
             pages[0]["image_urls"] = extracted_image_urls
             pages[0]["image_url"] = extracted_image_urls[0]
 
+        pages = _strip_references_from_pages(pages)
+        pages = _strip_signature_and_approval_blocks(pages)
         return ParseResult(pages=pages, method="fast")
 
     # -------------------------------------------------------------------------
@@ -279,87 +724,166 @@ class DocumentParser:
         total_chars = 0
         pages_with_text = 0
         upload_batch = []
+        page_layouts = []
 
         for i in range(num_pages):
             try:
                 page = doc[i]
                 page_width = page.rect.width
+                page_height = page.rect.height
                 midpoint = page_width / 2.0
 
                 blocks = page.get_text("blocks")
                 text_blocks = [b for b in blocks if len(b) >= 5 and b[4].strip() and (len(b) < 7 or b[6] == 0)]
+                footers = [b for b in text_blocks if b[1] > page_height - 45]
+                non_footers = [b for b in text_blocks if b[1] <= page_height - 45]
 
-                if text_blocks:
-                    # Multi-column journal detection heuristic
-                    left_cand = []
-                    right_cand = []
-                    spanning = []
+                # 1. Grid Tables detection (lines strategy) with validation
+                grid_tables = []
+                consumed_indices = set()
+                try:
+                    tabs = page.find_tables(strategy="lines")
+                    for t in tabs.tables:
+                        if not _is_valid_grid_table(t, page_height):
+                            continue
+                        data = t.extract()
+                        if not data or len(data) < 2 or len(data[0]) < 2:
+                            continue
+                        headers = [re.sub(r'\s+', ' ', str(c or '')).strip() for c in data[0]]
+                        headers = [h if h else f"Kolom {ci+1}" for ci, h in enumerate(headers)]
+                        aligns = ['---'] * len(headers)
+                        rows = []
+                        for r in data[1:]:
+                            clean_row = []
+                            for c in r:
+                                val = re.sub(r'\s+', ' ', str(c or '')).strip()
+                                val = re.sub(r'_{4,}', '-', val)
+                                clean_row.append(val)
+                            if len(clean_row) < len(headers):
+                                clean_row.extend([''] * (len(headers) - len(clean_row)))
+                            rows.append('| ' + ' | '.join(clean_row[:len(headers)]) + ' |')
+                        md_table = '| ' + ' | '.join(headers) + ' |\n| ' + ' | '.join(aligns) + ' |\n' + '\n'.join(rows)
+                        grid_tables.append({
+                            "y0": t.bbox[1],
+                            "md": md_table,
+                            "bbox": t.bbox
+                        })
+                        for bi, b in enumerate(non_footers):
+                            b_cx = (b[0] + b[2]) / 2.0
+                            b_cy = (b[1] + b[3]) / 2.0
+                            if t.bbox[0] - 5 <= b_cx <= t.bbox[2] + 5 and t.bbox[1] - 5 <= b_cy <= t.bbox[3] + 5:
+                                consumed_indices.add(bi)
+                except Exception as tab_err:
+                    logger.debug(f"Table detection on page {i+1}: {tab_err}")
 
-                    for b in text_blocks:
-                        width = b[2] - b[0]
-                        center_x = (b[0] + b[2]) / 2.0
-                        if width > page_width * 0.65 or (b[0] < midpoint * 0.6 and b[2] > midpoint * 1.35):
-                            spanning.append(b)
-                        elif center_x < midpoint:
-                            left_cand.append(b)
-                        else:
-                            right_cand.append(b)
+                # 1b. In-paragraph open academic tables (Table 1, Table 2, Table 3, etc.)
+                try:
+                    drawings = page.get_drawings()
+                    h_lines = [d["rect"] for d in drawings if d.get("rect") and d["rect"].height <= 3 and d["rect"].width > 50]
+                    h_lines.sort(key=lambda r: r.y0)
+                    acad_tables, acad_consumed = _extract_in_paragraph_tables(page, non_footers, h_lines)
+                    consumed_indices.update(acad_consumed)
+                    grid_tables.extend(acad_tables)
+                except Exception as acad_err:
+                    logger.debug(f"Academic table extraction on page {i+1}: {acad_err}")
 
-                    is_two_column = len(left_cand) >= 2 and len(right_cand) >= 2
-
-                    if is_two_column:
-                        # Any block strictly above the side-by-side column content is treated as header
-                        first_col_y = max(min(b[1] for b in left_cand), min(b[1] for b in right_cand))
-                        header_blocks = [b for b in spanning if b[3] <= first_col_y + 10]
-                        header_blocks += [b for b in left_cand if b[3] <= first_col_y - 10]
-                        header_blocks += [b for b in right_cand if b[3] <= first_col_y - 10]
-                        header_blocks.sort(key=lambda b: b[1])
-
-                        left_blocks = [b for b in left_cand if b not in header_blocks]
-                        right_blocks = [b for b in right_cand if b not in header_blocks]
-
-                        left_blocks.sort(key=lambda b: b[1])
-                        right_blocks.sort(key=lambda b: b[1])
-
-                        bottom_blocks = [b for b in spanning if b not in header_blocks]
-                        bottom_blocks.sort(key=lambda b: b[1])
-
-                        ordered = header_blocks + left_blocks + right_blocks + bottom_blocks
-                        page_text = "\n\n".join(b[4].strip() for b in ordered if b[4].strip())
-                    else:
-                        # Standard reading order: top-to-bottom, left-to-right
-                        text_blocks.sort(key=lambda b: (round(b[1] / 10) * 10, b[0]))
-                        page_text = "\n\n".join(b[4].strip() for b in text_blocks if b[4].strip())
-                else:
-                    page_text = (page.get_text() or "").strip()
-
-                # Memory protection: limit individual page text length
-                if len(page_text) > 50000:
-                    page_text = page_text[:50000] + "\n... [teks halaman dipadatkan untuk stabilitas]"
-
-                char_count = len(page_text)
-                total_chars += char_count
-                if char_count > 30:
-                    pages_with_text += 1
-
-                pages.append({"page": i + 1, "text": page_text})
-
-                # Extract embedded images on this page
+                # 2. Extract embedded images info on this page
                 img_infos = page.get_image_info(xrefs=True)
                 if not img_infos:
                     raw_imgs = page.get_images()
                     img_infos = [{"xref": im[0], "bbox": [0, 0, 0, 0]} for im in raw_imgs if len(im) > 0]
 
-                blocks = page.get_text("blocks")
-                text_blocks = [b for b in blocks if len(b) >= 5 and b[4].strip() and (len(b) < 7 or b[6] == 0)]
-                
+                # 3. Detect SOP / Procedural Step Cards with Illustrations
+                sop_step_data = None
+                step_candidates = []
+                for bi, b in enumerate(non_footers):
+                    if bi in consumed_indices:
+                        continue
+                    first_line = b[4].strip().splitlines()[0]
+                    m = re.match(r'^(?:Step\s+)?(\d+)[\.\:]\s*(.+)', first_line, re.IGNORECASE)
+                    if m:
+                        num = int(m.group(1))
+                        title = m.group(2).strip()
+                        # Exclude major document section titles
+                        if any(k in title.lower() for k in [
+                            'tujuan', 'ruang lingkup', 'persiapan', 'rangkaian',
+                            'monitoring', 'aftercare', 'dokumentasi', 'persetujuan'
+                        ]):
+                            continue
+                        b_lower = b[4].lower()
+                        if 'prosedur' in b_lower or 'procedure' in b_lower or 'catatan' in b_lower:
+                            step_candidates.append({'num': num, 'title': title, 'block': b, 'bi': bi})
+
+                step_img_xrefs = {}
+                if step_candidates and len(img_infos) > 0:
+                    step_candidates.sort(key=lambda s: s["block"][1])
+                    sorted_imgs = sorted(img_infos, key=lambda im: im.get('bbox', [0, 0, 0, 0])[1])
+
+                    step_rows = []
+                    for si, s in enumerate(step_candidates):
+                        consumed_indices.add(s["bi"])
+                        b = s["block"]
+                        lines = [l.strip() for l in b[4].splitlines() if l.strip()]
+                        proc_lines = []
+                        for l in lines[1:]:
+                            if l.lower() in ("prosedur", "procedure", "instruksi"):
+                                continue
+                            proc_lines.append(l)
+                        proc_text = " ".join(proc_lines)
+
+                        y_next = step_candidates[si+1]["block"][1] if si+1 < len(step_candidates) else page_height - 45
+                        notes_text = "-"
+                        for nbi, nb in enumerate(non_footers):
+                            if nbi in consumed_indices:
+                                continue
+                            if nb[1] >= b[1] and nb[1] < y_next:
+                                if "catatan" in nb[4].lower():
+                                    consumed_indices.add(nbi)
+                                    nb_lines = [l.strip() for l in nb[4].splitlines() if l.strip() and not l.startswith("___")]
+                                    sub = [l for l in nb_lines if l.lower() not in ("catatan", "note", "notes", "keterangan")]
+                                    if sub:
+                                        notes_text = " ".join(sub)
+
+                        # Match image by vertical overlap or index
+                        img_item = None
+                        s_top = b[1] - 30
+                        s_bottom = y_next + 10
+                        for im in sorted_imgs:
+                            ib = im.get("bbox", [0, 0, 0, 0])
+                            im_y_mid = (ib[1] + ib[3]) / 2.0
+                            if s_top <= im_y_mid <= s_bottom:
+                                img_item = im
+                                break
+                        if not img_item and si < len(sorted_imgs) and len(sorted_imgs) == len(step_candidates):
+                            img_item = sorted_imgs[si]
+
+                        xref = img_item["xref"] if img_item else None
+                        step_dict = {
+                            "num": s["num"],
+                            "title": s["title"],
+                            "procedure": proc_text,
+                            "notes": notes_text,
+                            "xref": xref,
+                            "y0": b[1]
+                        }
+                        if xref:
+                            step_img_xrefs[xref] = step_dict
+                        step_rows.append(step_dict)
+
+                    if step_rows:
+                        sop_step_data = {
+                            "y0": step_rows[0]["y0"],
+                            "steps": step_rows
+                        }
+
+                # 4. Prepare image upload info for this page
                 seen_xrefs = set()
                 for img_idx, im in enumerate(img_infos):
                     xref = im.get("xref")
                     if not xref or xref in seen_xrefs:
                         continue
                     seen_xrefs.add(xref)
-                    
+
                     try:
                         base_img = doc.extract_image(xref)
                     except Exception:
@@ -369,26 +893,17 @@ class DocumentParser:
                     img_bytes = None
                     img_ext = base_img.get("ext", "png")
 
-                    # PyMuPDF Pixmap handles transparency (/SMask), colorspace conversion, and solid black filtering
                     try:
                         pix = fitz.Pixmap(doc, xref)
-
-                        # Filter out tiny spacer/bullet images (<40px)
                         if pix.width < 40 or pix.height < 40:
                             continue
-
-                        # Filter out unicolor blocks (single-color background rectangles, lines, etc.)
                         if getattr(pix, "is_unicolor", False):
                             continue
-
-                        # Filter out solid pitch-black or near-black blocks (>95% black)
                         if hasattr(pix, "color_topusage"):
                             top_usage, top_color = pix.color_topusage()
                             if top_usage >= 0.95 and isinstance(top_color, (bytes, bytearray)) and len(top_color) >= 3:
                                 if all(c < 18 for c in top_color[:3]):
                                     continue
-
-                        # If there is a soft mask (transparency), composite it so transparent areas don't render as black!
                         if smask and smask > 0:
                             try:
                                 mask_pix = fitz.Pixmap(doc, smask)
@@ -396,21 +911,15 @@ class DocumentParser:
                                     pix = fitz.Pixmap(fitz.csRGB, pix)
                                 pix = fitz.Pixmap(pix, mask_pix)
                                 img_ext = "png"
-                            except Exception as mask_err:
-                                logger.debug(f"Failed to composite smask {smask}: {mask_err}")
-
-                        # If image is in CMYK or non-standard color space, convert to standard sRGB
+                            except Exception:
+                                pass
                         if pix.colorspace and pix.colorspace != fitz.csRGB and pix.colorspace != fitz.csGRAY:
                             try:
                                 pix = fitz.Pixmap(fitz.csRGB, pix)
                             except Exception:
                                 pass
-
-                        # Check again for unicolor after mask compositing
                         if getattr(pix, "is_unicolor", False):
                             continue
-
-                        # Extract bytes
                         if img_ext.lower() in ("jpg", "jpeg") and not pix.alpha:
                             img_bytes = pix.tobytes("jpeg")
                         else:
@@ -421,56 +930,144 @@ class DocumentParser:
                         img_bytes = base_img.get("image")
                         img_ext = base_img.get("ext", "png")
 
-                    # Secondary Pillow verification for solid black / flat unicolor blocks & format normalization
                     is_valid, img_bytes, img_ext = _is_valid_image_content(img_bytes, min_dim=40)
                     if not is_valid or not img_bytes:
                         continue
-                        
+
                     bbox = im.get("bbox", [0, 0, 0, 0])
                     img_y_mid = (bbox[1] + bbox[3]) / 2.0
-                    
-                    best_block = None
-                    best_dist = float("inf")
-                    for b in text_blocks:
-                        b_y_mid = (b[1] + b[3]) / 2.0
-                        dist = abs(b_y_mid - img_y_mid)
-                        if dist < best_dist:
-                            best_dist = dist
-                            best_block = b
-                            
+
                     prod_label = ""
-                    if best_block and best_dist <= 80:
-                        lines = [l.strip() for l in best_block[4].splitlines() if l.strip()]
-                        for l in lines:
-                            if l.lower() in ("foto produk", "nama produk", "brand", "kategori", "ukuran", "deskripsi", "no", "action", "gambar"):
-                                continue
-                            prod_label = l
-                            break
-                            
+                    matched_step = step_img_xrefs.get(xref)
+                    if matched_step:
+                        prod_label = matched_step["title"]
+
+                    if not prod_label:
+                        best_block = None
+                        best_dist = float("inf")
+                        for b in non_footers:
+                            b_y_mid = (b[1] + b[3]) / 2.0
+                            dist = abs(b_y_mid - img_y_mid)
+                            if dist < best_dist:
+                                best_dist = dist
+                                best_block = b
+
+                        if best_block and best_dist <= 100:
+                            lines = [l.strip() for l in best_block[4].splitlines() if l.strip()]
+                            for l in lines:
+                                if re.match(r'^(?:figure|fig\.|gambar|diagram|bagan|grafik)\s+[ivx0-9]+', l, re.IGNORECASE):
+                                    prod_label = l
+                                    break
+                            if not prod_label:
+                                skip_labels = {
+                                    "foto produk", "nama produk", "brand", "kategori", "ukuran", "deskripsi",
+                                    "no", "action", "gambar", "catatan", "note", "notes", "keterangan",
+                                    "prosedur", "procedure", "status", "checklist", "field", "isi / catatan"
+                                }
+                                for l in lines:
+                                    clean_l = re.sub(r'^[0-9\.\-\*\•\s]+', '', l).strip()
+                                    if clean_l.lower() in skip_labels or clean_l.startswith("___"):
+                                        continue
+                                    prod_label = l
+                                    break
+
                     if not prod_label:
                         prod_label = f"Image p{i+1}_{img_idx+1}"
-                        
+
+                    # Filter out non-substantive ornamental images
+                    clip_rect = fitz.Rect(max(0, bbox[0] - 50), max(0, bbox[1] - 80), min(page_width, bbox[2] + 50), min(page_height, bbox[3] + 80))
+                    surrounding_text = page.get_text("text", clip=clip_rect).strip()
+                    nearby_text = f"{prod_label} {surrounding_text}"
+                    if _is_ornamental_pdf_image(
+                        pix_width=pix.width,
+                        pix_height=pix.height,
+                        bbox=bbox,
+                        page_height=page_height,
+                        page_idx=i,
+                        nearby_text=nearby_text,
+                        prod_label=prod_label
+                    ):
+                        logger.info(f"Filtered out ornamental/metadata PDF image on page {i+1}: '{prod_label}' ({pix.width}x{pix.height})")
+                        continue
+
                     clean_fname = re.sub(r'[^a-zA-Z0-9_\-]', '_', prod_label)[:40].strip('_')
                     if not clean_fname:
                         clean_fname = f"pdf_img_p{i+1}_{img_idx+1}"
                     else:
                         clean_fname = f"pdf_img_p{i+1}_{img_idx+1}_{clean_fname}"
-                        
+
                     fname = f"{clean_fname}.{img_ext}"
-                    
                     upload_batch.append({
                         "content": img_bytes,
                         "filename": fname,
                         "content_type": f"image/{img_ext}",
                         "page_index": i,
                         "img_fname": fname,
-                        "product_name": prod_label
+                        "product_name": prod_label,
+                        "xref": xref,
+                        "step_num": matched_step["num"] if matched_step else None
                     })
+
+                # 5. Build non-consumed text blocks
+                remaining_blocks = [b for bi, b in enumerate(non_footers) if bi not in consumed_indices and b[1] >= 35]
+
+                # 2-Column layout ordering for remaining blocks
+                def _is_spanning_block(b):
+                    w = b[2] - b[0]
+                    if w > page_width * 0.62:
+                        return True
+                    if b[0] < (midpoint - 60) and b[2] > (midpoint + 60):
+                        return True
+                    return False
+
+                sorted_by_y = sorted(remaining_blocks, key=lambda b: b[1])
+                slices = []
+                current_slice = []
+                for b in sorted_by_y:
+                    if _is_spanning_block(b):
+                        if current_slice:
+                            slices.append(('col', current_slice))
+                            current_slice = []
+                        slices.append(('span', [b]))
+                    else:
+                        current_slice.append(b)
+                if current_slice:
+                    slices.append(('col', current_slice))
+
+                ordered_remaining = []
+                for stype, sblocks in slices:
+                    if stype == 'span':
+                        ordered_remaining.extend(sblocks)
+                    else:
+                        lefts = [b for b in sblocks if (b[0] + b[2]) / 2.0 < midpoint]
+                        rights = [b for b in sblocks if (b[0] + b[2]) / 2.0 >= midpoint]
+                        if lefts and rights:
+                            lefts.sort(key=lambda b: b[1])
+                            rights.sort(key=lambda b: b[1])
+                            ordered_remaining.extend(lefts)
+                            ordered_remaining.extend(rights)
+                        else:
+                            sblocks.sort(key=lambda b: (round(b[1] / 5) * 5, b[0]))
+                            ordered_remaining.extend(sblocks)
+
+                page_layouts.append({
+                    "page_idx": i,
+                    "grid_tables": grid_tables,
+                    "sop_step_data": sop_step_data,
+                    "ordered_blocks": ordered_remaining,
+                    "footers": footers
+                })
+                pages.append({"page": i + 1, "text": ""})
+
             except Exception as page_err:
                 logger.warning(f"Error parsing page {i+1} of {file_path}: {page_err}")
                 pages.append({"page": i + 1, "text": f"[Halaman {i+1} gagal diekstraksi: {page_err}]"})
+                page_layouts.append({"page_idx": i, "grid_tables": [], "sop_step_data": None, "ordered_blocks": [], "footers": []})
 
+        # Upload images and assemble pages
         try:
+            url_by_xref = {}
+            url_by_step = {}
             if upload_batch:
                 results = upload_images_parallel(upload_batch)
                 for item, res in zip(upload_batch, results):
@@ -478,32 +1075,103 @@ class DocumentParser:
                     p_idx = item["page_index"]
                     fname = item["img_fname"]
                     prod_name = item.get("product_name") or fname
-                    if img_url and p_idx < len(pages):
-                        if "image_urls" not in pages[p_idx]:
-                            pages[p_idx]["image_urls"] = []
-                        if "images" not in pages[p_idx]:
-                            pages[p_idx]["images"] = []
-                        pages[p_idx]["image_urls"].append(img_url)
-                        pages[p_idx]["images"].append({
-                            "id": f"img_p{p_idx+1}_{len(pages[p_idx]['images'])+1}",
-                            "url": img_url,
-                            "product_name": prod_name,
-                            "caption": prod_name,
-                            "role": "PRODUCT_PACKAGING"
-                        })
-                        # Embed image tag into page text near the product if found, else append
-                        if prod_name and prod_name in pages[p_idx]["text"]:
-                            pattern = re.compile(rf'(^.*{re.escape(prod_name)}.*$)', re.MULTILINE)
-                            if pattern.search(pages[p_idx]["text"]):
-                                pages[p_idx]["text"] = pattern.sub(rf'\1\n![{prod_name}]({img_url})', pages[p_idx]["text"], count=1)
+                    xref = item.get("xref")
+                    step_num = item.get("step_num")
+
+                    if img_url:
+                        if xref:
+                            url_by_xref[xref] = img_url
+                        if step_num is not None:
+                            url_by_step[(p_idx, step_num)] = img_url
+
+                        if p_idx < len(pages):
+                            if "image_urls" not in pages[p_idx]:
+                                pages[p_idx]["image_urls"] = []
+                            if "images" not in pages[p_idx]:
+                                pages[p_idx]["images"] = []
+                            pages[p_idx]["image_urls"].append(img_url)
+                            is_fig = bool(re.match(r'^(?:figure|fig\.|gambar|diagram|bagan|grafik)', prod_name, re.IGNORECASE)) or (step_num is not None)
+                            pages[p_idx]["images"].append({
+                                "id": f"img_p{p_idx+1}_{len(pages[p_idx]['images'])+1}",
+                                "url": img_url,
+                                "product_name": prod_name,
+                                "caption": prod_name,
+                                "role": "FIGURE" if is_fig else "PRODUCT_PACKAGING"
+                            })
+
+            # Assemble structured text for each page
+            for layout in page_layouts:
+                p_idx = layout["page_idx"]
+                if p_idx >= len(pages):
+                    continue
+
+                items_to_render = []
+
+                # Add Grid Tables
+                for gt in layout.get("grid_tables", []):
+                    items_to_render.append((gt["y0"], gt["md"]))
+
+                # Add SOP Step Table if present
+                sop_data = layout.get("sop_step_data")
+                if sop_data and sop_data.get("steps"):
+                    rows = []
+                    for s in sop_data["steps"]:
+                        s_num = s["num"]
+                        s_title = s["title"]
+                        s_xref = s.get("xref")
+                        img_url = url_by_step.get((p_idx, s_num)) or (url_by_xref.get(s_xref) if s_xref else None)
+                        img_md = f"![{s_title}]({img_url})" if img_url else "-"
+                        rows.append(f"| {s_num} | {s_title} | {img_md} | {s['procedure']} | {s['notes']} |")
+
+                    md_sop = (
+                        "| No | Tahapan Treatment | Ilustrasi | Prosedur | Catatan |\n"
+                        "|:---:|:---|:---:|:---|:---:|\n" +
+                        "\n".join(rows)
+                    )
+                    items_to_render.append((sop_data["y0"], md_sop))
+
+                # Add non-consumed text blocks
+                for b in layout.get("ordered_blocks", []):
+                    items_to_render.append((b[1], b[4].strip()))
+
+                # Sort all content by vertical position y0
+                items_to_render.sort(key=lambda it: it[0])
+
+                # Footers at the end
+                for fb in layout.get("footers", []):
+                    items_to_render.append((fb[1], fb[4].strip()))
+
+                assembled_text = "\n\n".join(it[1] for it in items_to_render if it[1])
+
+                # For non-step images, embed near their product_name if not already present
+                if p_idx < len(pages) and pages[p_idx].get("images"):
+                    for img_obj in pages[p_idx]["images"]:
+                        p_name = img_obj["product_name"]
+                        u = img_obj["url"]
+                        if u not in assembled_text:
+                            if p_name and p_name in assembled_text:
+                                pattern = re.compile(rf'(^.*{re.escape(p_name)}.*$)', re.MULTILINE)
+                                if pattern.search(assembled_text):
+                                    assembled_text = pattern.sub(rf'\1\n![{p_name}]({u})', assembled_text, count=1)
+                                else:
+                                    assembled_text += f"\n\n![{p_name}]({u})"
                             else:
-                                pages[p_idx]["text"] += f"\n\n![{prod_name}]({img_url})"
-                        else:
-                            pages[p_idx]["text"] += f"\n\n![{prod_name}]({img_url})"
-                            
-                for i in range(len(pages)):
-                    if pages[i].get("image_urls"):
-                        pages[i]["image_url"] = pages[i]["image_urls"][0]
+                                assembled_text += f"\n\n![{p_name}]({u})"
+
+                # Memory protection
+                if len(assembled_text) > 50000:
+                    assembled_text = assembled_text[:50000] + "\n... [teks halaman dipadatkan untuk stabilitas]"
+
+                pages[p_idx]["text"] = assembled_text
+                char_count = len(assembled_text)
+                total_chars += char_count
+                if char_count > 30:
+                    pages_with_text += 1
+
+            for i in range(len(pages)):
+                if pages[i].get("image_urls"):
+                    pages[i]["image_url"] = pages[i]["image_urls"][0]
+
         except Exception as img_err:
             logger.warning(f"PDF embedded image extraction failed: {img_err}", exc_info=True)
 
@@ -513,50 +1181,24 @@ class DocumentParser:
             if p.get("text"):
                 p["text"] = normalize_document_text(p["text"])
 
+        # Strip bibliography / references so chunking and frontend knowledge display
+        # focus 100% on paper body, findings, and discussions
+        pages = _strip_references_from_pages(pages)
+
+        # Strip bureaucratic signature blocks and approval sheets from SOPs, protocols, and letters
+        pages = _strip_signature_and_approval_blocks(pages)
+
         return ParseResult(pages=pages, method="fast")
 
     # -------------------------------------------------------------------------
     # FAST EXTRACTION: EXCEL & CSV (.xlsx, .xls, .csv)
     # -------------------------------------------------------------------------
     def _parse_excel_fast(self, file_path: str) -> ParseResult:
-        """Extract text and markdown tables from .xlsx, .xls, and .csv files using pandas."""
+        """Extract text and markdown tables from .xlsx, .xls, and .csv files using openpyxl & pandas."""
         import pandas as pd
 
         ext = os.path.splitext(file_path)[1].lower()
         pages = []
-        extracted_image_urls = []
-
-        # Extract embedded images from .xlsx/.xlsm media parts and upload to MinIO first
-        if ext in [".xlsx", ".xlsm"]:
-            try:
-                import zipfile
-                from app.services.storage import upload_images_parallel
-
-                with zipfile.ZipFile(file_path, 'r') as z:
-                    media_files = [f for f in z.namelist() if f.startswith('xl/media/')]
-                    # Collect all image data first
-                    upload_batch = []
-                    for idx, media_name in enumerate(media_files, start=1):
-                        img_bytes = z.read(media_name)
-                        is_valid, clean_bytes, img_ext = _is_valid_image_content(img_bytes, min_dim=40)
-                        if not is_valid or not clean_bytes:
-                            continue
-                        upload_batch.append({
-                            "content": clean_bytes,
-                            "filename": f"excel_img_{idx}_{os.path.basename(media_name).split('.')[0]}.{img_ext}",
-                            "content_type": f"image/{img_ext}"
-                        })
-
-                    # Upload all images in parallel (1x client init, concurrent put_object)
-                    if upload_batch:
-                        results = upload_images_parallel(upload_batch)
-                        for res in results:
-                            img_url = res.get("image_url")
-                            if img_url:
-                                extracted_image_urls.append(img_url)
-                        logger.info(f"Parallel upload: {len(extracted_image_urls)} Excel images uploaded to MinIO.")
-            except Exception as img_err:
-                logger.debug(f"Excel embedded image extraction skipped: {img_err}")
 
         try:
             def _df_to_markdown_safe(dataframe) -> str:
@@ -576,45 +1218,149 @@ class DocumentParser:
                 md_table = _df_to_markdown_safe(df)
                 pages.append({
                     "page": 1,
-                    "text": f"### CSV Data Table\n\n{md_table}"
+                    "sheet_name": "CSV",
+                    "text": f"### CSV Data Table\n\n{md_table}",
+                    "image_urls": [],
+                    "image_url": None
                 })
             else:
+                # Use openpyxl for .xlsx/.xlsm to extract images per sheet with exact cell row anchors
+                wb = None
+                if ext in [".xlsx", ".xlsm"]:
+                    try:
+                        import openpyxl
+                        wb = openpyxl.load_workbook(file_path, data_only=True)
+                    except Exception as wb_err:
+                        logger.debug(f"openpyxl load failed, falling back to standard pandas: {wb_err}")
+                        wb = None
+
                 with pd.ExcelFile(file_path) as excel_file:
-                    logger.info(f"Parsing Excel with {len(excel_file.sheet_names)} sheets: {excel_file.sheet_names}")
-                    for page_idx, sheet_name in enumerate(excel_file.sheet_names, start=1):
+                    sheet_names = excel_file.sheet_names
+                    logger.info(f"Parsing Excel with {len(sheet_names)} sheets: {sheet_names}")
+
+                    from app.services.storage import upload_images_parallel
+
+                    for page_idx, sheet_name in enumerate(sheet_names, start=1):
                         df = pd.read_excel(excel_file, sheet_name=sheet_name)
                         if df.empty:
                             continue
                         df = df.dropna(how="all")
+                        num_rows = len(df)
 
-                        # If Excel has an image/photo column, inject extracted image URLs row-by-row
-                        if extracted_image_urls:
-                            photo_col = None
+                        sheet_image_urls = []
+                        row_to_image = {}
+                        unanchored_images = []
+
+                        # 1. Extract embedded images for THIS worksheet
+                        if wb and sheet_name in wb.sheetnames:
+                            ws = wb[sheet_name]
+                            ws_images = getattr(ws, '_images', [])
+                            upload_batch = []
+                            img_meta = []
+
+                            for idx, img in enumerate(ws_images):
+                                try:
+                                    raw_bytes = img._data()
+                                except Exception:
+                                    continue
+                                is_valid, clean_bytes, img_ext = _is_valid_image_content(raw_bytes, min_dim=30)
+                                if not is_valid or not clean_bytes:
+                                    continue
+
+                                anchor = getattr(img, 'anchor', None)
+                                row = None
+                                if anchor:
+                                    if hasattr(anchor, '_from'):
+                                        row = anchor._from.row
+                                    elif hasattr(anchor, 'from'):
+                                        row = getattr(anchor, 'from').row
+                                # In openpyxl row 0 is header, so row 1 corresponds to df row 0
+                                df_row = (row - 1) if (row is not None and row >= 1) else None
+
+                                safe_sheet_name = "".join(c if c.isalnum() else "_" for c in sheet_name)
+                                filename = f"excel_{safe_sheet_name}_img_{idx+1}.{img_ext}"
+                                upload_batch.append({
+                                    "content": clean_bytes,
+                                    "filename": filename,
+                                    "content_type": f"image/{img_ext}"
+                                })
+                                img_meta.append(df_row)
+
+                            if upload_batch:
+                                results = upload_images_parallel(upload_batch)
+                                for df_r, res in zip(img_meta, results):
+                                    url = res.get("image_url")
+                                    if url:
+                                        sheet_image_urls.append(url)
+                                        if df_r is not None and 0 <= df_r < num_rows and df_r not in row_to_image:
+                                            row_to_image[df_r] = url
+                                        else:
+                                            unanchored_images.append(url)
+                                logger.info(f"Sheet '{sheet_name}': uploaded {len(sheet_image_urls)} images ({len(row_to_image)} anchored to rows).")
+
+                        # 2. Identify photo column and product name column
+                        photo_col = None
+                        for col in df.columns:
+                            col_clean = str(col).strip().lower()
+                            if any(k in col_clean for k in ["foto", "gambar", "photo", "image", "picture"]):
+                                photo_col = col
+                                break
+
+                        name_col = None
+                        for col in df.columns:
+                            if col == photo_col:
+                                continue
+                            col_clean = str(col).strip().lower()
+                            if any(nk in col_clean for nk in ["nama", "product", "title", "item", "produk"]):
+                                name_col = col
+                                break
+                        if name_col is None:
                             for col in df.columns:
-                                col_str = str(col).lower()
-                                if any(k in col_str for k in ["foto", "gambar", "photo", "image", "picture"]):
-                                    photo_col = col
+                                if col != photo_col and df[col].dtype == object:
+                                    name_col = col
                                     break
-                            
-                            if photo_col is not None:
-                                img_idx = 0
-                                new_col_vals = []
-                                for r_idx in range(len(df)):
-                                    if img_idx < len(extracted_image_urls):
-                                        prod_name = ""
-                                        for name_col in df.columns:
-                                            if any(nk in str(name_col).lower() for nk in ["nama", "product", "title", "item"]):
-                                                val = str(df.at[df.index[r_idx], name_col])
-                                                if val and val != "nan":
-                                                    prod_name = val
-                                                    break
-                                        img_alt = prod_name or f"Foto Produk {img_idx+1}"
-                                        new_col_vals.append(f"![{img_alt}]({extracted_image_urls[img_idx]})")
-                                        img_idx += 1
-                                    else:
-                                        val_existing = str(df.at[df.index[r_idx], photo_col])
-                                        new_col_vals.append("" if val_existing == "nan" else val_existing)
-                                df[photo_col] = new_col_vals
+
+                        def get_row_name(r_i, df_obj=df, n_col=name_col):
+                            if n_col is not None:
+                                val = str(df_obj.at[df_obj.index[r_i], n_col])
+                                if val and val != "nan":
+                                    return val.strip()
+                            return f"Produk {r_i+1}"
+
+                        # 3. Inject image markdown into rows
+                        unanchored_cursor = 0
+                        if photo_col is not None:
+                            new_col_vals = []
+                            for r_idx in range(num_rows):
+                                img_url = row_to_image.get(r_idx)
+                                if not img_url and unanchored_cursor < len(unanchored_images):
+                                    img_url = unanchored_images[unanchored_cursor]
+                                    unanchored_cursor += 1
+
+                                if img_url:
+                                    alt = get_row_name(r_idx)
+                                    new_col_vals.append(f"![{alt}]({img_url})")
+                                else:
+                                    existing = str(df.at[df.index[r_idx], photo_col])
+                                    new_col_vals.append("" if existing == "nan" else existing)
+                            df[photo_col] = new_col_vals
+                        elif sheet_image_urls:
+                            # Auto-insert 'Foto Produk' column for sheets without photo column
+                            new_col_vals = []
+                            for r_idx in range(num_rows):
+                                img_url = row_to_image.get(r_idx)
+                                if not img_url and unanchored_cursor < len(unanchored_images):
+                                    img_url = unanchored_images[unanchored_cursor]
+                                    unanchored_cursor += 1
+
+                                if img_url:
+                                    alt = get_row_name(r_idx)
+                                    new_col_vals.append(f"![{alt}]({img_url})")
+                                else:
+                                    new_col_vals.append("")
+                            df.insert(0, "Foto Produk", new_col_vals)
+                            photo_col = "Foto Produk"
+                            logger.info(f"Auto-injected 'Foto Produk' column into sheet '{sheet_name}' ({len(sheet_image_urls)} images)")
 
                         md_table = _df_to_markdown_safe(df)
                         sheet_text = f"## Sheet: {sheet_name}\n\n{md_table}"
@@ -622,21 +1368,17 @@ class DocumentParser:
                             "page": page_idx,
                             "sheet_name": sheet_name,
                             "text": sheet_text,
-                            "image_urls": extracted_image_urls,
-                            "image_url": extracted_image_urls[0] if extracted_image_urls else None
+                            "image_urls": sheet_image_urls,
+                            "image_url": sheet_image_urls[0] if sheet_image_urls else None
                         })
 
             if not pages:
-                pages = [{"page": 1, "text": "Dokumen spreadsheet kosong."}]
-
-            if extracted_image_urls and pages:
-                pages[0]["image_urls"] = extracted_image_urls
-                pages[0]["image_url"] = extracted_image_urls[0]
+                pages = [{"page": 1, "text": "Dokumen spreadsheet kosong.", "image_urls": [], "image_url": None}]
 
             return ParseResult(pages=pages, method="fast")
         except Exception as e:
-            logger.warning(f"Fast pandas Excel parse failed for {file_path}: {e}. Falling back to text extraction...")
-            return ParseResult(pages=[{"page": 1, "text": f"Error parsing spreadsheet: {e}"}], method="fast")
+            logger.warning(f"Fast Excel parse failed for {file_path}: {e}. Falling back to text extraction...")
+            return ParseResult(pages=[{"page": 1, "text": f"Error parsing spreadsheet: {e}", "image_urls": [], "image_url": None}], method="fast")
 
     # -------------------------------------------------------------------------
     # FAST EXTRACTION: POWERPOINT (.pptx, .ppt)

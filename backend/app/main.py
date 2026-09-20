@@ -184,6 +184,28 @@ async def observability_and_rate_limit_middleware(request: Request, call_next):
 
     return response
 
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    import traceback
+    request_id = getattr(request.state, "request_id", None) or uuid.uuid4().hex[:12]
+    logger.error(f"[{request_id}] Unhandled server exception on {request.url.path}: {exc}\n{traceback.format_exc()}")
+    
+    origin = request.headers.get("origin")
+    allowed_origin = origin if origin and (origin in settings.CORS_ORIGINS or "*" in settings.CORS_ORIGINS) else (settings.CORS_ORIGINS[0] if settings.CORS_ORIGINS else "*")
+    
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "Internal Server Error", "error": str(exc), "request_id": request_id},
+        headers={
+            "Access-Control-Allow-Origin": allowed_origin,
+            "Access-Control-Allow-Credentials": "true",
+            "Access-Control-Allow-Methods": "*",
+            "Access-Control-Allow-Headers": "*",
+            "X-Request-ID": request_id
+        }
+    )
+
+
 app.include_router(auth.router, prefix="/api")
 app.include_router(users.router, prefix="/api")
 app.include_router(roles.router, prefix="/api/roles")

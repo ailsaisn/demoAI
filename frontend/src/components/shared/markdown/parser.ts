@@ -102,7 +102,12 @@ export function parseMarkdownSegments(markdown: string): Segment[] {
 				k.includes("net content") ||
 				k.includes("skin type") ||
 				k.includes("aturan pakai") ||
-				k.includes("treatment")
+				k.includes("cara pakai") ||
+				k.includes("cara penggunaan") ||
+				k.includes("komposisi") ||
+				k.includes("kontraindikasi") ||
+				k.includes("treatment") ||
+				k.includes("produk")
 			);
 		});
 

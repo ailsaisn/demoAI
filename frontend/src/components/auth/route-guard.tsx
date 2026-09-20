@@ -6,7 +6,7 @@ import { useEffect } from "react";
 
 interface RouteGuardProps {
 	children: React.ReactNode;
-	allowedTypes?: Array<"STAFF">;
+	allowedTypes?: Array<"STAFF" | "DOCTOR">;
 	requiredAccess?: string;
 }
 

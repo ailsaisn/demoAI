@@ -23,6 +23,21 @@ KNOWN_SECTION_LABELS = {
     "product overview", "product information",
 }
 
+# Academic & Scientific Paper Major Headings → ## Heading
+ACADEMIC_MAJOR_HEADINGS = {
+    "abstract", "abstrak",
+    "introduction", "pendahuluan", "background", "latar belakang",
+    "method", "methods", "methodology", "metode", "metodologi",
+    "materials and methods", "bahan dan metode", "experimental",
+    "results and discussion", "hasil dan pembahasan", "results", "hasil",
+    "discussion", "pembahasan",
+    "conclusion", "conclusions", "kesimpulan", "kesimpulan dan saran",
+    "recommendation", "recommendations", "saran",
+    "acknowledgments", "acknowledgements", "ucapan terima kasih",
+    "references", "bibliography", "daftar pustaka",
+    "conflict of interest", "funding",
+}
+
 # KV labels → **Key**: Value
 KNOWN_KV_LABELS = {
     "kategori", "durasi", "downtime", "jumlah sesi", "interval",
@@ -105,6 +120,12 @@ def _is_structural_boundary(lines, idx, N):
     # Markdown heading
     if line.startswith("#"):
         return True
+    # Academic headings & Table / Figure headers
+    if re.match(r'^(?:table|tabel|figure|fig\.|gambar)\s+[ivx0-9]+', line_lower):
+        return True
+    stripped_num = re.sub(r'^\d+[\.\)]?\s*', '', line_lower)
+    if stripped_num in ACADEMIC_MAJOR_HEADINGS:
+        return True
     return False
 
 
@@ -184,6 +205,27 @@ def normalize_document_text(text: str) -> str:
             i += 1
             continue
 
+        # --- Academic Major Headings: "1. INTRODUCTION", "METHODS", "RESULTS AND DISCUSSION" ---
+        line_clean = line.strip()
+        line_lower_clean = line_clean.lower().rstrip(":")
+        stripped_acad = re.sub(r'^\d+[\.\)]?\s*', '', line_lower_clean)
+        if stripped_acad in ACADEMIC_MAJOR_HEADINGS:
+            flush_para()
+            heading_title = line_clean.rstrip(":")
+            blocks.append({"type": "heading", "content": f"## {heading_title}"})
+            i += 1
+            continue
+
+        # --- Table and Figure captions: "Table 1. ...", "Figure 1. ..." ---
+        tbl_fig_match = re.match(r'^(Table|Tabel|Figure|Fig\.|Gambar)\s+([IVX0-9]+[\.\:]?.*)', line_clean, re.IGNORECASE)
+        if tbl_fig_match:
+            flush_para()
+            prefix = tbl_fig_match.group(1).title()
+            rest = tbl_fig_match.group(2).strip()
+            blocks.append({"type": "subheading", "content": f"### {prefix} {rest}"})
+            i += 1
+            continue
+
         # --- Product Name → ## Heading ---
         pn_label, pn_span, pn_rest = _match_multi_word_label(lines, i, N, PRODUCT_NAME_LABELS, _PRODUCT_FIRST_WORDS)
         if pn_label:
@@ -235,7 +277,14 @@ def normalize_document_text(text: str) -> str:
                 title_parts.append(lines[i])
                 i += 1
             full_heading = " ".join(p for p in title_parts if p).strip()
-            is_major = (
+            is_citation = (
+                "doi:" in full_heading.lower()
+                or "et al" in full_heading.lower()
+                or bool(re.search(r'\b(vol\.|no\.|pp\.|jurnal|journal)\b', full_heading, re.IGNORECASE))
+                or bool(re.search(r'\b(19\d\d|20\d\d)[a-z]?[\.;:]', full_heading))
+                or len(full_heading.split()) > 10
+            )
+            is_major = not is_citation and (
                 any(kw in full_heading for kw in [
                     "Program", "Therapy", "Extraction", "Microneedling",
                     "Facial", "Center", "Treatment"

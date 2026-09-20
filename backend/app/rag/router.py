@@ -2013,12 +2013,71 @@ async def process_ingestion_background(
                     except Exception as cat_err:
                         logger.warning(f"Failed to fetch categories for metadata detection: {cat_err}")
 
-                    # Document content excerpt for structuring
-                    doc_content_excerpt = canonical_text[:30000] if len(canonical_text) > 30000 else canonical_text
+                    file_name_lower = file_name.lower()
+                    canonical_lower = canonical_text.lower()
+                    
+                    # Identify if the document is an academic paper, scientific journal, manuscript, clinical study, or research publication
+                    is_academic_journal = (
+                        any(kw in file_name_lower for kw in [
+                            "published", "manuscript", "journal", "jurnal", "paper", "article",
+                            "penelitian", "skripsi", "tesis", "disertasi", "prosiding"
+                        ])
+                        or (
+                            len(canonical_text) > 8000
+                            and sum(1 for kw in [
+                                "abstract", "abstrak", "introduction", "pendahuluan",
+                                "method", "metode", "materials and methods", "results and discussion",
+                                "hasil dan pembahasan", "conclusion", "kesimpulan",
+                                "references", "daftar pustaka", "bibliography",
+                                "doi:", "issn", "vol."
+                            ] if kw in canonical_lower) >= 2
+                        )
+                    )
 
-                    admin_instruction_block = ""
-                    if user_prompt and str(user_prompt).strip():
-                        admin_instruction_block = f"""
+                    is_product_catalog = (
+                        "detail produk" in canonical_lower
+                        or file_name_lower.endswith(('.xlsx', '.xls', '.csv'))
+                        or any(kw in canonical_lower for kw in ["harga", "price", "sku", "netto", "katalog", "catalogue", "daftar produk"])
+                    )
+
+                    if is_academic_journal or (len(canonical_text) > 12000 and not is_product_catalog):
+                        # For papers/journals: extract title & metadata quickly using first 8000 chars (title, abstract, authors)
+                        doc_content_excerpt = canonical_text[:8000]
+                        structuring_prompt = f"""
+You are an expert scientific document analysis AI for PT Arya Noble (ERHA).
+This document is a scientific research paper, journal article, clinical study, or academic manuscript.
+
+Your tasks:
+1. **DETECT METADATA**:
+   - title: Extract the EXACT clean paper title (without file extensions, authors, or journal metadata).
+   - document_type: "GENERAL"
+   - valid_from: null
+   - valid_until: null
+   - suggested_categories: Array of matching category objects strictly from the "Available Categories" list below.
+   - feedback: 1 informative sentence in Indonesian describing the paper topic, research findings, and scope.
+
+DOCUMENT CONTENT (Beginning excerpt):
+{doc_content_excerpt}
+
+Available Categories:
+{json.dumps(db_categories, ensure_ascii=False)}
+
+Return ONLY valid JSON (no surrounding markdown code blocks):
+{{
+    "title": "Clean Scientific Paper Title",
+    "document_type": "GENERAL",
+    "valid_from": null,
+    "valid_until": null,
+    "suggested_categories": [],
+    "feedback": "Jurnal ilmiah ini membahas..."
+}}"""
+                    else:
+                        # Document content excerpt for structuring
+                        doc_content_excerpt = canonical_text[:30000] if len(canonical_text) > 30000 else canonical_text
+
+                        admin_instruction_block = ""
+                        if user_prompt and str(user_prompt).strip():
+                            admin_instruction_block = f"""
 ======================================================================
 ADMIN INGESTION INSTRUCTION:
 "{str(user_prompt).strip()}"
@@ -2029,7 +2088,7 @@ CRITICAL INSTRUCTION:
 - Adapt the title and the formatted_summary specifically to what the Admin requested!
 """
 
-                    structuring_prompt = f"""
+                        structuring_prompt = f"""
 You are an expert document structuring and knowledge curation AI for PT Arya Noble (ERHA).
 
 {admin_instruction_block}
@@ -2049,13 +2108,23 @@ Your tasks:
        - **Ukuran**: Ukuran/Netto (hanya jika ada di dokumen)
        - **Harga**: Harga Produk (hanya jika ada di dokumen)
        - **Deskripsi**: Penjelasan singkat manfaat dan kegunaan produk (jika ada).
+       - **Komposisi**: Komposisi/kandungan aktif (jika ada).
+       - **Cara Penggunaan**: Aturan pakai/cara penggunaan (jika ada).
+       - **Kontraindikasi**: Kontraindikasi (jika ada).
+       - **Efek Samping**: Efek samping (jika ada).
        ```
      * NEVER separate product catalogs into a plain text table with photos dumped at the bottom. Keep each photo directly inside its corresponding `### Detail Produk` block.
      * If a product has no image in the source document, omit the image tag for that product block, but still format it as a `### Detail Produk` block with key-value bullet points.
+   - MULTI-SHEET / MULTI-TAB SPREADSHEET CONSISTENCY RULE (CRITICAL):
+     * When the document contains multiple sheets/tabs (e.g. `## Sheet: Catalogue1` and `## Sheet: Copy of Produk`), YOU MUST PROCESS AND INCLUDE ALL SHEETS IN THE OUTPUT! DO NOT DROP, SKIP, OR ABBREVIATE ANY SHEET.
+     * Create a `## Sheet: [Nama Sheet]` or `## [Nama Sheet]` section for each sheet.
+     * Format EVERY product in EVERY sheet consistently into modular `### Detail Produk` blocks, with each product's photo placed directly inside its block.
+     * Never dump orphan photos at the top under the main document title (# Title) or between sections.
+     * Preserve all specific attributes present in each sheet (e.g. Komposisi, Cara Penggunaan, Kontraindikasi, Efek Samping, Kategori, Ukuran, Deskripsi).
    - STRICT ZERO-HALLUCINATION & FACTUAL ACCURACY RULE FOR PRODUCT ATTRIBUTES (CRITICAL):
      * SKU RULE: ONLY include the `- **SKU**: [Nomor SKU]` line IF AND ONLY IF an explicit SKU code or number is written in the source document. If NO SKU code/number is explicitly written in the source document, YOU MUST COMPLETELY OMIT THE `- **SKU**:` LINE ENTIRELY! DO NOT INVENT, FABRICATE, GENERATE, OR GUESS ANY SKU CODE (e.g. NEVER create ERHA-ACNE-001, ERHA-TRU-001, or any random code).
-     * ATTRIBUTE ACCURACY: ONLY include attribute bullet lines (`Brand`, `Kategori`, `Ukuran`, `Harga`, `Deskripsi`) for values that are EXPLICITLY present in the source document. Do NOT invent missing values or fabricate categories.
-     * NON-PRODUCT DOCUMENTS RULE: If the document is a Technical Design Document, SOP, FAQ, operational manual, or general report (NOT a product catalog): DO NOT format content into `### Detail Produk` blocks. Use clean, standard Markdown headings (`##`, `###`) reflecting the actual document sections.
+     * ATTRIBUTE ACCURACY: ONLY include attribute bullet lines (`Brand`, `Kategori`, `Ukuran`, `Harga`, `Deskripsi`, `Komposisi`, `Cara Penggunaan`, `Kontraindikasi`, `Efek Samping`) for values that are EXPLICITLY present in the source document. Do NOT invent missing values or fabricate categories.
+   - NON-PRODUCT DOCUMENTS RULE: If the document is a Technical Design Document, SOP, FAQ, operational manual, or general report (NOT a product catalog): DO NOT format content into `### Detail Produk` blocks. Use clean, standard Markdown headings (`##`, `###`) reflecting the actual document sections.
    - EXCEL & SPREADSHEET TABLE PRESERVATION:
      * For non-product SPREADSHEET / CSV files: PRESERVE AND KEEP TABLES AS MARKDOWN (`| Col 1 | Col 2 |`).
      * IMAGE CAPTION & LEGEND PLACEMENT: For images inside or associated with tables/sections, place the markdown image tag `![Alt Text](IMAGE_URL)` cleanly, and place any caption, legend, or description text DIRECTLY BELOW the image tag.
@@ -2136,11 +2205,52 @@ Return ONLY valid JSON (no surrounding markdown code blocks):
                         extracted_doc_type = "PRODUCT"
                         logger.info(f"🖼️ [BATCH: {batch_id or 'SINGLE'}] [FILE: {file_name}] Preserved clean product image summary: '{recommended_title}'")
                     else:
-                        # Use AI structured markdown as summary if provided and valid
+                        file_name_lower = file_name.lower()
+                        canonical_lower = canonical_text.lower()
+                        
+                        # Identify if the document is an academic paper, scientific journal, manuscript, clinical study, or research publication
+                        is_academic_journal = (
+                            any(kw in file_name_lower for kw in [
+                                "published", "manuscript", "journal", "jurnal", "paper", "article",
+                                "penelitian", "skripsi", "tesis", "disertasi", "prosiding"
+                            ])
+                            or (
+                                len(canonical_text) > 8000
+                                and sum(1 for kw in [
+                                    "abstract", "abstrak", "introduction", "pendahuluan",
+                                    "method", "metode", "materials and methods", "results and discussion",
+                                    "hasil dan pembahasan", "conclusion", "kesimpulan",
+                                    "references", "daftar pustaka", "bibliography",
+                                    "doi:", "issn", "vol."
+                                ] if kw in canonical_lower) >= 2
+                            )
+                        )
+
+                        is_product_catalog = (
+                            "detail produk" in canonical_lower
+                            or file_name_lower.endswith(('.xlsx', '.xls', '.csv'))
+                            or any(kw in canonical_lower for kw in ["harga", "price", "sku", "netto", "katalog", "catalogue", "daftar produk"])
+                        )
+
                         ai_formatted_summary = parsed_meta.get("formatted_summary") or parsed_meta.get("summary")
-                        if ai_formatted_summary and len(str(ai_formatted_summary).strip()) > 30:
-                            summary = str(ai_formatted_summary).strip()
-                            logger.info(f"AI formatted document into structured Markdown ({len(summary)} chars)")
+
+                        # For academic papers, scientific journals, or long non-catalog documents:
+                        # PRESERVE 100% OF THE COMPLETE CONTENT (tables, figures, text) without truncation!
+                        if is_academic_journal or (len(canonical_text) > 12000 and not is_product_catalog):
+                            clean_body = canonical_text.strip()
+                            if not clean_body.startswith(f"# {recommended_title}"):
+                                # Clean any existing duplicate top # Heading if present
+                                clean_body = re.sub(r'^#\s+[^\n]+\n*', '', clean_body)
+                                summary = f"# {recommended_title}\n\n{clean_body}"
+                            else:
+                                summary = clean_body
+                            extracted_doc_type = "GENERAL"
+                            logger.info(f"📚 [PAPER/JOURNAL] Preserved 100% full detail of '{recommended_title}' ({len(summary)} chars) without truncation.")
+                        else:
+                            # Use AI structured markdown as summary for product catalogs / short documents if provided and valid
+                            if ai_formatted_summary and len(str(ai_formatted_summary).strip()) > 30:
+                                summary = str(ai_formatted_summary).strip()
+                                logger.info(f"AI formatted document into structured Markdown ({len(summary)} chars)")
 
                     # Apply deterministic refinements if user specified price/SKU/title in user_prompt
                     if user_prompt and str(user_prompt).strip() and summary:
@@ -5139,7 +5249,7 @@ async def approve_document(
             trace.log_stage("CHUNK", int((time.time() - t0_chunk) * 1000), status="SUCCESS", count=len(chunks) if isinstance(chunks, list) else 0)
 
             # Pre-clear existing entries for this doc from vector store and BM25
-            v_store = pipeline.vector_store
+            v_store = pipeline.vector_store if pipeline else None
             if not v_store:
                 try:
                     from app.rag.services.vector_store import PGVectorAdapter
@@ -5270,7 +5380,7 @@ async def approve_document(
         trace.log_stage("EMBEDDING", int((time.time() - t0_emb) * 1000), status="SUCCESS", count=len(all_chunks_to_index))
 
         t0_pg = time.time()
-        v_store = pipeline.vector_store
+        v_store = pipeline.vector_store if pipeline else None
         if not v_store:
             try:
                 from app.rag.services.vector_store import PGVectorAdapter
@@ -6001,7 +6111,7 @@ async def _resolve_query_general_prompt(db_session) -> str:
         result = await db_session.execute(stmt)
         db_prompt = result.scalar_one_or_none()
         if db_prompt and db_prompt.strip():
-            if "GAMBAR PRODUK & TREATMENT RESMI" not in db_prompt:
+            if "GAMBAR PRODUK & TREATMENT RESMI" not in db_prompt or "PENYAJIAN JURNAL ILMIAH & KATALOG TABEL" not in db_prompt:
                 try:
                     stmt_update = select(AppConfig).where(AppConfig.key == "AI_PROMPT_QUERY_GENERAL")
                     res_cfg = await db_session.execute(stmt_update)
@@ -6009,7 +6119,7 @@ async def _resolve_query_general_prompt(db_session) -> str:
                     if cfg_obj:
                         cfg_obj.value = DEFAULT_QUERY_GENERAL_PROMPT
                         await db_session.commit()
-                        logger.info("[QUERY-GENERAL] Auto-synchronized AI_PROMPT_QUERY_GENERAL in AppConfig DB with natural Q&A persona and authentic product image rules.")
+                        logger.info("[QUERY-GENERAL] Auto-synchronized AI_PROMPT_QUERY_GENERAL in AppConfig DB with natural Q&A persona and scientific journal/catalog guidance.")
                 except Exception as sync_err:
                     logger.warning(f"[QUERY-GENERAL] Could not auto-sync DB prompt: {sync_err}")
                 return DEFAULT_QUERY_GENERAL_PROMPT
@@ -6724,9 +6834,19 @@ async def query_general_endpoint(
         # 3.3 Contextualize query and retrieve approved knowledge
         t0_retrieval = time.time()
         search_query = GenerationPipeline.contextualize_retrieval_query(user_prompt, request.history)
+
+        # Dynamic top_k: Broad/Synthesis queries covering multi-page journals or multi-sheet Excel catalogs
+        broad_keywords = [
+            "semua", "lengkap", "runtut", "seluruh", "jurnal", "paper", "katalog", "tabel",
+            "daftar", "sebutkan", "jelaskan", "kandungan", "manfaat", "hasil", "penelitian", "metode"
+        ]
+        q_lower = search_query.lower()
+        is_broad = any(kw in q_lower for kw in broad_keywords)
+        general_top_k = 18 if is_broad else 10
+
         retrieval_response = pipeline.retriever.retrieve(
             query=search_query,
-            top_k=10,
+            top_k=general_top_k,
             filter_metadata=None,
             rerank=False,
             include_expired=True

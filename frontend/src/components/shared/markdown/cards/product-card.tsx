@@ -21,12 +21,14 @@ export function ProductCard({ data }: { data: CardData }) {
 	let usage = "";
 	let ageGroup = "";
 	let sideEffects = "";
+	let composition = "";
+	let contraindications = "";
 	let description = "";
 	const otherItems: KeyValueItem[] = [];
 
 	for (const item of items) {
 		const k = item.key.toLowerCase();
-		if (k.includes("product name") || k.includes("nama produk") || k === "nama") {
+		if (k.includes("product name") || k.includes("nama produk") || k === "nama" || k === "produk" || k === "product" || k.includes("produk")) {
 			productName = item.value;
 		} else if (k.includes("brand") || k.includes("merek")) {
 			brand = item.value;
@@ -63,8 +65,12 @@ export function ProductCard({ data }: { data: CardData }) {
 			bpom = item.value;
 		} else if (k.includes("tekstur") || k.includes("texture") || k.includes("sediaan")) {
 			texture = item.value;
-		} else if (k.includes("aturan pakai") || k.includes("cara pakai") || k.includes("dosis")) {
+		} else if (k.includes("aturan pakai") || k.includes("cara pakai") || k.includes("dosis") || k.includes("cara penggunaan")) {
 			usage = item.value;
+		} else if (k.includes("komposisi") || k.includes("composition") || k.includes("ingredients") || k.includes("kandungan")) {
+			composition = item.value;
+		} else if (k.includes("kontraindikasi") || k.includes("contraindication")) {
+			contraindications = item.value;
 		} else if (k.includes("target usia") || k.includes("usia") || k.includes("age")) {
 			ageGroup = item.value;
 		} else if (k.includes("efek samping") || k.includes("side effect")) {
@@ -228,7 +234,23 @@ export function ProductCard({ data }: { data: CardData }) {
 						</div>
 					)}
 
-					{/* 10. Description / Deskripsi */}
+					{/* 10. Komposisi */}
+					{composition && (
+						<div>
+							<span className="text-zinc-500 font-medium">Komposisi:</span>{" "}
+							<span className="text-zinc-900 font-normal">{composition}</span>
+						</div>
+					)}
+
+					{/* 11. Kontraindikasi */}
+					{contraindications && (
+						<div>
+							<span className="text-zinc-500 font-medium">Kontraindikasi:</span>{" "}
+							<span className="text-zinc-900 font-normal">{contraindications}</span>
+						</div>
+					)}
+
+					{/* 12. Description / Deskripsi */}
 					{description && (
 						<div className="mt-1 text-zinc-600 text-xs sm:text-[13px] leading-relaxed">
 							{description}

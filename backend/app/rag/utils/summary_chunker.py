@@ -402,7 +402,20 @@ def chunk_summary_markdown(
 
     # Split summary into sections by ## headings
     raw_sections = re.split(r'(?=\n##\s+)', summary)
-    sections = [s.strip() for s in raw_sections if s.strip() and len(s.strip()) >= 30]
+    ref_sec_pattern = re.compile(
+        r'^##\s*(?:REFERENCES?|DAFTAR\s+(?:PUSTAKA|REFERENSI|RUJUKAN)|BIBLIOGRAPHY|LITERATURE\s+CITED|CITED\s+LITERATURE|PUSTAKA\s+ACUAN)\b',
+        re.IGNORECASE
+    )
+    sig_sec_pattern = re.compile(
+        r'^##\s*(?:\d+[\.\)]\s*)?(?:.*persetujuan.*tanda\s*tangan|.*lembar\s+(?:persetujuan|pengesahan)|.*halaman\s+pengesahan|.*tanda\s+tangan|.*approval\s+sheet)',
+        re.IGNORECASE
+    )
+    sections = [
+        s.strip() for s in raw_sections 
+        if s.strip() and len(s.strip()) >= 30 
+        and not ref_sec_pattern.match(s.strip())
+        and not sig_sec_pattern.match(s.strip())
+    ]
     if not sections:
         sections = [summary.strip()]
 

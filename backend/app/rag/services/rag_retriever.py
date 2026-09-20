@@ -95,15 +95,60 @@ class BM25Index:
             return []
         return re.findall(r'\w+', text.lower())
 
+    def hydrate_from_db(self) -> bool:
+        """
+        Self-healing fallback: Hydrates BM25 corpus and metadata directly from
+        PostgreSQL DocumentChunk table (SSOT) to prevent index loss/desync.
+        """
+        try:
+            from app.rag.services.vector_store import DocumentChunk
+            from sqlalchemy import create_engine
+            from sqlalchemy.orm import sessionmaker
+
+            engine = create_engine(settings.pg_conn_str, pool_pre_ping=True)
+            Session = sessionmaker(bind=engine)
+            with Session() as session:
+                docs = session.query(DocumentChunk).all()
+                if not docs:
+                    logger.debug("No DocumentChunks found in DB for BM25 self-healing.")
+                    return False
+                
+                self.chunks = []
+                self.corpus = []
+                for doc in docs:
+                    text_val = doc.text or ""
+                    meta_val = doc.metadata_ or {}
+                    self.chunks.append({
+                        "text": text_val,
+                        "metadata": meta_val
+                    })
+                    self.corpus.append(self.tokenize(text_val))
+                
+                if self.corpus:
+                    self.bm25 = BM25Okapi(self.corpus)
+                    logger.info(f"🔄 BM25 self-healed from PostgreSQL DB: loaded {len(self.chunks)} chunks.")
+                    self.save(settings.bm25_index_path)
+                    return True
+        except Exception as e:
+            logger.warning(f"BM25 self-healing from DB note: {e}")
+        return False
+
     def add_chunks(self, new_chunks: List[Dict[str, Any]]):
         """Adds new chunks to the BM25 index, removing old chunks of the same source file first."""
         if not new_chunks:
             return
 
+        # Ensure index is loaded before appending to prevent wiping existing index
+        if not self.chunks:
+            self.load(settings.bm25_index_path)
+            if not self.chunks:
+                self.hydrate_from_db()
+
         # Try to extract the source_file name to clear older entries
-        source_file = new_chunks[0].get("metadata", {}).get("source_file")
+        meta0 = new_chunks[0].get("metadata", {}) if isinstance(new_chunks[0], dict) else {}
+        source_file = meta0.get("source_file") or meta0.get("knowledge_id") or meta0.get("file_name")
         if source_file:
-            logger.debug(f"Clearing old BM25 chunks for source file: {source_file}")
+            logger.debug(f"Clearing old BM25 chunks for identifier: {source_file}")
             self.remove_file_chunks(source_file)
 
         for chunk in new_chunks:
@@ -119,20 +164,37 @@ class BM25Index:
         if self.corpus:
             self.bm25 = BM25Okapi(self.corpus)
             logger.info(f"Re-initialized BM25 index. Total chunks in index: {len(self.chunks)}")
+            self.save(settings.bm25_index_path)
         else:
             self.bm25 = None
 
     def remove_file_chunks(self, source_file: str):
         """Removes all chunks associated with a given source file name or knowledge_id."""
+        if not self.chunks:
+            self.load(settings.bm25_index_path)
+            if not self.chunks:
+                self.hydrate_from_db()
+
         s_clean = str(source_file).strip().lower()
+        s_base = s_clean.replace("_parsed.json", "").replace(".json", "").replace(".pdf", "").replace(".xlsx", "").strip()
+
         indices_to_keep = []
         for i, chunk in enumerate(self.chunks):
             meta = chunk.get("metadata", {}) if isinstance(chunk, dict) else {}
             chunk_source = str(meta.get("source_file", "")).strip().lower()
             chunk_kid = str(meta.get("knowledge_id", "")).strip().lower()
             chunk_fname = str(meta.get("file_name", "")).strip().lower()
-            if s_clean not in (chunk_source, chunk_kid, chunk_fname):
+            chunk_title = str(meta.get("title", "")).strip().lower()
+
+            chunk_identifiers = {
+                chunk_source, chunk_kid, chunk_fname, chunk_title,
+                chunk_source.replace("_parsed.json", "").replace(".json", "").replace(".pdf", "").replace(".xlsx", "").strip(),
+                chunk_fname.replace("_parsed.json", "").replace(".json", "").replace(".pdf", "").replace(".xlsx", "").strip()
+            }
+
+            if s_clean not in chunk_identifiers and s_base not in chunk_identifiers:
                 indices_to_keep.append(i)
+
         self.chunks = [self.chunks[i] for i in indices_to_keep]
         self.corpus = [self.corpus[i] for i in indices_to_keep]
         
@@ -409,7 +471,7 @@ class PromptContextBuilder:
 
         context_parts = []
         total_chars = 0
-        MAX_CONTEXT_CHARS = 20000  # ~5,000 tokens budget reserved for context (OpenAI GPT-5.4)
+        MAX_CONTEXT_CHARS = 35000  # Generous budget for multi-page scientific journals and comprehensive Excel tables
 
         seen_table_rows = set()
 
@@ -464,9 +526,9 @@ class PromptContextBuilder:
                         clean_lines.append(line)
                 text = "\n".join(clean_lines)
 
-            # Smart chunk trimming: limit individual chunk text to 1,400 chars (~350 tokens) to ensure room for multiple documents
-            if len(text) > 1400:
-                text = text[:1400] + "\n... [bagian detail dipadatkan]"
+            # Smart chunk trimming: limit individual chunk text to 3,500 chars to preserve full tables and detailed clinical sections
+            if len(text) > 3500:
+                text = text[:3500] + "\n... [bagian detail dipadatkan]"
 
             valid_from = metadata.get("valid_from")
             valid_until = metadata.get("valid_until")
