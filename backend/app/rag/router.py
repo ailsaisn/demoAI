@@ -589,24 +589,36 @@ def extract_product_deletion(user_prompt: str) -> tuple[Optional[str], Optional[
     if not user_prompt:
         return None, None, None
 
-    # 0. By image deletion: e.g. hapus gambar produk ERHA Acneact Gentle Acne Moisturizer, hapus foto "ERHA Acneact", hilangkan gambar
+    def _clean_target_name(name: str) -> Optional[str]:
+        if not name:
+            return None
+        t = re.split(r'\b(?:pada|dari|di|dokumen|katalog|kb|database)\b', name, flags=re.IGNORECASE)[0]
+        t = re.sub(r'^[\s\*_\`"\'“”.,]+|[\s\*_\`"\'“”.,]+$', '', t).strip()
+        while True:
+            t_sub = re.sub(r'^(?:dari|pada|untuk|buat|bagi|for|from|of|in|at|di)\s+', '', t, flags=re.IGNORECASE).strip()
+            t_sub = re.sub(r'^(?:data\s+)?(?:produk|products?|item|barang)\s+', '', t_sub, flags=re.IGNORECASE).strip()
+            if t_sub == t:
+                break
+            t = t_sub
+        forbidden = ("yang", "semua", "seluruh", "ini", "itu", "nya", "produk", "product", "products", "item", "barang", "data", "gambar", "foto", "image", "picture")
+        if t and t.lower() in forbidden:
+            return None
+        return t or None
+
+    # 0. By image deletion: e.g. hapus gambar product Spot Gel New Version, hapus foto "ERHA Acneact", hilangkan gambar
     m_img = re.search(
-        r'\b(?:hapus|delete|hilangkan|remove|buang|bersihkan|tiadakan)\s+(?:semua\s+|seluruh\s+)?(?:gambar|foto|image|picture|visual|banner)\s*(?:dari|pada|untuk)?\s*(?:produk|item|barang)?\s*(?:["\'“]([^"\'”]+)["\'”]|([A-Za-z0-9\s\-_]{3,60}))?',
+        r'\b(?:hapus|delete|hilangkan|remove|buang|bersihkan|tiadakan)\s+(?:semua\s+|seluruh\s+)?(?:gambar|foto|image|picture|visual|banner)\s*(?:dari|pada|untuk|buat|for|from|of)?\s*(?:(?:data\s+)?(?:produk|products?|item|barang))?\s*(?:["\'“]([^"\'”]+)["\'”]|([A-Za-z0-9\s\-_]{3,60}))?',
         user_prompt,
         re.IGNORECASE
     )
     if m_img:
-        target_name = (m_img.group(1) or m_img.group(2) or "").strip()
-        target_name = re.split(r'\b(?:pada|dari|di|dokumen|katalog|kb|database)\b', target_name, flags=re.IGNORECASE)[0]
-        target_name = re.sub(r'^[\s\*_\`"\'“”.,]+|[\s\*_\`"\'“”.,]+$', '', target_name).strip()
-        forbidden = ("yang", "semua", "seluruh", "ini", "itu", "nya", "produk", "item", "barang")
-        if target_name and any(target_name.lower() == f for f in forbidden):
-            target_name = None
+        raw_target = (m_img.group(1) or m_img.group(2) or "").strip()
+        target_name = _clean_target_name(raw_target)
         return target_name or None, None, "image"
 
     # 1. By ingredient: e.g. hapus seluruh produk yang mengandung "Betaine" or *Betaine*
     m_ingr = re.search(
-        r'\b(?:hapus|delete|hilangkan|remove|buang|bersihkan|tiadakan)\s+(?:seluruh\s+|semua\s+)?(?:produk|item|barang)?\s*(?:yang\s+)?(?:mengandung|memuat|berisi|memiliki|ada\s+kandungan|(?:dengan\s+)?kandungan|berbahan|(?:dengan\s+)?ingredients?)\s+([^\n\r]+)',
+        r'\b(?:hapus|delete|hilangkan|remove|buang|bersihkan|tiadakan)\s+(?:seluruh\s+|semua\s+)?(?:data\s+)?(?:produk|products?|item|barang)?\s*(?:yang\s+)?(?:mengandung|memuat|berisi|memiliki|ada\s+kandungan|(?:dengan\s+)?kandungan|berbahan|(?:dengan\s+)?ingredients?)\s+([^\n\r]+)',
         user_prompt,
         re.IGNORECASE
     )
@@ -617,32 +629,32 @@ def extract_product_deletion(user_prompt: str) -> tuple[Optional[str], Optional[
         if target_ingr and len(target_ingr) >= 2:
             return None, target_ingr, "ingredient"
 
-    # 2. By quoted product name: e.g. delete produk "Sakura FW New Version"
+    # 2. By quoted product name: e.g. delete product "Sakura FW New Version", hapus data "Spot Gel"
     m_name = re.search(
-        r'\b(?:hapus|delete|hilangkan|remove|buang)\s+(?:produk|item|barang)?\s*["\'“]([^"\'”]+)["\'”]',
+        r'\b(?:hapus|delete|hilangkan|remove|buang)\s+(?:(?:data\s+)?(?:produk|products?|item|barang))?\s*["\'“]([^"\'”]+)["\'”]',
         user_prompt,
         re.IGNORECASE
     )
     if m_name:
-        target_name = re.sub(r'^[\s\*_\`"\'“”.,]+|[\s\*_\`"\'“”.,]+$', '', m_name.group(1)).strip()
-        if target_name.lower() not in ("gambar", "foto", "image", "picture", "tabel", "section", "bagian", "warning", "warnings"):
+        target_name = _clean_target_name(m_name.group(1))
+        if target_name and target_name.lower() not in ("gambar", "foto", "image", "picture", "tabel", "section", "bagian", "warning", "warnings"):
             return target_name, None, "name"
 
-    # 3. By unquoted product name: e.g. hapus produk Sakura FW New Version di katalog
+    # 3. By unquoted product name: e.g. hapus product Spot Gel New Version di katalog, hapus data produk Spot Gel New Version
     m_unquoted = re.search(
-        r'\b(?:hapus|delete|hilangkan|remove|buang)\s+(?:produk|item)\s+([A-Za-z0-9\s\-_]{3,60})',
+        r'\b(?:hapus|delete|hilangkan|remove|buang)\s+(?:(?:data\s+)?(?:produk|products?|item|barang)\s+)?([A-Za-z0-9\s\-_]{3,60})',
         user_prompt,
         re.IGNORECASE
     )
     if m_unquoted:
         raw_name = m_unquoted.group(1).strip()
-        raw_name = re.split(r'\b(?:pada|dari|di|dokumen|katalog|kb|database)\b', raw_name, flags=re.IGNORECASE)[0]
-        target_name = re.sub(r'^[\s\*_\`"\'“”.,]+|[\s\*_\`"\'“”.,]+$', '', raw_name).strip()
-        forbidden = ("gambar", "foto", "image", "picture", "tabel", "section", "bagian", "warning", "warnings", "yang", "semua", "seluruh", "dengan")
-        if target_name and not any(target_name.lower().startswith(f) for f in forbidden):
+        target_name = _clean_target_name(raw_name)
+        forbidden_starts = ("gambar", "foto", "image", "picture", "tabel", "section", "bagian", "warning", "warnings", "yang", "semua", "seluruh", "dengan")
+        if target_name and not any(target_name.lower().startswith(f) for f in forbidden_starts):
             return target_name, None, "name"
 
     return None, None, None
+
 
 
 def extract_product_cards_from_summary(summary: str, target_product_names: Optional[List[str]] = None) -> str:
@@ -1002,16 +1014,53 @@ def apply_refinements_to_content(
     # 5. Image or Product Deletion
     del_name, del_ingr, del_type = extract_product_deletion(user_prompt)
     if del_type == "image":
-        target_base = updated_summary
-        if base_summary and "Detail Produk" in base_summary and "Detail Produk" not in updated_summary:
-            target_base = base_summary
+        clean_base = strip_callout_banners(base_summary or "")
+        clean_curr = strip_callout_banners(updated_summary or "")
+        target_base = clean_curr
 
-        clean_base_summary = strip_callout_banners(target_base)
         prod_boundary_pattern = r'(?=(?:^|\n)#{1,3}\s+Detail\s+Produk|(?:^|\n)##\s+(?!Detail\s+Produk)[^\n]+|(?:^|\n)Informasi\s+Produk\s+[^\n]+)'
-        sections = [s for s in re.split(prod_boundary_pattern, clean_base_summary) if s.strip()]
 
         target_clean = del_name.lower().strip() if del_name else ""
-        target_words = [w for w in re.findall(r'\b[a-zA-Z0-9]{3,}\b', target_clean) if w not in ('produk', 'product', 'erha', 'the', 'and', 'gambar', 'foto', 'image')]
+        generic_words = {
+            'produk', 'product', 'products', 'erha', 'the', 'and', 'for', 'with',
+            'gambar', 'foto', 'image', 'picture', 'visual', 'banner',
+            'new', 'version', 'series', 'edisi', 'baru', 'edition', 'care'
+        }
+        all_target_words = [w for w in re.findall(r'\b[a-zA-Z0-9]{3,}\b', target_clean) if w not in ('produk', 'product', 'products', 'erha', 'the', 'and', 'gambar', 'foto', 'image', 'picture')]
+        distinctive_target_words = [w for w in all_target_words if w not in generic_words]
+
+        sections = [s for s in re.split(prod_boundary_pattern, target_base) if s.strip()]
+
+        # Check if the target product was dropped in updated_summary but was present in base_summary
+        # (e.g. LLM accidentally deleted the entire product instead of just its image)
+        target_found_in_curr = False
+        for sec in sections:
+            name_m = re.search(r'-\s*\*\*Nama(?:\s+Produk)?\*\*\s*:\s*([^\n]+)', sec)
+            p_name = name_m.group(1).strip() if name_m else ""
+            if not p_name:
+                h_m = re.search(r'^#{1,4}\s+([^\n\r]+)', sec.strip())
+                if h_m:
+                    p_name = re.sub(r'[\*\_]', '', h_m.group(1)).strip()
+            p_low = p_name.lower()
+            if target_clean and (target_clean == p_low or (distinctive_target_words and all(tw in p_low for tw in distinctive_target_words))):
+                target_found_in_curr = True
+                break
+
+        # If target product was dropped by LLM from updated_summary, restore it from base_summary!
+        if target_clean and not target_found_in_curr and clean_base:
+            base_sections = [s for s in re.split(prod_boundary_pattern, clean_base) if s.strip()]
+            for b_sec in base_sections:
+                b_name_m = re.search(r'-\s*\*\*Nama(?:\s+Produk)?\*\*\s*:\s*([^\n]+)', b_sec)
+                b_pname = b_name_m.group(1).strip() if b_name_m else ""
+                if not b_pname:
+                    b_hm = re.search(r'^#{1,4}\s+([^\n\r]+)', b_sec.strip())
+                    if b_hm:
+                        b_pname = re.sub(r'[\*\_]', '', b_hm.group(1)).strip()
+                b_plow = b_pname.lower()
+                if target_clean == b_plow or (distinctive_target_words and all(tw in b_plow for tw in distinctive_target_words)):
+                    b_sec_no_img = re.sub(r'!\[[^\]]*\]\([^\)]+\)', '', b_sec).strip()
+                    sections.append(b_sec_no_img)
+                    break
 
         new_sections = []
         image_removed = False
@@ -1029,11 +1078,15 @@ def apply_refinements_to_content(
                 is_target = True
             elif p_name:
                 p_low = p_name.lower()
-                if target_clean == p_low or target_clean in p_low or p_low in target_clean:
+                if target_clean == p_low:
                     is_target = True
-                elif target_words and all(tw in p_low for tw in target_words):
+                elif distinctive_target_words and all(tw in p_low for tw in distinctive_target_words):
                     is_target = True
-            elif target_words and all(tw in sec.lower() for tw in target_words):
+                elif all_target_words and all(tw in p_low for tw in all_target_words) and len(all_target_words) >= 2:
+                    is_target = True
+                elif len(target_clean) > 8 and (target_clean in p_low or (len(p_low) > 8 and p_low in target_clean)):
+                    is_target = True
+            elif distinctive_target_words and all(tw in sec.lower() for tw in distinctive_target_words):
                 is_target = True
 
             if is_target:
@@ -1045,8 +1098,12 @@ def apply_refinements_to_content(
                 new_sections.append(sec)
 
         updated_summary = "".join(new_sections).strip()
+
+        # SAFE fallback: ONLY strip all images if user EXPLICITLY requested removing all images
         if not image_removed:
-            updated_summary = re.sub(r'!\[[^\]]*\]\([^\)]+\)', '', updated_summary).strip()
+            is_explicit_remove_all = (not del_name) and bool(re.search(r'\b(?:semua|seluruh|all)\s+(?:gambar|foto|image|picture)\b', user_prompt, re.IGNORECASE))
+            if is_explicit_remove_all or (not del_name and len(sections) <= 1):
+                updated_summary = re.sub(r'!\[[^\]]*\]\([^\)]+\)', '', updated_summary).strip()
 
         target_label = f' untuk produk "{del_name}"' if del_name else ''
         del_msg = f"Gambar{target_label} telah berhasil dihapus. Informasi produk tetap tersimpan."
@@ -1084,25 +1141,24 @@ def apply_refinements_to_content(
                 del_name_clean = del_name.lower().strip()
                 p_name_clean = p_name.lower().strip() if p_name else sec.lower().strip()
 
+                generic_words = {
+                    'produk', 'product', 'products', 'erha', 'the', 'and', 'for', 'with',
+                    'new', 'version', 'series', 'edisi', 'baru', 'edition', 'care',
+                    'cream', 'serum', 'gel', 'lotion', 'wash', 'cleanser', 'toner', 'facial', 'sunscreen', 'moisturizer'
+                }
+                distinctive_del_words = [w for w in re.findall(r'\b[a-zA-Z0-9]{3,}\b', del_name_clean) if w not in generic_words]
+                all_del_words = [w for w in re.findall(r'\b[a-zA-Z0-9]{3,}\b', del_name_clean) if w not in ('produk', 'product', 'products', 'erha', 'the', 'and')]
+
                 if del_name_clean == p_name_clean:
                     should_delete = True
-                elif del_name_clean in p_name_clean or (p_name and len(p_name_clean) > 5 and p_name_clean in del_name_clean):
+                elif distinctive_del_words:
+                    if all(w in p_name_clean for w in distinctive_del_words):
+                        should_delete = True
+                elif all_del_words and len(all_del_words) >= 2:
+                    if all(w in p_name_clean for w in all_del_words):
+                        should_delete = True
+                elif len(del_name_clean) > 8 and (del_name_clean in p_name_clean or (p_name and p_name_clean in del_name_clean)):
                     should_delete = True
-                else:
-                    generic_words = {
-                        'produk', 'product', 'erha', 'the', 'and', 'for', 'with',
-                        'new', 'version', 'series', 'edisi', 'baru', 'edition', 'care',
-                        'cream', 'serum', 'gel', 'lotion', 'wash', 'cleanser', 'toner', 'facial', 'sunscreen', 'moisturizer'
-                    }
-                    distinctive_del_words = [w for w in re.findall(r'\b[a-zA-Z0-9]{3,}\b', del_name_clean) if w not in generic_words]
-                    all_del_words = [w for w in re.findall(r'\b[a-zA-Z0-9]{3,}\b', del_name_clean) if w not in ('produk', 'product', 'erha', 'the', 'and')]
-
-                    if distinctive_del_words:
-                        if all(w in p_name_clean for w in distinctive_del_words):
-                            should_delete = True
-                    elif all_del_words:
-                        if sum(1 for w in all_del_words if w in p_name_clean) >= len(all_del_words):
-                            should_delete = True
 
             if should_delete:
                 display_name = p_name or "Produk terkait"
@@ -3561,12 +3617,18 @@ EDITING GUIDELINES:
    - CRITICAL: NEVER break product attributes into raw markdown headings like `### Ingredients` or `### Benefits`! Keep all product attributes as bullet points inside `### Detail Produk` blocks.
    - Intelligently embed each image into its most relevant section or product block.
    - NEVER create any "Asset Media dari File Terlampir" heading or list of raw media assets at the end of the summary. Embed the attached image URL ONLY where it belongs.
-3. **DELETION OF SECTIONS, PRODUCTS & IMAGES RULE**:
+3. **DELETION OF SECTIONS & PRODUCTS RULE**:
    - If the admin instructs to delete or remove a specific product, treatment, or ingredient-based group of products (e.g. "hapus produk X", 'hapus seluruh produk yang mengandung "Betaine"', 'delete produk "Sakura FW New Version"'):
      * You MUST completely delete that product/section's headings, text, tables, AND all associated markdown image tags `![...](url)` belonging to that product/section.
      * Do NOT retain, move, or dump that deleted product's images under other remaining sections or titles.
      * Keep all other untouched products in their modular `### Detail Produk` blocks with all bullet attributes intact.
      * Return pure clean Markdown for the updated document summary. NEVER prepend any change summary headers or callout blocks into the summary text.
+3b. **IMAGE DELETION ONLY RULE (CRITICAL)**:
+   - If the admin instructs to delete or remove ONLY the image or photo of a product (e.g. "hapus gambar product Spot Gel New Version", "hilangkan foto produk X", "delete image for Y"):
+     * You MUST ONLY delete the markdown image tag `![...](url)` of that specific target product.
+     * You MUST KEEP that product's section, title, and all its bullet attributes (- **Nama Produk**, - **Kategori**, - **Deskripsi**, etc.) 100% INTACT!
+     * NEVER delete the product itself when asked to delete only its image!
+     * NEVER delete or touch the images of any other products in the document!
 4. **STRICT CATEGORIES RULE**:
    - Select suggested_categories ONLY from the "Available Categories from Database" list above.
    - NEVER invent or create new categories. NEVER output placeholder text like "category_name" or "category_id".
@@ -4644,12 +4706,18 @@ EDITING GUIDELINES:
    - CRITICAL: NEVER break product attributes into raw markdown headings like `### Ingredients` or `### Benefits`! Keep all product attributes as bullet points inside `### Detail Produk` blocks.
    - Intelligently embed each image into its most relevant section or product block.
    - NEVER create any "Asset Media dari File Terlampir" heading or list of raw media assets at the end of the summary. Embed the attached image URL ONLY where it belongs.
-3. **DELETION OF SECTIONS, PRODUCTS & IMAGES RULE**:
+3. **DELETION OF SECTIONS & PRODUCTS RULE**:
    - If the admin instructs to delete or remove a specific product, treatment, or ingredient-based group of products (e.g. "hapus produk X", 'hapus seluruh produk yang mengandung "Betaine"', 'delete produk "Sakura FW New Version"'):
      * You MUST completely delete that product/section's headings, text, tables, AND all associated markdown image tags `![...](url)` belonging to that product/section.
      * Do NOT retain, move, or dump that deleted product's images under other remaining sections or titles.
      * Keep all other untouched products in their modular `### Detail Produk` blocks with all bullet attributes intact.
      * Return pure clean Markdown for the updated document summary. NEVER prepend any change summary headers or callout blocks into the summary text.
+3b. **IMAGE DELETION ONLY RULE (CRITICAL)**:
+   - If the admin instructs to delete or remove ONLY the image or photo of a product (e.g. "hapus gambar product Spot Gel New Version", "hilangkan foto produk X", "delete image for Y"):
+     * You MUST ONLY delete the markdown image tag `![...](url)` of that specific target product.
+     * You MUST KEEP that product's section, title, and all its bullet attributes (- **Nama Produk**, - **Kategori**, - **Deskripsi**, etc.) 100% INTACT!
+     * NEVER delete the product itself when asked to delete only its image!
+     * NEVER delete or touch the images of any other products in the document!
 4. **STRICT CATEGORIES RULE**:
    - Update categories ONLY if the content changes topic and matches the "Available System Categories" list below.
    - NEVER invent or create new categories. NEVER output placeholder text like "category_name".
@@ -6862,7 +6930,7 @@ async def query_general_endpoint(
             or len(context.strip()) == 0
         )
 
-        if is_context_empty and not request.history:
+        if is_context_empty:
             logger.info(f"[QUERY-GENERAL] No approved knowledge found for: '{user_prompt}'")
             from app.rag.services.rag_generator import log_rag_chat
             log_rag_chat(

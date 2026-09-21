@@ -123,7 +123,7 @@ export function IngestModeControls({
 			{!isGeneralMode && (
 				<div className="mt-4 px-3.5 py-1.5 w-fit mx-auto border border-zinc-200/60 rounded-md flex items-center justify-center text-[11px] text-zinc-600 bg-zinc-50/50">
 					<RiFileTextLine className="size-3 mr-1.5 text-zinc-600" />
-					Supports Text or PDF, DOCX, XLSX, TXT, JPG, PNG files
+					Supports Text or PDF, DOCX, XLSX, TXT files
 				</div>
 			)}
 		</>

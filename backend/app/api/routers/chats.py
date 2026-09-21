@@ -4,6 +4,7 @@ from fastapi.sse import EventSourceResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, or_, update
 from typing import List, Optional
+import os
 import uuid
 import re
 import asyncio
@@ -114,11 +115,26 @@ async def process_ai_response(session_id: uuid.UUID, user_query: str):
             if history and history[-1]["role"] == "user":
                 history.pop()
             
+            stmt_sess = select(ChatSession).where(ChatSession.id == session_id)
+            sess_res = await db.execute(stmt_sess)
+            chat_sess = sess_res.scalar_one_or_none()
+            doctor_filter = None
+            doctor_name = None
+            if chat_sess:
+                u_stmt = select(User).where(User.id == chat_sess.user_id)
+                u_res = await db.execute(u_stmt)
+                u_obj = u_res.scalar_one_or_none()
+                if u_obj:
+                    doctor_filter = await _build_doctor_filter_metadata(db, u_obj)
+                    doctor_name = u_obj.name
+
             response_dict = pipeline.generate_answer(
                 query=user_query,
                 top_k=5,
                 rerank=True,
-                history=history
+                history=history,
+                filter_metadata=doctor_filter,
+                doctor_name=doctor_name
             )
             
             ai_msg = ChatMessage(
@@ -683,8 +699,9 @@ async def create_chat_message(
     # Enforce time limit
     stmt_config = select(AppConfig.value).where(AppConfig.key == "TIME_LIMIT_PER_SESSION")
     result_config = await db.execute(stmt_config)
+    time_limit_str = result_config.scalar_one_or_none()
     default_idle_timeout = int(os.environ.get("CHAT_SESSION_IDLE_TIMEOUT_MINUTES", "30"))
-    time_limit_minutes = int(time_limit_str) if time_limit_str and time_limit_str.isdigit() else default_idle_timeout
+    time_limit_minutes = int(time_limit_str) if time_limit_str and str(time_limit_str).isdigit() else default_idle_timeout
 
     now = datetime.now(timezone.utc)
     session_updated_at = chat_session.updated_at.replace(tzinfo=timezone.utc) if chat_session.updated_at.tzinfo is None else chat_session.updated_at
@@ -741,7 +758,7 @@ async def create_chat_message(
     await db.commit()
     await db.refresh(message)
     
-    if role != "user":
+    if role.lower() != "user":
         # If it's not a user message (e.g. system message), just return the saved message.
         from fastapi.encoders import jsonable_encoder
         from fastapi.responses import JSONResponse
@@ -817,7 +834,8 @@ async def create_chat_message(
                             top_k=5,
                             rerank=True,
                             history=history,
-                            filter_metadata=doctor_filter or None
+                            filter_metadata=doctor_filter or None,
+                            doctor_name=current_user.name
                         ):
                             await token_queue.put(("chunk", chunk))
                     except Exception as prod_err:
@@ -958,8 +976,9 @@ async def stream_chat_message(
     # Enforce time limit
     stmt_config = select(AppConfig.value).where(AppConfig.key == "TIME_LIMIT_PER_SESSION")
     result_config = await db.execute(stmt_config)
+    time_limit_str = result_config.scalar_one_or_none()
     default_idle_timeout = int(os.environ.get("CHAT_SESSION_IDLE_TIMEOUT_MINUTES", "30"))
-    time_limit_minutes = int(time_limit_str) if time_limit_str and time_limit_str.isdigit() else default_idle_timeout
+    time_limit_minutes = int(time_limit_str) if time_limit_str and str(time_limit_str).isdigit() else default_idle_timeout
 
     now = datetime.now(timezone.utc)
     session_updated_at = chat_session.updated_at.replace(tzinfo=timezone.utc) if chat_session.updated_at.tzinfo is None else chat_session.updated_at
@@ -1011,7 +1030,7 @@ async def stream_chat_message(
     await db.commit()
     await db.refresh(message)
     
-    if role != "user":
+    if role.lower() != "user":
         from fastapi.encoders import jsonable_encoder
         from fastapi.responses import JSONResponse
         return JSONResponse(status_code=status.HTTP_201_CREATED, content=jsonable_encoder(message))
@@ -1085,7 +1104,8 @@ async def stream_chat_message(
                             top_k=5,
                             rerank=True,
                             history=history,
-                            filter_metadata=doctor_filter or None
+                            filter_metadata=doctor_filter or None,
+                            doctor_name=current_user.name
                         ):
                             await token_queue.put(("chunk", chunk))
                     except Exception as prod_err:
@@ -1161,7 +1181,6 @@ async def stream_chat_message(
 
                 # Trigger ChatGPT/Gemini-style title generation in background if title not yet generated
                 if not chat_session.summary or chat_session.summary == "Percakapan Baru":
-                    import asyncio
                     from app.services.chat_title_service import generate_and_save_chat_title
                     asyncio.create_task(generate_and_save_chat_title(session_id, content, ai_response_text))
                 

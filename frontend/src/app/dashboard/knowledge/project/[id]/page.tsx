@@ -742,11 +742,14 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
 
 											<TableCell className="whitespace-nowrap text-sm text-zinc-600">
 												{row.created_at
-													? new Date(row.created_at).toLocaleDateString("en-GB", {
+													? `${new Date(row.created_at).toLocaleDateString("en-GB", {
 															day: "2-digit",
 															month: "short",
 															year: "numeric",
-														})
+													  })} ${new Date(row.created_at).toLocaleTimeString("en-GB", {
+															hour: "2-digit",
+															minute: "2-digit",
+													  })}`
 													: "-"}
 											</TableCell>
 

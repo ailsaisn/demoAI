@@ -1483,6 +1483,74 @@ async def update_batch_visibility(
         flag_modified(doc, "metadata_")
 
     await db.commit()
+
+    # 5. Synchronize PGVector document_chunks table metadata in real-time
+    try:
+        from app.rag.config import settings as rag_settings
+        from sqlalchemy import text
+        target_ids_list = list(target_ids)
+        update_chunks_sql = text(f"""
+            UPDATE {rag_settings.pg_collection_name}
+            SET metadata = jsonb_set(
+                jsonb_set(
+                    jsonb_set(
+                        jsonb_set(
+                            metadata,
+                            '{{visibility_settings}}', :vis_json::jsonb, true
+                        ),
+                        '{{clinics}}', :clinics_json::jsonb, true
+                    ),
+                    '{{doctor_types}}', :dr_types_json::jsonb, true
+                ),
+                '{{doctors}}', :doctors_json::jsonb, true
+            )
+            WHERE metadata ->> 'batch_id' = :batch_id
+               OR metadata ->> 'upload_batch_id' = :batch_id
+               OR metadata ->> 'knowledge_id' = ANY(:target_ids)
+               OR source_file = ANY(:target_ids)
+        """)
+        await db.execute(update_chunks_sql, {
+            "vis_json": json.dumps(vis_dict),
+            "clinics_json": json.dumps(vis_dict.get("clinics", ["all"])),
+            "dr_types_json": json.dumps(vis_dict.get("doctor_types", ["all"])),
+            "doctors_json": json.dumps(vis_dict.get("doctors", ["all"])),
+            "batch_id": batch_id,
+            "target_ids": target_ids_list
+        })
+        await db.commit()
+        logger.info(f"✅ Synced PGVector DocumentChunk metadata for batch '{batch_id}' ({len(target_ids_list)} documents)")
+    except Exception as pg_chunk_err:
+        logger.warning(f"Could not bulk-update PGVector document_chunks: {pg_chunk_err}")
+
+    # 6. Synchronize BM25Index in memory and on disk
+    try:
+        from app.rag.services.rag_retriever import BM25Index
+        from app.rag.config import settings as rag_settings
+        bm25_index = getattr(request.app.state, "bm25_index", None)
+        if not bm25_index:
+            bm25_index = BM25Index()
+            try:
+                bm25_index.load(rag_settings.bm25_index_path)
+            except Exception:
+                pass
+        if bm25_index and bm25_index.chunks:
+            modified = False
+            for ch in bm25_index.chunks:
+                c_meta = ch.get("metadata", {})
+                c_bid = c_meta.get("batch_id") or c_meta.get("upload_batch_id")
+                c_kid = c_meta.get("knowledge_id") or c_meta.get("source_file")
+                if c_bid == batch_id or (c_kid and str(c_kid) in target_ids):
+                    c_meta["visibility_settings"] = vis_dict
+                    c_meta["clinics"] = vis_dict.get("clinics", ["all"])
+                    c_meta["doctor_types"] = vis_dict.get("doctor_types", ["all"])
+                    c_meta["doctors"] = vis_dict.get("doctors", ["all"])
+                    modified = True
+            if modified:
+                bm25_index.save(rag_settings.bm25_index_path)
+                logger.info(f"✅ Synced BM25Index chunks for batch '{batch_id}'")
+    except Exception as bm25_err:
+        logger.warning(f"Could not update BM25 index for batch visibility: {bm25_err}")
+
     return {
         "status": "success",
         "message": f"Updated visibility settings for {len(target_ids) or len(db_docs)} document(s) in batch",

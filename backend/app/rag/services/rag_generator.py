@@ -263,6 +263,10 @@ PENYAJIAN JURNAL ILMIAH & KATALOG TABEL (LENGKAP & RUNTUT):
 2. KATALOG PRODUK & SPREADSHEET (MULTI-SHEET EXCEL):
    - Apabila pengguna menanyakan daftar produk atau tabel dari spreadsheet, kelompokkan jawaban secara jelas berdasarkan kategori produk atau sheet.
    - Cantumkan informasi lengkap (nama produk, indikasi, kandungan aktif, cara pakai, harga/ukuran jika ada) sesuai data referensi tanpa melewatkan item yang ada.
+
+3. BATASAN AKSES ROLE DOKTER & RIWAYAT PERCAKAPAN:
+   - Apabila informasi, produk, atau layanan yang ditanyakan memiliki batasan akses (restricted) dan tidak dapat diakses oleh role dokter pengguna saat ini, DILARANG memberikan rekomendasi spekulatif atau informasi umum. Wajib jawab secara langsung: "Currently, we are unable to provide this information."
+   - Apabila dalam riwayat percakapan sebelumnya (Conversation History) pernah dibahas suatu produk atau layanan yang kini TIDAK LAGI TERSEDIA pada referensi aktif (Clinical & Product Reference Data) karena pembatasan hak akses atau perubahan izin oleh admin, DILARANG mengutip, melanjutkan, atau mengulang informasi tersebut dari riwayat. Wajib langsung jawab: "Currently, we are unable to provide this information."
 """
 
 
@@ -982,7 +986,168 @@ class GenerationPipeline:
         sanitized = strip_internal_document_references(sanitized)
         return True, expand_image_urls_in_markdown(sanitized)
 
+    def sanitize_history_for_restrictions(
+        self,
+        history: List[Dict[str, str]],
+        filter_metadata: Optional[Dict[str, Any]]
+    ) -> List[Dict[str, str]]:
+        """
+        Sanitizes conversation history so that if an admin restricted a category/product mid-session,
+        past assistant messages describing the restricted entity are redacted and cannot leak into the LLM context.
+        """
+        if not history:
+            return []
+        if not filter_metadata:
+            return history
 
+        excluded_cats = [str(c).lower().strip() for c in (filter_metadata.get("excluded_categories") or []) if c]
+        if not excluded_cats:
+            return history
+
+        sanitized = []
+        for turn in history:
+            t_copy = dict(turn)
+            role = (t_copy.get("role") or "").lower()
+            content = t_copy.get("content") or ""
+            if role == "assistant":
+                if any(exc in content.lower() for exc in excluded_cats):
+                    t_copy["content"] = "Currently, we are unable to provide this information."
+            sanitized.append(t_copy)
+        return sanitized
+
+    def check_knowledge_access_restriction(
+        self,
+        query: str,
+        filter_metadata: Optional[Dict[str, Any]],
+        filtered_results: List[Dict[str, Any]],
+        doctor_name: Optional[str] = None,
+        contextualized_query: Optional[str] = None,
+        history: Optional[List[Dict[str, str]]] = None
+    ) -> Tuple[bool, Optional[str]]:
+        """
+        Detects if user is asking for knowledge/categories that exist in the system
+        but are restricted for the user's role (e.g. doctor role, excluded categories, clinic restriction).
+        Evaluates both raw query and contextualized query (for follow-ups in existing sessions).
+        """
+        if not filter_metadata:
+            return False, None
+
+        has_restrictions = (
+            bool(filter_metadata.get("excluded_categories"))
+            or any(dt != "all" for dt in filter_metadata.get("doctor_types", []))
+            or any(d != "all" for d in filter_metadata.get("doctors", []))
+            or any(c != "all" for c in filter_metadata.get("clinics", []))
+        )
+        if not has_restrictions:
+            return False, None
+
+        # 1. Check direct excluded categories match against raw query and contextualized query
+        excluded_cats = filter_metadata.get("excluded_categories") or []
+        queries_to_check = [query.lower()]
+        if contextualized_query and contextualized_query.lower() != query.lower():
+            queries_to_check.append(contextualized_query.lower())
+
+        for exc_cat in excluded_cats:
+            if exc_cat:
+                exc_clean = exc_cat.lower().strip()
+                for q_text in queries_to_check:
+                    if exc_clean in q_text:
+                        logger.info(f"🚫 [RBAC Guard] Query directly mentions excluded category: '{exc_cat}'")
+                        return True, "Currently, we are unable to provide this information."
+
+        # 2. Check if unfiltered retrieval matches relevant documents that are restricted for this user
+        if not self.retriever:
+            return False, None
+
+        unfilter_q = contextualized_query if (contextualized_query and len(contextualized_query.strip()) > len(query.strip())) else query
+        try:
+            unfiltered_res = self.retriever.retrieve(
+                query=unfilter_q,
+                top_k=5,
+                filter_metadata=None,
+                rerank=True,
+                rerank_top_n=5
+            )
+            unfiltered_hits = unfiltered_res.get("results", [])
+        except Exception as e:
+            logger.warning(f"Failed to run unfiltered check: {e}")
+            return False, None
+
+        if not unfiltered_hits:
+            return False, None
+
+        def _is_accessible(hit_meta: dict) -> bool:
+            if excluded_cats:
+                h_cats = hit_meta.get("categories") or []
+                if not isinstance(h_cats, list):
+                    h_cats = [h_cats]
+                if hit_meta.get("category"):
+                    h_cats.append(hit_meta.get("category"))
+                for exc in excluded_cats:
+                    if any(exc.lower() == str(c).lower() for c in h_cats):
+                        return False
+
+            user_dr_types = filter_metadata.get("doctor_types", [])
+            if user_dr_types:
+                h_dr_types = hit_meta.get("doctor_types")
+                if not h_dr_types and isinstance(hit_meta.get("visibility_settings"), dict):
+                    h_dr_types = hit_meta["visibility_settings"].get("doctor_types")
+                if h_dr_types and isinstance(h_dr_types, list) and "all" not in h_dr_types:
+                    if not any(dt in h_dr_types for dt in user_dr_types if dt != "all"):
+                        return False
+
+            user_doctors = filter_metadata.get("doctors", [])
+            if user_doctors:
+                h_doctors = hit_meta.get("doctors")
+                if not h_doctors and isinstance(hit_meta.get("visibility_settings"), dict):
+                    h_doctors = hit_meta["visibility_settings"].get("doctors")
+                if h_doctors and isinstance(h_doctors, list) and "all" not in h_doctors:
+                    if not any(doc in h_doctors for doc in user_doctors if doc != "all"):
+                        return False
+
+            user_clinics = filter_metadata.get("clinics", [])
+            if user_clinics:
+                h_clinics = hit_meta.get("clinics")
+                if not h_clinics and isinstance(hit_meta.get("visibility_settings"), dict):
+                    h_clinics = hit_meta["visibility_settings"].get("clinics")
+                if h_clinics and isinstance(h_clinics, list) and "all" not in h_clinics:
+                    if not any(c in h_clinics for c in user_clinics if c != "all"):
+                        return False
+
+            return True
+
+        restricted_hits = []
+        accessible_hits = []
+        for hit in unfiltered_hits:
+            h_meta = hit.get("metadata", {})
+            if _is_accessible(h_meta):
+                accessible_hits.append(hit)
+            else:
+                restricted_hits.append(hit)
+
+        if not restricted_hits:
+            return False, None
+
+        top_unfiltered = unfiltered_hits[0]
+        top_unfiltered_restricted = not _is_accessible(top_unfiltered.get("metadata", {}))
+
+        # Check if filtered results contain exact matches
+        has_target_in_filtered = False
+        for f_hit in filtered_results:
+            f_text = f_hit.get("text", "").lower()
+            f_meta = f_hit.get("metadata", {})
+            if "brightening center" in f_text or "brightening center" in str(f_meta).lower():
+                has_target_in_filtered = True
+                break
+            if accessible_hits and f_hit.get("id") == accessible_hits[0].get("id"):
+                has_target_in_filtered = True
+                break
+
+        if top_unfiltered_restricted and not has_target_in_filtered:
+            logger.info("🚫 [RBAC Guard] Knowledge access is restricted for current doctor role.")
+            return True, "Currently, we are unable to provide this information."
+
+        return False, None
 
     def generate_answer(
         self, 
@@ -1111,6 +1276,35 @@ class GenerationPipeline:
 
         retrieval_ms = int((_time.time() - t0_retrieval) * 1000)
 
+        # RBAC Guard: Check if knowledge exists but is restricted for this user/doctor role
+        is_restricted, restriction_msg = self.check_knowledge_access_restriction(
+            query=query,
+            filter_metadata=filter_metadata,
+            filtered_results=results,
+            doctor_name=doctor_name,
+            contextualized_query=search_query if 'search_query' in locals() else None,
+            history=history
+        )
+        if is_restricted:
+            log_rag_chat(
+                query=query,
+                intent_val=intent.value,
+                top_k=effective_top_k,
+                results=[],
+                context_status="REJECTED",
+                retrieval_ms=retrieval_ms,
+                llm_ms=0,
+                guardrails_status="PASSED",
+                agent_used=agent_used
+            )
+            return {
+                "query": query,
+                "answer": restriction_msg,
+                "context": "Akses dibatasi untuk role dokter.",
+                "results": [],
+                "agent_used": agent_used
+            }
+
         # 3. Context & Evidence Validation
         is_context_empty = (
             not results 
@@ -1142,8 +1336,9 @@ class GenerationPipeline:
         context_status = "ACCEPTED"
         context_for_prompt = effective_context
 
-        # 4. Unified Single LLM Prompt & Synthesis
-        full_prompt = self.build_prompt(query, context_for_prompt, history, intent, intent_rules, doctor_name=doctor_name)
+        # 4. Unified Single LLM Prompt & Synthesis with Sanitized History
+        sanitized_history = self.sanitize_history_for_restrictions(history, filter_metadata)
+        full_prompt = self.build_prompt(query, context_for_prompt, sanitized_history, intent, intent_rules, doctor_name=doctor_name)
         t0_llm = _time.time()
         error_msg = None
         try:
@@ -1304,6 +1499,31 @@ class GenerationPipeline:
                 r_copy["metadata"] = m_copy
             normalized_results.append(r_copy)
 
+        # RBAC Guard: Check if knowledge exists but is restricted for this user/doctor role
+        is_restricted, restriction_msg = self.check_knowledge_access_restriction(
+            query=query,
+            filter_metadata=filter_metadata,
+            filtered_results=results,
+            doctor_name=doctor_name,
+            contextualized_query=search_query if 'search_query' in locals() else None,
+            history=history
+        )
+        if is_restricted:
+            log_rag_chat(
+                query=query,
+                intent_val=intent.value,
+                top_k=effective_top_k,
+                results=[],
+                context_status="REJECTED",
+                retrieval_ms=retrieval_ms,
+                llm_ms=0,
+                guardrails_status="PASSED",
+                agent_used=agent_used
+            )
+            yield json.dumps({"type": "context", "results": []}) + "\n"
+            yield restriction_msg
+            return
+
         # First yield context SSE JSON chunk
         yield json.dumps({"type": "context", "results": normalized_results}) + "\n"
 
@@ -1332,7 +1552,8 @@ class GenerationPipeline:
         context_status = "ACCEPTED"
         context_for_prompt = effective_context
 
-        full_prompt = self.build_prompt(query, context_for_prompt, history, intent, intent_rules)
+        sanitized_history = self.sanitize_history_for_restrictions(history, filter_metadata)
+        full_prompt = self.build_prompt(query, context_for_prompt, sanitized_history, intent, intent_rules)
 
         t0_llm = _time.time()
         error_msg = None

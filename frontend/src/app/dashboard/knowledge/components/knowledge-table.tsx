@@ -644,7 +644,7 @@ export function KnowledgeTable({
 								currentSortKey={sortKey}
 								sortOrder={sortOrder}
 								onSort={handleSort}
-								className="w-35 font-medium text-gray-700"
+								className="w-40 font-medium text-gray-700"
 							>
 								Date
 							</SortableTableHead>
@@ -805,11 +805,14 @@ export function KnowledgeTable({
 										<div className="flex flex-col gap-0.5">
 											<span className="text-xs text-zinc-900 font-medium">
 												{row.created_at
-													? new Date(row.created_at).toLocaleDateString("en-GB", {
+													? `${new Date(row.created_at).toLocaleDateString("en-GB", {
 															day: "2-digit",
 															month: "short",
 															year: "numeric",
-													  })
+													  })} ${new Date(row.created_at).toLocaleTimeString("en-GB", {
+															hour: "2-digit",
+															minute: "2-digit",
+													  })}`
 													: "-"}
 											</span>
 											{row.status === "APPROVED" && (row.approved_at || row.rawItem.approved_at) && (
