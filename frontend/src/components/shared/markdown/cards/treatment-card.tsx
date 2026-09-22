@@ -1,11 +1,12 @@
 import React, { useState } from "react";
-import { RiStethoscopeLine, RiZoomInLine } from "@remixicon/react";
+import { RiZoomInLine } from "@remixicon/react";
 import type { CardData, KeyValueItem } from "../types";
 import { isValidImageUrl, resolveImageUrl } from "../utils";
 import { ImagePreviewDialog } from "@/components/shared/image-preview-dialog";
 
 export function TreatmentCard({ data }: { data: CardData }) {
 	const [isPreviewOpen, setIsPreviewOpen] = useState(false);
+	const [imageError, setImageError] = useState(false);
 	const { imageUrl, imageAlt, items } = data;
 
 	let treatmentName = "";
@@ -52,7 +53,7 @@ export function TreatmentCard({ data }: { data: CardData }) {
 
 	return (
 		<div className="not-prose my-2.5 rounded-lg border border-zinc-200/80 bg-white p-3.5 flex flex-col sm:flex-row gap-3.5 items-start shadow-none">
-			{cleanImgUrl && (
+			{cleanImgUrl && !imageError && (
 				<>
 					<div
 						className="size-28 sm:size-32 shrink-0 bg-zinc-50 rounded-lg border border-zinc-200/80 p-2 flex items-center justify-center overflow-hidden relative group cursor-pointer"
@@ -64,19 +65,10 @@ export function TreatmentCard({ data }: { data: CardData }) {
 							alt={imageAlt || treatmentName || "Treatment"}
 							className="size-full object-contain"
 							loading="lazy"
-							onError={(e) => {
-								e.currentTarget.style.display = "none";
-								const fallback = e.currentTarget.nextElementSibling as HTMLElement;
-								if (fallback) fallback.style.display = "flex";
+							onError={() => {
+								setImageError(true);
 							}}
 						/>
-						<span
-							style={{ display: "none" }}
-							className="size-full bg-zinc-100 items-center justify-center text-zinc-400 text-xs flex-col p-1 text-center select-none"
-						>
-							<RiStethoscopeLine className="size-6 text-zinc-400 mb-1" />
-							<span className="text-xs text-zinc-400 font-medium">Treatment</span>
-						</span>
 						<button
 							type="button"
 							onClick={(e) => {

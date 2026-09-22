@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState } from "react";
-import { RiImageLine, RiZoomInLine } from "@remixicon/react";
+import { RiZoomInLine } from "@remixicon/react";
 import type { Components } from "react-markdown";
 import { extractNodeText, isValidImageUrl, resolveImageUrl } from "./utils";
 import { ImagePreviewDialog } from "../image-preview-dialog";
@@ -79,20 +79,11 @@ function MarkdownImage({ src, alt, ...props }: React.ComponentProps<"img">) {
 						loading="lazy"
 						crossOrigin="anonymous"
 						onLoad={handleImageLoad}
-						onError={(e) => {
-							e.currentTarget.style.display = "none";
-							const fallback = e.currentTarget.nextElementSibling as HTMLElement;
-							if (fallback) fallback.style.display = "flex";
+						onError={() => {
+							setIsHidden(true);
 						}}
 						{...props}
 					/>
-					<span
-						style={{ display: "none" }}
-						className="size-full bg-zinc-100 items-center justify-center text-zinc-400 text-xs flex-col p-2 text-center select-none"
-					>
-						<RiImageLine className="size-5 text-zinc-400 mb-1" />
-						<span className="text-xs text-zinc-400 font-medium">Gambar Tidak Tersedia</span>
-					</span>
 					<button
 						type="button"
 						onClick={(e) => {

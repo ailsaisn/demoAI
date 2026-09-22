@@ -31,12 +31,16 @@ export function StreamingMarkdown({
 
 	useEffect(() => {
 		if (!animate || !safeContent) {
-			setIsStreaming(false);
-			return;
+			const timer = setTimeout(() => {
+				setIsStreaming(false);
+			}, 0);
+			return () => clearTimeout(timer);
 		}
 
-		setIsStreaming(true);
-		setDisplayedLength(0);
+		const initTimer = setTimeout(() => {
+			setIsStreaming(true);
+			setDisplayedLength(0);
+		}, 0);
 
 		// Split text by whitespace to stream word by word
 		const words = safeContent.split(/(\s+)/);
@@ -55,6 +59,7 @@ export function StreamingMarkdown({
 		}, speed);
 
 		return () => {
+			clearTimeout(initTimer);
 			clearInterval(interval);
 		};
 	}, [safeContent, animate, speed, wordsPerStep]);
