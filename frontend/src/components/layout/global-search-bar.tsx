@@ -39,18 +39,19 @@ function HighlightSnippet({ text, query }: { text?: string | null; query: string
 	const words = query
 		.trim()
 		.split(/\s+/)
-		.filter((w) => w.length > 0)
-		.map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+		.filter((w) => w.length > 0);
 
 	if (words.length === 0) return <span>{text}</span>;
 
-	const regex = new RegExp(`(${words.join("|")})`, "gi");
-	const parts = text.split(regex);
+	const escapedWords = words.map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+	const splitRegex = new RegExp(`(${escapedWords.join("|")})`, "gi");
+	const parts = text.split(splitRegex);
+	const lowerWords = words.map((w) => w.toLowerCase());
 
 	return (
 		<span>
 			{parts.map((part, i) =>
-				regex.test(part) ? (
+				lowerWords.includes(part.toLowerCase()) ? (
 					<span key={i} className="font-semibold text-blue-600 bg-blue-50/90 px-0.5 rounded-xs">
 						{part}
 					</span>
@@ -71,8 +72,10 @@ export function GlobalSearchBar({ className }: { className?: string }) {
 
 	const containerRef = useRef<HTMLDivElement>(null);
 	const inputRef = useRef<HTMLInputElement>(null);
+	const listContainerRef = useRef<HTMLDivElement>(null);
 
-	const { data, isLoading, isDebouncing } = useGlobalSearch(searchQuery, activeTab);
+	// Always query all categories so tab badges consistently display accurate hit counts
+	const { data, isLoading, isDebouncing } = useGlobalSearch(searchQuery, "all");
 
 	const isSearching = isLoading || isDebouncing;
 	const projectResults = useMemo(() => data?.projects ?? [], [data?.projects]);
@@ -81,10 +84,10 @@ export function GlobalSearchBar({ className }: { className?: string }) {
 	const categoryResults = useMemo(() => data?.categories ?? [], [data?.categories]);
 
 	const totalResults =
-		(data?.projects?.length ?? 0) +
-		(data?.knowledge?.length ?? 0) +
-		(data?.chats?.length ?? 0) +
-		(data?.categories?.length ?? 0);
+		projectResults.length +
+		knowledgeResults.length +
+		chatResults.length +
+		categoryResults.length;
 
 	// Flatten results in exact requested order: Project -> Knowledge -> Chat History -> Category
 	const flatItems: FlatSearchItem[] = useMemo(() => {
@@ -138,6 +141,26 @@ export function GlobalSearchBar({ className }: { className?: string }) {
 		return () => clearTimeout(timer);
 	}, [flatItems.length, activeTab]);
 
+	// Auto-scroll selected item into view on keyboard navigation (isolated strictly to dropdown list)
+	useEffect(() => {
+		if (!isOpen) return;
+		const timer = setTimeout(() => {
+			const container = listContainerRef.current;
+			const selectedEl = container?.querySelector<HTMLElement>(`[data-selected="true"]`);
+			if (container && selectedEl) {
+				const containerRect = container.getBoundingClientRect();
+				const elemRect = selectedEl.getBoundingClientRect();
+
+				if (elemRect.top < containerRect.top) {
+					container.scrollTop -= containerRect.top - elemRect.top;
+				} else if (elemRect.bottom > containerRect.bottom) {
+					container.scrollTop += elemRect.bottom - containerRect.bottom;
+				}
+			}
+		}, 0);
+		return () => clearTimeout(timer);
+	}, [selectedIndex, isOpen]);
+
 	const handleSelectItem = (item: FlatSearchItem) => {
 		setIsOpen(false);
 		inputRef.current?.blur();
@@ -148,7 +171,7 @@ export function GlobalSearchBar({ className }: { className?: string }) {
 		} else if (item.type === "chat") {
 			router.push(`/dashboard/chat-history/${item.data.id}`);
 		} else if (item.type === "category") {
-			router.push(`/dashboard/category`);
+			router.push(`/dashboard/category?search=${encodeURIComponent(item.data.name)}`);
 		}
 	};
 
@@ -205,12 +228,12 @@ export function GlobalSearchBar({ className }: { className?: string }) {
 					onKeyDown={handleKeyDown}
 					placeholder="Search knowledge, projects, categories, chats..."
 					className={cn(
-						"pl-9 pr-9 bg-white border-gray-200 focus-visible:ring-1 focus-visible:ring-blue-500 h-9 text-xs sm:text-sm rounded-lg transition-all",
+						"pl-9 pr-12 bg-white border-gray-200 focus-visible:ring-1 focus-visible:ring-blue-500 h-9 text-xs sm:text-sm rounded-lg transition-all",
 						isOpen && "border-blue-400 ring-1 ring-blue-400/20",
 					)}
 				/>
 
-				{/* Right icon: Loader when searching, or Clear button when text present */}
+				{/* Right icon: Loader when searching, Clear button when text present, or Shortcut badge when empty/unfocused */}
 				<div className="absolute right-2.5 top-1/2 -translate-y-1/2 flex items-center">
 					{isSearching ? (
 						<RiLoader4Line className="size-3.5 animate-spin text-muted-foreground" />
@@ -226,6 +249,10 @@ export function GlobalSearchBar({ className }: { className?: string }) {
 						>
 							<RiCloseLine className="size-3.5" />
 						</button>
+					) : !isOpen ? (
+						<kbd className="hidden sm:inline-flex items-center gap-0.5 rounded border border-gray-200 bg-gray-50 px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground shadow-2xs pointer-events-none">
+							<span className="text-xs">⌘</span>K
+						</kbd>
 					) : null}
 				</div>
 			</div>
@@ -259,7 +286,7 @@ export function GlobalSearchBar({ className }: { className?: string }) {
 						>
 							<RiFolderLine className="size-3.5 text-muted-foreground" />
 							Project
-							{searchQuery.trim() ? ` (${projectResults.length})` : ""}
+							{searchQuery.trim() && projectResults.length > 0 ? ` (${projectResults.length})` : ""}
 						</button>
 						<button
 							type="button"
@@ -279,7 +306,7 @@ export function GlobalSearchBar({ className }: { className?: string }) {
 								className="size-3.5 shrink-0 object-contain opacity-75"
 							/>
 							Knowledge
-							{searchQuery.trim() ? ` (${knowledgeResults.length})` : ""}
+							{searchQuery.trim() && knowledgeResults.length > 0 ? ` (${knowledgeResults.length})` : ""}
 						</button>
 						<button
 							type="button"
@@ -299,7 +326,7 @@ export function GlobalSearchBar({ className }: { className?: string }) {
 								className="size-3.5 shrink-0 object-contain opacity-75"
 							/>
 							Chat History
-							{searchQuery.trim() ? ` (${chatResults.length})` : ""}
+							{searchQuery.trim() && chatResults.length > 0 ? ` (${chatResults.length})` : ""}
 						</button>
 						<button
 							type="button"
@@ -319,12 +346,12 @@ export function GlobalSearchBar({ className }: { className?: string }) {
 								className="size-3.5 shrink-0 object-contain opacity-75"
 							/>
 							Category
-							{searchQuery.trim() ? ` (${categoryResults.length})` : ""}
+							{searchQuery.trim() && categoryResults.length > 0 ? ` (${categoryResults.length})` : ""}
 						</button>
 					</div>
 
 					{/* Results Body */}
-					<div className="max-h-110 overflow-y-auto divide-y divide-gray-100 p-1.5">
+					<div ref={listContainerRef} className="max-h-110 overflow-y-auto divide-y divide-gray-100 p-1.5">
 						{/* 1. Empty Query Prompt */}
 						{!searchQuery.trim() && (
 							<div className="p-4 text-xs text-muted-foreground text-center">
@@ -368,6 +395,7 @@ export function GlobalSearchBar({ className }: { className?: string }) {
 										return (
 											<div
 												key={p.id}
+												data-selected={isSelected ? "true" : undefined}
 												onClick={() => handleSelectItem({ type: "project", data: p })}
 												onMouseEnter={() => setSelectedIndex(itemIndex)}
 												className={cn(
@@ -427,6 +455,7 @@ export function GlobalSearchBar({ className }: { className?: string }) {
 										return (
 											<div
 												key={k.id}
+												data-selected={isSelected ? "true" : undefined}
 												onClick={() => handleSelectItem({ type: "knowledge", data: k })}
 												onMouseEnter={() => setSelectedIndex(itemIndex)}
 												className={cn(
@@ -523,6 +552,7 @@ export function GlobalSearchBar({ className }: { className?: string }) {
 										return (
 											<div
 												key={c.id}
+												data-selected={isSelected ? "true" : undefined}
 												onClick={() => handleSelectItem({ type: "chat", data: c })}
 												onMouseEnter={() => setSelectedIndex(itemIndex)}
 												className={cn(
@@ -605,6 +635,7 @@ export function GlobalSearchBar({ className }: { className?: string }) {
 										return (
 											<div
 												key={cat.id}
+												data-selected={isSelected ? "true" : undefined}
 												onClick={() => handleSelectItem({ type: "category", data: cat })}
 												onMouseEnter={() => setSelectedIndex(itemIndex)}
 												className={cn(
