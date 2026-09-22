@@ -20,32 +20,21 @@ import { api } from "@/lib/axios";
 import {
 	RiAlertLine,
 	RiAttachment2,
-	RiBold,
 	RiCheckboxCircleFill,
 	RiCheckLine,
 	RiCloseCircleLine,
 	RiCloseLine,
 	RiCornerDownLeftLine,
 	RiDeleteBin7Line,
-	RiDoubleQuotesL,
 	RiEdit2Line,
-	RiEyeLine,
 	RiFileExcel2Line,
 	RiFilePdf2Line,
 	RiFilePpt2Line,
 	RiFileTextLine,
 	RiFileWord2Line,
-	RiH1,
-	RiH2,
-	RiH3,
 	RiImage2Line,
-	RiItalic,
-	RiListCheck2,
-	RiListOrdered,
-	RiListUnordered,
 	RiLoader4Line,
 	RiRobot2Line,
-	RiSeparator,
 	RiStopCircleLine,
 	RiUploadCloud2Line,
 	RiUser3Line,
@@ -59,22 +48,23 @@ import {
 	KnowledgeResponse,
 } from "@/app/dashboard/knowledge/api/types";
 import {
+	invalidateAllKnowledgeQueries,
 	useCancelOperation,
 	useConfirmOperation,
 	useGeneralChatSession,
-	useSendGeneralChatMessage,
 	useReplaceKnowledgeFile,
-	invalidateAllKnowledgeQueries,
+	useSendGeneralChatMessage,
 } from "@/app/dashboard/knowledge/hooks/use-knowledge";
 import { MarkdownContent } from "@/components/shared/markdown-content";
+import { cleanDeletedItemFromMarkdown, cleanMessageTurn } from "@/components/shared/markdown/utils";
 import { StreamingMarkdown } from "@/components/shared/streaming-markdown";
-import { cleanMessageTurn, cleanDeletedItemFromMarkdown } from "@/components/shared/markdown/utils";
+import { WysiwygEditor } from "@/components/shared/wysiwyg-editor";
 import { toast } from "sonner";
 import { ApprovalActions } from "./approval-actions";
 import { CategorySettings } from "./category-settings";
+import { ProcessingPipelineCard } from "./processing-pipeline-card";
 import { TitleSettings } from "./title-settings";
 import { VisibilitySettings as VisibilitySettingsUI } from "./visibility-settings";
-import { ProcessingPipelineCard } from "./processing-pipeline-card";
 
 interface ChatPreviewProps {
 	mode?: "knowledge" | "general";
@@ -155,11 +145,11 @@ function getInitialMessages(
 	}
 
 	const rawHistory =
-		(Array.isArray(meta?.edit_history) && meta.edit_history.length > 0)
+		Array.isArray(meta?.edit_history) && meta.edit_history.length > 0
 			? meta.edit_history
-			: (Array.isArray(meta?.history) && meta.history.length > 0)
+			: Array.isArray(meta?.history) && meta.history.length > 0
 				? meta.history
-				: (Array.isArray(meta?.chat_history) && meta.chat_history.length > 0)
+				: Array.isArray(meta?.chat_history) && meta.chat_history.length > 0
 					? meta.chat_history
 					: undefined;
 
@@ -192,12 +182,15 @@ function getInitialMessages(
 	}
 
 	if (Array.isArray(history) && history.length > 0) {
-		const mapTurn = (m: {
-			role: "user" | "assistant";
-			content: string;
-			attachmentName?: string;
-			attachmentNames?: string[];
-		}, idx: number): Message => {
+		const mapTurn = (
+			m: {
+				role: "user" | "assistant";
+				content: string;
+				attachmentName?: string;
+				attachmentNames?: string[];
+			},
+			idx: number,
+		): Message => {
 			if (m.role === "user") {
 				const cleaned = cleanMessageTurn(m.content, m.attachmentName, m.attachmentNames);
 				return {
@@ -209,7 +202,9 @@ function getInitialMessages(
 			}
 			let content = m.content;
 			if (idx > 0 && content && />\s*\*\*Ringkasan Perubahan:\*\*/i.test(content)) {
-				const match = content.match(/(?:^|\n)>\s*\*\*Ringkasan Perubahan:\*\*[\s\S]*?(?=\n#{1,3}\s+|\n\*\*[^*]+\*\*|\Z)/i);
+				const match = content.match(
+					/(?:^|\n)>\s*\*\*Ringkasan Perubahan:\*\*[\s\S]*?(?=\n#{1,3}\s+|\n\*\*[^*]+\*\*|\Z)/i,
+				);
 				if (match) {
 					content = match[0].replace(/^>\s*/gm, "").trim();
 				}
@@ -301,12 +296,10 @@ export function ChatPreview({
 	const [activeOpId, setActiveOpId] = useState<string | null>(null);
 	const [activeOpAction, setActiveOpAction] = useState<"confirm" | "cancel" | null>(null);
 	const [completedOps, setCompletedOps] = useState<Record<string, "confirmed" | "cancelled">>({});
-	const [activeEditTab, setActiveEditTab] = useState<"write" | "preview">("write");
 	const [isManualEditing, setIsManualEditing] = useState(false);
 	const incomingSummary = summaryValue || aiSummary || knowledge?.ai_summary || "";
 	const [prevIncomingSummary, setPrevIncomingSummary] = useState(incomingSummary);
 	const [localSummary, setLocalSummary] = useState(incomingSummary);
-	const manualTextareaRef = useRef<HTMLTextAreaElement>(null);
 	const [backupManualSummary, setBackupManualSummary] = useState<string>("");
 
 	const handleRetryFileSelected = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -360,323 +353,12 @@ export function ChatPreview({
 		setIsManualEditing(false);
 	};
 
-	const handleSaveManualEdit = () => {
-		onChangeSummary?.(localSummary);
-		setBackupManualSummary(localSummary);
+	const handleSaveManualEdit = (newSummary?: string) => {
+		const finalVal = typeof newSummary === "string" ? newSummary : localSummary;
+		handleSummaryChange(finalVal);
+		setBackupManualSummary(finalVal);
 		setIsManualEditing(false);
-	};
-
-	// 1. Smart Inline formatting (Bold, Italic)
-	const applyInlineFormatting = (wrapper: string, defaultPlaceholder: string) => {
-		const textarea = manualTextareaRef.current;
-		const text = localSummary ?? "";
-		if (!textarea) return;
-
-		let start = textarea.selectionStart ?? 0;
-		let end = textarea.selectionEnd ?? 0;
-		let selected = text.substring(start, end);
-		const wrapperLen = wrapper.length;
-
-		// Case A: User selected text that is already wrapped, e.g. **hello** -> unwrap
-		const isWrappedSelection =
-			selected.startsWith(wrapper) &&
-			selected.endsWith(wrapper) &&
-			selected.length >= wrapperLen * 2 &&
-			!(wrapper === "*" && selected.startsWith("**") && selected.endsWith("**"));
-
-		if (isWrappedSelection) {
-			const unwrapped = selected.substring(wrapperLen, selected.length - wrapperLen);
-			const newText = text.substring(0, start) + unwrapped + text.substring(end);
-			handleSummaryChange(newText);
-			setTimeout(() => {
-				textarea.focus({ preventScroll: true });
-				textarea.setSelectionRange(start, start + unwrapped.length);
-			}, 0);
-			return;
-		}
-
-		// Case B: Cursor is surrounded by wrappers, e.g. **|hello|**
-		const isSurrounded =
-			start >= wrapperLen &&
-			end <= text.length - wrapperLen &&
-			text.substring(start - wrapperLen, start) === wrapper &&
-			text.substring(end, end + wrapperLen) === wrapper &&
-			!(
-				wrapper === "*" &&
-				text.substring(start - 2, start) === "**" &&
-				text.substring(end, end + 2) === "**"
-			);
-
-		if (isSurrounded) {
-			const newText =
-				text.substring(0, start - wrapperLen) + selected + text.substring(end + wrapperLen);
-			handleSummaryChange(newText);
-			setTimeout(() => {
-				textarea.focus({ preventScroll: true });
-				textarea.setSelectionRange(start - wrapperLen, end - wrapperLen);
-			}, 0);
-			return;
-		}
-
-		// If no selection (start === end), check if cursor is on or inside a word
-		if (start === end) {
-			const leftPart = text.substring(0, start);
-			const rightPart = text.substring(start);
-			const leftMatch = leftPart.match(/(\w+)$/);
-			const rightMatch = rightPart.match(/^(\w+)/);
-			if (leftMatch || rightMatch) {
-				const wordStart = start - (leftMatch ? leftMatch[1].length : 0);
-				const wordEnd = start + (rightMatch ? rightMatch[1].length : 0);
-				if (
-					wordStart >= wrapperLen &&
-					wordEnd <= text.length - wrapperLen &&
-					text.substring(wordStart - wrapperLen, wordStart) === wrapper &&
-					text.substring(wordEnd, wordEnd + wrapperLen) === wrapper
-				) {
-					const newText =
-						text.substring(0, wordStart - wrapperLen) +
-						text.substring(wordStart, wordEnd) +
-						text.substring(wordEnd + wrapperLen);
-					handleSummaryChange(newText);
-					setTimeout(() => {
-						textarea.focus({ preventScroll: true });
-						textarea.setSelectionRange(wordStart - wrapperLen, wordEnd - wrapperLen);
-					}, 0);
-					return;
-				}
-				start = wordStart;
-				end = wordEnd;
-				selected = text.substring(start, end);
-			}
-		}
-
-		// Case C: Normal wrap or placeholder insert, trimming leading/trailing whitespace from selection
-		const leadingSpace = selected.match(/^\s*/)?.[0] || "";
-		const trailingSpace = selected.match(/\s*$/)?.[0] || "";
-		const coreText = selected.substring(
-			leadingSpace.length,
-			selected.length - trailingSpace.length,
-		);
-
-		const contentToWrap = coreText || defaultPlaceholder;
-		const replacement = `${leadingSpace}${wrapper}${contentToWrap}${wrapper}${trailingSpace}`;
-		const newText = text.substring(0, start) + replacement + text.substring(end);
-		handleSummaryChange(newText);
-		setTimeout(() => {
-			textarea.focus({ preventScroll: true });
-			if (!coreText) {
-				const selectStart = start + leadingSpace.length + wrapperLen;
-				textarea.setSelectionRange(selectStart, selectStart + defaultPlaceholder.length);
-			} else {
-				textarea.setSelectionRange(start, start + replacement.length);
-			}
-		}, 0);
-	};
-
-	// 2. Line-aware Block formatting (Headings, Lists, Checklist, Quote)
-	const applyBlockFormatting = (
-		type: "h1" | "h2" | "h3" | "bullet" | "numbered" | "task" | "quote",
-	) => {
-		const textarea = manualTextareaRef.current;
-		const text = localSummary ?? "";
-		if (!textarea) return;
-
-		const start = textarea.selectionStart ?? 0;
-		const end = textarea.selectionEnd ?? 0;
-		const isSingleCursor = start === end;
-
-		const lineStart = text.lastIndexOf("\n", start - 1) + 1;
-		let lineEnd = text.indexOf("\n", end);
-		if (lineEnd === -1) lineEnd = text.length;
-
-		const selectedBlock = text.substring(lineStart, lineEnd);
-		const lines = selectedBlock.split(/\r?\n/);
-
-		let transformedLines: string[] = [];
-
-		if (type === "h1") {
-			const isAllH1 = lines.every((l) => /^#\s(?!#)/.test(l));
-			transformedLines = lines.map((line) => {
-				if (isAllH1) {
-					return line.replace(/^#\s*/, "");
-				}
-				const clean = line.replace(/^#{1,6}\s*/, "").trim();
-				return clean.length > 0 ? `# ${clean}` : "# Document Title";
-			});
-		} else if (type === "h2") {
-			const isAllH2 = lines.every((l) => /^##\s(?!#)/.test(l));
-			transformedLines = lines.map((line) => {
-				if (isAllH2) {
-					return line.replace(/^##\s*/, "");
-				}
-				const clean = line.replace(/^#{1,6}\s*/, "").trim();
-				return clean.length > 0 ? `## ${clean}` : "## Section Heading";
-			});
-		} else if (type === "h3") {
-			const isAllH3 = lines.every((l) => /^###\s(?!#)/.test(l));
-			transformedLines = lines.map((line) => {
-				if (isAllH3) {
-					return line.replace(/^###\s*/, "");
-				}
-				const clean = line.replace(/^#{1,6}\s*/, "").trim();
-				return clean.length > 0 ? `### ${clean}` : "### Subsection Heading";
-			});
-		} else if (type === "bullet") {
-			const isAllBullet = lines.every((l) => /^\s*-\s(?!\s*\[)/.test(l));
-			transformedLines = lines.map((line) => {
-				if (isAllBullet) {
-					return line.replace(/^\s*-\s*/, "");
-				}
-				const indent = line.match(/^\s*/)?.[0] || "";
-				const trimmed = line.trimStart();
-				const cleaned = trimmed.replace(/^(\d+\.|\*|-(\s*\[[\sxX]\])?)\s*/, "");
-				return cleaned.length > 0 ? `${indent}- ${cleaned}` : "- List item";
-			});
-		} else if (type === "numbered") {
-			const isAllNumbered = lines.every((l) => /^\s*\d+\.\s/.test(l));
-			let counter = 1;
-			transformedLines = lines.map((line) => {
-				if (isAllNumbered) {
-					return line.replace(/^\s*\d+\.\s*/, "");
-				}
-				const indent = line.match(/^\s*/)?.[0] || "";
-				const trimmed = line.trimStart();
-				const num = counter++;
-				const cleaned = trimmed.replace(/^(\d+\.|\*|-(\s*\[[\sxX]\])?)\s*/, "");
-				return cleaned.length > 0 ? `${indent}${num}. ${cleaned}` : `${num}. Step ${num}`;
-			});
-		} else if (type === "task") {
-			const isAllTask = lines.every((l) => /^\s*-\s*\[[\sxX]\]\s/.test(l));
-			transformedLines = lines.map((line) => {
-				if (isAllTask) {
-					return line.replace(/^\s*-\s*\[[\sxX]\]\s*/, "");
-				}
-				const indent = line.match(/^\s*/)?.[0] || "";
-				const trimmed = line.trimStart();
-				const cleaned = trimmed.replace(/^(\d+\.|\*|-(\s*\[[\sxX]\])?)\s*/, "");
-				return cleaned.length > 0 ? `${indent}- [ ] ${cleaned}` : "- [ ] Task item";
-			});
-		} else if (type === "quote") {
-			const isAllQuote = lines.every((l) => /^\s*>\s/.test(l));
-			transformedLines = lines.map((line) => {
-				if (isAllQuote) {
-					return line.replace(/^\s*>\s*/, "");
-				}
-				return `> ${line.replace(/^\s*>\s*/, "")}`;
-			});
-		}
-
-		const replacement = transformedLines.join("\n");
-		const newText = text.substring(0, lineStart) + replacement + text.substring(lineEnd);
-		handleSummaryChange(newText);
-
-		setTimeout(() => {
-			textarea.focus({ preventScroll: true });
-			if (isSingleCursor && selectedBlock.trim().length === 0) {
-				const placeholderMatch = replacement.match(
-					/^(?:#{1,3}\s*|-\s*\[\s*\]\s*|-\s*|\d+\.\s*|>\s*)(.*)$/,
-				);
-				const placeholder = placeholderMatch ? placeholderMatch[1] : replacement;
-				const selStart = lineStart + replacement.length - placeholder.length;
-				textarea.setSelectionRange(selStart, selStart + placeholder.length);
-			} else {
-				const targetPos = lineStart + replacement.length;
-				textarea.setSelectionRange(targetPos, targetPos);
-			}
-		}, 0);
-	};
-
-	// 4. Horizontal Divider Insertion Helper
-	const insertDivider = () => {
-		const textarea = manualTextareaRef.current;
-		const text = localSummary ?? "";
-		if (!textarea) return;
-
-		const start = textarea.selectionStart ?? 0;
-		const end = textarea.selectionEnd ?? 0;
-
-		const before = text.substring(0, start);
-		const after = text.substring(end);
-
-		const padBefore =
-			before.length > 0 && !before.endsWith("\n\n") ? (before.endsWith("\n") ? "\n" : "\n\n") : "";
-		const padAfter =
-			after.length > 0 && !after.startsWith("\n\n") ? (after.startsWith("\n") ? "\n" : "\n\n") : "";
-
-		const dividerTemplate = `${padBefore}---${padAfter}`;
-		const newText = before + dividerTemplate + after;
-		handleSummaryChange(newText);
-
-		setTimeout(() => {
-			textarea.focus({ preventScroll: true });
-			const newPos = start + dividerTemplate.length;
-			textarea.setSelectionRange(newPos, newPos);
-		}, 0);
-	};
-
-	// 4. Textarea Keydown Handler (Ctrl+Enter to save, Tab/Shift+Tab to indent)
-	const handleTextareaKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-		if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
-			e.preventDefault();
-			onSave?.();
-			return;
-		}
-
-		if (e.key === "Tab") {
-			e.preventDefault();
-			const textarea = manualTextareaRef.current;
-			if (!textarea) return;
-
-			const start = textarea.selectionStart ?? 0;
-			const end = textarea.selectionEnd ?? 0;
-			const text = localSummary ?? "";
-
-			if (start !== end && text.substring(start, end).includes("\n")) {
-				const lineStart = text.lastIndexOf("\n", start - 1) + 1;
-				let lineEnd = text.indexOf("\n", end);
-				if (lineEnd === -1) lineEnd = text.length;
-
-				const lines = text.substring(lineStart, lineEnd).split("\n");
-				let newLines: string[] = [];
-
-				if (e.shiftKey) {
-					newLines = lines.map((l) => l.replace(/^ {1,2}/, ""));
-				} else {
-					newLines = lines.map((l) => "  " + l);
-				}
-
-				const replacement = newLines.join("\n");
-				const newText = text.substring(0, lineStart) + replacement + text.substring(lineEnd);
-				handleSummaryChange(newText);
-
-				setTimeout(() => {
-					textarea.focus();
-					textarea.setSelectionRange(lineStart, lineStart + replacement.length);
-				}, 0);
-			} else {
-				if (e.shiftKey) {
-					const lineStart = text.lastIndexOf("\n", start - 1) + 1;
-					if (text.substring(lineStart, lineStart + 2) === "  ") {
-						const newText = text.substring(0, lineStart) + text.substring(lineStart + 2);
-						handleSummaryChange(newText);
-						setTimeout(() => {
-							textarea.focus();
-							textarea.setSelectionRange(
-								Math.max(lineStart, start - 2),
-								Math.max(lineStart, end - 2),
-							);
-						}, 0);
-					}
-				} else {
-					const newText = text.substring(0, start) + "  " + text.substring(end);
-					handleSummaryChange(newText);
-					setTimeout(() => {
-						textarea.focus();
-						textarea.setSelectionRange(start + 2, start + 2);
-					}, 0);
-				}
-			}
-		}
+		onSave?.();
 	};
 
 	const [prevScopeId, setPrevScopeId] = useState(`${knowledgeId}-${sessionId}`);
@@ -718,7 +400,6 @@ export function ChatPreview({
 		if (!isEditMode) {
 			const timer = setTimeout(() => {
 				setIsManualEditing(false);
-				setActiveEditTab("write");
 				if (knowledgeStatus === "APPROVED") {
 					setChatTurns([]);
 				}
@@ -888,16 +569,6 @@ export function ChatPreview({
 			return () => cancelAnimationFrame(raf);
 		}
 	}, [knowledgeId, fileName, mode]);
-
-	// Focus manual editor textarea without auto-scrolling the viewport when entering manual edit mode
-	useEffect(() => {
-		if (isManualEditing && activeEditTab === "write" && manualTextareaRef.current) {
-			const timer = setTimeout(() => {
-				manualTextareaRef.current?.focus({ preventScroll: true });
-			}, 30);
-			return () => clearTimeout(timer);
-		}
-	}, [isManualEditing, activeEditTab]);
 
 	// Focus chat textarea without auto-scrolling the viewport when entering prompt edit mode
 	useEffect(() => {
@@ -1440,10 +1111,11 @@ export function ChatPreview({
 					);
 				}
 				const isRetrievalOnly = Boolean(response.data.is_retrieval);
-				const chatResponse = response.data.reply
-					|| response.data.feedback
-					|| response.data.answer
-					|| "Dokumen knowledge base telah berhasil diperbarui.";
+				const chatResponse =
+					response.data.reply ||
+					response.data.feedback ||
+					response.data.answer ||
+					"Dokumen knowledge base telah berhasil diperbarui.";
 				setChatTurns((prev) => [...prev, { role: "assistant", content: chatResponse }]);
 				scrollToBottomAndFocus();
 				if (response.data.summary && !isRetrievalOnly) {
@@ -1452,10 +1124,20 @@ export function ChatPreview({
 				if (response.data.title && !isRetrievalOnly && typeof onChangeTitle === "function") {
 					onChangeTitle(response.data.title);
 				}
-				if (response.data.chunks && !isRetrievalOnly && typeof onChangeChunks === "function" && Array.isArray(response.data.chunks)) {
+				if (
+					response.data.chunks &&
+					!isRetrievalOnly &&
+					typeof onChangeChunks === "function" &&
+					Array.isArray(response.data.chunks)
+				) {
 					onChangeChunks(response.data.chunks);
 				}
-				if (response.data.categories && !isRetrievalOnly && typeof onChangeCategories === "function" && Array.isArray(response.data.categories)) {
+				if (
+					response.data.categories &&
+					!isRetrievalOnly &&
+					typeof onChangeCategories === "function" &&
+					Array.isArray(response.data.categories)
+				) {
 					onChangeCategories(response.data.categories);
 				}
 
@@ -1473,7 +1155,10 @@ export function ChatPreview({
 					{ signal: controller.signal },
 				);
 
-				setChatTurns((prev) => [...prev, { role: "assistant", content: response.data?.answer || response.data?.message || "" }]);
+				setChatTurns((prev) => [
+					...prev,
+					{ role: "assistant", content: response.data?.answer || response.data?.message || "" },
+				]);
 			}
 		} catch (err: unknown) {
 			const isCanceled =
@@ -1513,7 +1198,11 @@ export function ChatPreview({
 			const targetItem =
 				res.target_item ||
 				messages.find((m) => m.operation_id === opId)?.target_item ||
-				(messages.find((m) => m.operation_id === opId)?.attachments as Record<string, unknown> | undefined)?.target_item;
+				(
+					messages.find((m) => m.operation_id === opId)?.attachments as
+						| Record<string, unknown>
+						| undefined
+				)?.target_item;
 
 			if (isDeleteOp) {
 				// 1. Clear initialSnapshotMap so Turn 0 updates to clean state
@@ -1702,10 +1391,12 @@ export function ChatPreview({
 
 	const renderAssistantContent = (index: number, msg: Message) => {
 		const isInitialTurn = index === firstAssistantIndex;
-		const isTargetForEdit = isEditMode && isInitialTurn;
+		const isPendingDoc = (knowledgeStatus || knowledge?.status || "").toUpperCase() === "PENDING";
+		const isTargetForEdit =
+			isInitialTurn && mode === "knowledge" && (isPendingDoc || isEditMode || isManualEditing);
 		const displayContent = isInitialTurn
-			? (localSummary || msg.content || aiSummary || knowledge?.ai_summary || "")
-			: (msg.content || "");
+			? localSummary || msg.content || aiSummary || knowledge?.ai_summary || ""
+			: msg.content || "";
 
 		if (isTargetForEdit) {
 			if (!isManualEditing) {
@@ -1734,204 +1425,21 @@ export function ChatPreview({
 				);
 			}
 
-			// Manual Direct Edit Mode
+			// Manual Direct Edit Mode with TipTap WYSIWYG Editor
 			return (
-				<div className="flex flex-col gap-2.5 w-full">
-					{/* Header bar with Tabs and Cancel/Save Edit buttons */}
-					<div className="flex items-center justify-between border-b border-zinc-200 pb-2.5">
-						<div className="flex items-center gap-1 bg-zinc-100 p-1 rounded-lg border border-zinc-200 shadow-none">
-							<button
-								type="button"
-								onClick={() => setActiveEditTab("preview")}
-								className={`inline-flex items-center gap-1.5 px-3 h-8 text-xs font-medium rounded-md transition-colors cursor-pointer shadow-none ${
-									activeEditTab === "preview"
-										? "bg-white text-zinc-900 border border-zinc-200/80 font-semibold"
-										: "text-zinc-600 hover:text-zinc-900 hover:bg-zinc-200/60 border border-transparent"
-								}`}
-							>
-								<RiEyeLine className="size-3.5" />
-								Preview
-							</button>
-							<button
-								type="button"
-								onClick={() => setActiveEditTab("write")}
-								className={`inline-flex items-center gap-1.5 px-3 h-8 text-xs font-medium rounded-md transition-colors cursor-pointer shadow-none ${
-									activeEditTab === "write"
-										? "bg-white text-zinc-900 border border-zinc-200/80 font-semibold"
-										: "text-zinc-600 hover:text-zinc-900 hover:bg-zinc-200/60 border border-transparent"
-								}`}
-							>
-								<RiEdit2Line className="size-3.5" />
-								Write
-							</button>
-						</div>
-
-						<div className="flex items-center gap-2">
-							<Button
-								type="button"
-								size="sm"
-								variant="outline"
-								onClick={handleCancelManualEdit}
-								className="border-zinc-300 bg-white text-zinc-800 hover:bg-zinc-100 rounded-lg shadow-none h-8 px-3 font-medium text-xs transition-colors cursor-pointer"
-							>
-								Cancel
-							</Button>
-							<Button
-								type="button"
-								size="sm"
-								variant="default"
-								onClick={handleSaveManualEdit}
-								className="gap-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg shadow-none h-8 px-3 font-medium text-xs transition-colors cursor-pointer"
-							>
-								<RiCheckLine className="size-3.5" />
-								Save Edit
-							</Button>
-						</div>
-					</div>
-
-					{/* Industry Standard Markdown Formatting Toolbar */}
-					{activeEditTab === "write" && (
-						<div className="flex flex-wrap items-center gap-0.5 bg-zinc-50 border border-zinc-200 p-1 rounded-lg shadow-none">
-							{/* 1. Headings */}
-							<button
-								type="button"
-								title="Heading 1 (#)"
-								onMouseDown={(e) => e.preventDefault()}
-								onClick={() => applyBlockFormatting("h1")}
-								className="size-7 rounded hover:bg-zinc-200/70 text-zinc-700 hover:text-zinc-950 flex items-center justify-center cursor-pointer transition-colors border border-transparent hover:border-zinc-300 shrink-0"
-							>
-								<RiH1 className="size-4" />
-							</button>
-							<button
-								type="button"
-								title="Heading 2 (##)"
-								onMouseDown={(e) => e.preventDefault()}
-								onClick={() => applyBlockFormatting("h2")}
-								className="size-7 rounded hover:bg-zinc-200/70 text-zinc-700 hover:text-zinc-950 flex items-center justify-center cursor-pointer transition-colors border border-transparent hover:border-zinc-300 shrink-0"
-							>
-								<RiH2 className="size-4" />
-							</button>
-							<button
-								type="button"
-								title="Heading 3 (###)"
-								onMouseDown={(e) => e.preventDefault()}
-								onClick={() => applyBlockFormatting("h3")}
-								className="size-7 rounded hover:bg-zinc-200/70 text-zinc-700 hover:text-zinc-950 flex items-center justify-center cursor-pointer transition-colors border border-transparent hover:border-zinc-300 shrink-0"
-							>
-								<RiH3 className="size-4" />
-							</button>
-
-							<div className="h-4 w-px bg-zinc-300 mx-1" />
-
-							{/* 2. Text Styles */}
-							<button
-								type="button"
-								title="Bold (**text**)"
-								onMouseDown={(e) => e.preventDefault()}
-								onClick={() => applyInlineFormatting("**", "bold text")}
-								className="size-7 rounded hover:bg-zinc-200/70 text-zinc-700 hover:text-zinc-950 flex items-center justify-center cursor-pointer transition-colors border border-transparent hover:border-zinc-300 shrink-0"
-							>
-								<RiBold className="size-4" />
-							</button>
-							<button
-								type="button"
-								title="Italic (*text*)"
-								onMouseDown={(e) => e.preventDefault()}
-								onClick={() => applyInlineFormatting("*", "italic text")}
-								className="size-7 rounded hover:bg-zinc-200/70 text-zinc-700 hover:text-zinc-950 flex items-center justify-center cursor-pointer transition-colors border border-transparent hover:border-zinc-300 shrink-0"
-							>
-								<RiItalic className="size-4" />
-							</button>
-
-							<div className="h-4 w-px bg-zinc-300 mx-1" />
-
-							{/* 3. Lists & Checks */}
-							<button
-								type="button"
-								title="Bullet List (- item)"
-								onMouseDown={(e) => e.preventDefault()}
-								onClick={() => applyBlockFormatting("bullet")}
-								className="size-7 rounded hover:bg-zinc-200/70 text-zinc-700 hover:text-zinc-950 flex items-center justify-center cursor-pointer transition-colors border border-transparent hover:border-zinc-300 shrink-0"
-							>
-								<RiListUnordered className="size-4" />
-							</button>
-							<button
-								type="button"
-								title="Numbered List (1. item)"
-								onMouseDown={(e) => e.preventDefault()}
-								onClick={() => applyBlockFormatting("numbered")}
-								className="size-7 rounded hover:bg-zinc-200/70 text-zinc-700 hover:text-zinc-950 flex items-center justify-center cursor-pointer transition-colors border border-transparent hover:border-zinc-300 shrink-0"
-							>
-								<RiListOrdered className="size-4" />
-							</button>
-							<button
-								type="button"
-								title="Task Checklist (- [ ] item)"
-								onMouseDown={(e) => e.preventDefault()}
-								onClick={() => applyBlockFormatting("task")}
-								className="size-7 rounded hover:bg-zinc-200/70 text-zinc-700 hover:text-zinc-950 flex items-center justify-center cursor-pointer transition-colors border border-transparent hover:border-zinc-300 shrink-0"
-							>
-								<RiListCheck2 className="size-4" />
-							</button>
-							<button
-								type="button"
-								title="Quote Block (> text)"
-								onMouseDown={(e) => e.preventDefault()}
-								onClick={() => applyBlockFormatting("quote")}
-								className="size-7 rounded hover:bg-zinc-200/70 text-zinc-700 hover:text-zinc-950 flex items-center justify-center cursor-pointer transition-colors border border-transparent hover:border-zinc-300 shrink-0"
-							>
-								<RiDoubleQuotesL className="size-4" />
-							</button>
-
-							<div className="h-4 w-px bg-zinc-300 mx-1" />
-
-							{/* 4. Formatting Utilities */}
-							<button
-								type="button"
-								title="Horizontal Divider (---)"
-								onMouseDown={(e) => e.preventDefault()}
-								onClick={insertDivider}
-								className="size-7 rounded hover:bg-zinc-200/70 text-zinc-700 hover:text-zinc-950 flex items-center justify-center cursor-pointer transition-colors border border-transparent hover:border-zinc-300 shrink-0"
-							>
-								<RiSeparator className="size-4" />
-							</button>
-						</div>
-					)}
-
-					{activeEditTab === "write" ? (
-						<textarea
-							ref={manualTextareaRef}
-							value={localSummary}
-							onChange={(e) => handleSummaryChange(e.target.value)}
-							onKeyDown={handleTextareaKeyDown}
-							rows={18}
-							placeholder="Type or edit document content manually here..."
-							className="w-full font-mono text-xs sm:text-sm text-zinc-900 leading-relaxed border border-gray-200 bg-white rounded-lg p-3.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 resize-y min-h-80 shadow-none"
-						/>
-					) : (
-						<div className="min-h-80 p-3.5 bg-zinc-50/50 rounded-lg border border-zinc-200 shadow-none">
-							<MarkdownContent content={localSummary || displayContent} />
-						</div>
-					)}
-
-					<div className="flex items-center justify-between text-[11px] text-zinc-500 pt-1">
-						<span>
-							Use the toolbar buttons above to format text without typing raw markdown symbols.
-						</span>
-						<span className="hidden sm:inline">
-							Press{" "}
-							<kbd className="px-1 py-0.5 bg-zinc-100 border border-zinc-200 rounded text-[10px] text-zinc-600 font-mono">
-								Ctrl+Enter
-							</kbd>{" "}
-							to save
-						</span>
-					</div>
+				<div className="flex flex-col w-full my-2">
+					<WysiwygEditor
+						initialContent={localSummary || displayContent}
+						onSave={(markdown) => handleSaveManualEdit(markdown)}
+						onCancel={handleCancelManualEdit}
+						onChange={(markdown) => handleSummaryChange(markdown)}
+					/>
 				</div>
 			);
 		}
 
 		return (
-			<>
+			<div className="flex flex-col w-full">
 				{index === firstAssistantIndex && headerNode}
 				{index === firstAssistantIndex && renderConfidenceScore()}
 				<StreamingMarkdown
@@ -1944,17 +1452,19 @@ export function ChatPreview({
 					}}
 				/>
 				{renderOperationActions(msg)}
-			</>
+			</div>
 		);
 	};
+
+	const isApprovedDoc = (knowledgeStatus || knowledge?.status || "").toUpperCase() === "APPROVED";
 
 	const isInputDisabled =
 		mode === "general"
 			? isProcessing
 			: knowledgeStatus === "PROCESSING" ||
-				(knowledgeStatus === "APPROVED" && !isEditMode) ||
 				isProcessing ||
-				isDetailLoading;
+				isDetailLoading ||
+				(isApprovedDoc && !isEditMode);
 
 	return (
 		<div
@@ -2097,7 +1607,9 @@ export function ChatPreview({
 																		{fileName}
 																	</AttachmentTitle>
 																	<span className="text-[11px] text-zinc-500 uppercase font-medium">
-																		{/\.(png|jpe?g|webp|gif|svg)$/i.test(fileName || "") ? "IMAGE" : "DOCUMENT"}
+																		{/\.(png|jpe?g|webp|gif|svg)$/i.test(fileName || "")
+																			? "IMAGE"
+																			: "DOCUMENT"}
 																	</span>
 																</AttachmentContent>
 															</Attachment>
@@ -2147,7 +1659,9 @@ export function ChatPreview({
 																	{fileName}
 																</AttachmentTitle>
 																<AttachmentDescription className="text-[11px] text-zinc-500 uppercase">
-																	{/\.(png|jpe?g|webp|gif|svg)$/i.test(fileName || "") ? "IMAGE" : "DOCUMENT"}
+																	{/\.(png|jpe?g|webp|gif|svg)$/i.test(fileName || "")
+																		? "IMAGE"
+																		: "DOCUMENT"}
 																</AttachmentDescription>
 															</AttachmentContent>
 														</Attachment>
@@ -2178,7 +1692,9 @@ export function ChatPreview({
 																		{name}
 																	</AttachmentTitle>
 																	<AttachmentDescription className="text-[11px] text-zinc-500 uppercase">
-																		{/\.(png|jpe?g|webp|gif|svg)$/i.test(name || "") ? "IMAGE" : "DOCUMENT"}
+																		{/\.(png|jpe?g|webp|gif|svg)$/i.test(name || "")
+																			? "IMAGE"
+																			: "DOCUMENT"}
 																	</AttachmentDescription>
 																</AttachmentContent>
 															</Attachment>
@@ -2203,7 +1719,7 @@ export function ChatPreview({
 											>
 												{messages[0].role === "assistant"
 													? renderAssistantContent(0, messages[0])
-													: (messages[0].content || "")}
+													: messages[0].content || ""}
 												{/* Inject Categories below initial summary if it's the latest assistant message */}
 												{0 === lastAssistantIndex && renderCategoriesBlock()}
 											</div>
@@ -2249,7 +1765,9 @@ export function ChatPreview({
 																			{name}
 																		</AttachmentTitle>
 																		<AttachmentDescription className="text-[11px] text-zinc-500 uppercase">
-																			{/\.(png|jpe?g|webp|gif|svg)$/i.test(name || "") ? "IMAGE" : "DOCUMENT"}
+																			{/\.(png|jpe?g|webp|gif|svg)$/i.test(name || "")
+																				? "IMAGE"
+																				: "DOCUMENT"}
 																		</AttachmentDescription>
 																	</AttachmentContent>
 																</Attachment>
@@ -2273,7 +1791,7 @@ export function ChatPreview({
 												>
 													{msg.role === "assistant"
 														? renderAssistantContent(actualIndex, msg)
-														: (msg.content || "")}
+														: msg.content || ""}
 													{/* Inject Categories below this AI message if it's the latest assistant message */}
 													{actualIndex === lastAssistantIndex && renderCategoriesBlock()}
 												</div>
@@ -2413,8 +1931,8 @@ export function ChatPreview({
 						placeholder={
 							knowledgeStatus === "PROCESSING"
 								? "Waiting for ingestion to complete..."
-								: knowledgeStatus === "APPROVED" && !isEditMode
-									? "Click 'Edit Knowledge' above to make adjustments..."
+								: isApprovedDoc && !isEditMode
+									? "Click 'Edit Knowledge' to ask questions or request adjustments..."
 									: mode === "general"
 										? "Ask about the knowledge..."
 										: "Ask questions or request adjustments..."

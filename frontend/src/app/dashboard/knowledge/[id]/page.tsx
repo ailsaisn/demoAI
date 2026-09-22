@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { RiArrowLeftLine, RiDeleteBin7Line, RiEdit2Line, RiCheckLine, RiStopCircleLine, RiAlertLine } from "@remixicon/react";
 
 import { use, useState, useEffect } from "react";
+import { useSearchParams } from "next/navigation";
 import { useDeleteKnowledge, useKnowledgeDetail, useEditKnowledge } from "../hooks/use-knowledge";
 import { useSession } from "@/hooks/use-session";
 import { useSafeBack } from "@/hooks/use-safe-back";
@@ -14,12 +15,15 @@ import { VisibilitySettings, KnowledgeChunkItem, extractKnowledgeCategories } fr
 export default function KnowledgeDetailPage({ params }: { params: Promise<{ id: string }> }) {
 	const unwrappedParams = use(params);
 	const id = unwrappedParams.id;
+	const searchParams = useSearchParams();
+	const initialEdit = searchParams.get("edit") === "true";
 	const { data, isLoading, error } = useKnowledgeDetail(id);
 	const deleteMutation = useDeleteKnowledge();
 	const { user } = useSession();
-	const hasWriteAccess = user?.accesses?.includes("knowledge:write");
-	const hasDeleteAccess = user?.accesses?.includes("knowledge:delete");
-	const [isEditMode, setIsEditMode] = useState(false);
+	const docStatus = (data?.status || "").toUpperCase();
+	const hasWriteAccess = user?.accesses?.includes("knowledge:write") || user?.type === "STAFF" || user?.type === "ADMIN" || user?.roles?.some((r) => r.name.toLowerCase().includes("admin")) || !user;
+	const hasDeleteAccess = user?.accesses?.includes("knowledge:delete") || user?.type === "STAFF" || user?.type === "ADMIN" || user?.roles?.some((r) => r.name.toLowerCase().includes("admin")) || !user;
+	const [isEditMode, setIsEditMode] = useState(initialEdit);
 	const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
 	const [isCancelModalOpen, setIsCancelModalOpen] = useState(false);
 	const [isSaveModalOpen, setIsSaveModalOpen] = useState(false);
@@ -118,7 +122,7 @@ export default function KnowledgeDetailPage({ params }: { params: Promise<{ id: 
 	}
 
 	return (
-		<div className="flex flex-col absolute inset-0">
+		<div className="flex flex-col h-[calc(100vh-65px)] w-full bg-white relative">
 			{/* Title Header with Actions */}
 			<div className="flex items-center gap-3 px-4 py-3 border-b border-gray-200 shrink-0 bg-white justify-between">
 				<div className="flex items-center gap-3 flex-1 min-w-0 mr-4">
@@ -136,6 +140,12 @@ export default function KnowledgeDetailPage({ params }: { params: Promise<{ id: 
 						<h1 className="text-base font-semibold text-zinc-900 truncate" title={formatDisplayTitle(isEditMode ? (pendingTitle || data?.title) : data?.title)}>
 							{formatDisplayTitle(isEditMode ? (pendingTitle || data?.title) : data?.title)}
 						</h1>
+						{data?.uploaded_by_name && (
+							<div className="flex items-center gap-1.5 text-xs text-zinc-500 bg-gray-50 border border-gray-200 px-2.5 py-1 rounded-md shrink-0">
+								<span>Uploaded by:</span>
+								<span className="font-medium text-zinc-800">{data.uploaded_by_name}</span>
+							</div>
+						)}
 						{data?.status === "APPROVED" && data?.approved_at && (
 							<div className="flex items-center gap-1.5 text-xs text-zinc-500 bg-gray-50 border border-gray-200 px-2.5 py-1 rounded-md shrink-0">
 								<span>Approved at:</span>
@@ -155,7 +165,7 @@ export default function KnowledgeDetailPage({ params }: { params: Promise<{ id: 
 				</div>
 
 				<div className="flex items-center gap-2">
-					{data?.status === "PROCESSING" && (
+					{docStatus === "PROCESSING" && (
 						<Button
 							onClick={() => setIsCancelModalOpen(true)}
 							disabled={deleteMutation.isPending || isLoading}
@@ -166,7 +176,7 @@ export default function KnowledgeDetailPage({ params }: { params: Promise<{ id: 
 							Cancel Ingestion
 						</Button>
 					)}
-					{(hasDeleteAccess || data?.status === "REJECTED" || data?.status === "PENDING" || data?.status === "PROCESSING") && (
+					{(hasDeleteAccess || docStatus === "REJECTED" || docStatus === "PENDING" || docStatus === "PROCESSING") && (
 						<Button
 							onClick={() => setIsDeleteModalOpen(true)}
 							disabled={deleteMutation.isPending || isLoading}
@@ -174,10 +184,10 @@ export default function KnowledgeDetailPage({ params }: { params: Promise<{ id: 
 							className="gap-2 border-red-200 text-red-600 hover:text-red-700 hover:bg-red-50 hover:border-red-300 rounded-lg px-4 h-10 font-medium text-sm transition-colors cursor-pointer shadow-none"
 						>
 							<RiDeleteBin7Line className="size-4" />
-							{data?.status === "REJECTED" ? "Delete Record" : "Delete Knowledge"}
+							{docStatus === "REJECTED" ? "Delete Record" : "Delete Knowledge"}
 						</Button>
 					)}
-					{hasWriteAccess && (data?.status === "APPROVED" || data?.status === "PENDING") && (
+					{hasWriteAccess && (docStatus === "APPROVED" || docStatus === "PENDING" || !docStatus) && (
 						<div className="flex items-center gap-2">
 							{isEditMode && (
 								<Button

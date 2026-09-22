@@ -40,6 +40,7 @@ import {
 	RiCloseLine,
 	RiDatabase2Line,
 	RiDeleteBinLine,
+	RiEdit2Line,
 	RiEyeLine,
 	RiFilterOffLine,
 	RiLoader4Line,
@@ -306,7 +307,8 @@ export function KnowledgeTable({
 					item.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
 					item.allFileNames.some((f) => f.toLowerCase().includes(searchQuery.toLowerCase())) ||
 					item.description.toLowerCase().includes(searchQuery.toLowerCase()) ||
-					item.categories.some((c) => c.toLowerCase().includes(searchQuery.toLowerCase())),
+					item.categories.some((c) => c.toLowerCase().includes(searchQuery.toLowerCase())) ||
+					(item.uploadedByName && item.uploadedByName.toLowerCase().includes(searchQuery.toLowerCase())),
 			);
 
 		return sortItems<DisplayRowItem>(result);
@@ -837,10 +839,7 @@ export function KnowledgeTable({
 										</div>
 									</TableCell>
 									<TableCell className="max-w-xl">
-										<p
-											className="text-sm text-gray-600 truncate"
-											title={row.description || undefined}
-										>
+										<p className="text-sm text-gray-600 truncate">
 											{row.description}
 										</p>
 									</TableCell>
@@ -866,6 +865,19 @@ export function KnowledgeTable({
 													>
 														<RiEyeLine className="size-3.5 mr-2" />
 														<span>View Details</span>
+													</DropdownMenuItem>
+													<DropdownMenuItem
+														onClick={() => {
+															if (row.isBatch && row.batchId) {
+																router.push(`${basePath}/batch/${row.batchId}?edit=true`);
+															} else {
+																router.push(`${basePath}/${row.id}?edit=true`);
+															}
+														}}
+														className="text-xs text-gray-700 cursor-pointer"
+													>
+														<RiEdit2Line className="size-3.5 mr-2" />
+														<span>Edit Knowledge</span>
 													</DropdownMenuItem>
 													<DropdownMenuItem
 														onClick={() => {

@@ -754,10 +754,7 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
 											</TableCell>
 
 											<TableCell className="max-w-xl">
-												<p
-													className="text-sm text-gray-600 truncate"
-													title={row.description || undefined}
-												>
+												<p className="text-sm text-gray-600 truncate">
 													{row.description}
 												</p>
 											</TableCell>

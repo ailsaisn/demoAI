@@ -6,6 +6,7 @@ from app.models.category import Category, UserCategoryExclusion
 from app.models.branch import UserBranch
 from typing import List, Optional, Dict, Any
 import uuid
+from uuid import UUID
 import json
 import os
 import asyncio
@@ -732,6 +733,14 @@ async def list_knowledge(
 
                                 doc_status = KnowledgeStatus.APPROVED if "output" in folder else KnowledgeStatus.PENDING
 
+                                staged_uploader_id = UUID(int=0)
+                                if data.get("uploaded_by"):
+                                    try:
+                                        staged_uploader_id = UUID(str(data.get("uploaded_by")))
+                                    except Exception:
+                                        pass
+                                staged_uploader_name = data.get("uploaded_by_name") or data.get("uploader_name") or "Admin"
+
                                 staged_responses.append(KnowledgeResponse(
                                     id=k_uuid,
                                     title=title,
@@ -744,8 +753,8 @@ async def list_knowledge(
                                     status=doc_status,
                                     ai_summary=summary,
                                     ai_confidence=95.0,
-                                    uploaded_by=current_user.id,
-                                    uploaded_by_name=current_user.name or "Admin",
+                                    uploaded_by=staged_uploader_id,
+                                    uploaded_by_name=staged_uploader_name,
                                     approved_by=None,
                                     approved_at=now if doc_status == KnowledgeStatus.APPROVED else None,
                                     metadata_=data,
@@ -952,6 +961,14 @@ async def get_knowledge(
                 summary = data.get("summary", "")
                 k_type = KnowledgeType.GENERAL
 
+                staged_uploader_id = UUID(int=0)
+                if data.get("uploaded_by"):
+                    try:
+                        staged_uploader_id = UUID(str(data.get("uploaded_by")))
+                    except Exception:
+                        pass
+                staged_uploader_name = data.get("uploaded_by_name") or data.get("uploader_name") or "Admin"
+
                 return KnowledgeResponse(
                     id=knowledge_id,
                     title=title,
@@ -964,8 +981,8 @@ async def get_knowledge(
                     status=doc_status,
                     ai_summary=summary,
                     ai_confidence=95.0,
-                    uploaded_by=current_user.id,
-                    uploaded_by_name=current_user.name or "Admin",
+                    uploaded_by=staged_uploader_id,
+                    uploaded_by_name=staged_uploader_name,
                     approved_by=None,
                     approved_at=now if doc_status == KnowledgeStatus.APPROVED else None,
                     metadata_=data,
@@ -988,8 +1005,8 @@ async def get_knowledge(
         status=KnowledgeStatus.PROCESSING,
         ai_summary="Document processing in progress...",
         ai_confidence=0.0,
-        uploaded_by=current_user.id,
-        uploaded_by_name=current_user.name or "Admin",
+        uploaded_by=UUID(int=0),
+        uploaded_by_name="Admin",
         approved_by=None,
         approved_at=None,
         metadata_={"status": "PROCESSING"},
@@ -1134,6 +1151,14 @@ async def get_knowledge_batch(
                                     if "edit_history" in data:
                                         data["edit_history"] = sanitize_history_turns(data["edit_history"])
 
+                                    staged_uploader_id = UUID(int=0)
+                                    if data.get("uploaded_by"):
+                                        try:
+                                            staged_uploader_id = UUID(str(data.get("uploaded_by")))
+                                        except Exception:
+                                            pass
+                                    staged_uploader_name = data.get("uploaded_by_name") or data.get("uploader_name") or "Admin"
+
                                     enriched_docs.append(KnowledgeResponse(
                                         id=k_uuid,
                                         title=title,
@@ -1146,8 +1171,8 @@ async def get_knowledge_batch(
                                         status=doc_status,
                                         ai_summary=summary,
                                         ai_confidence=95.0,
-                                        uploaded_by=current_user.id,
-                                        uploaded_by_name=current_user.name or "Admin",
+                                        uploaded_by=staged_uploader_id,
+                                        uploaded_by_name=staged_uploader_name,
                                         approved_by=None,
                                         approved_at=now if doc_status == KnowledgeStatus.APPROVED else None,
                                         metadata_=data,
@@ -1702,6 +1727,7 @@ async def upload_knowledge_file(
                         k_obj.metadata_.pop("batch_summary", None)
                         k_obj.metadata_.pop("initial_summary", None)
 
+                        k_obj.uploaded_by = current_user.id
                         if batch_id:
                             k_obj.metadata_["batch_id"] = batch_id
                             modified = True
