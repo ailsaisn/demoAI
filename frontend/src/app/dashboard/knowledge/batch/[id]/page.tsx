@@ -48,6 +48,7 @@ import { BatchKnowledgeTabContent, BatchTabHandle } from "./BatchKnowledgeTabCon
 import { BatchDocumentTabs } from "./BatchDocumentTabs";
 import { BatchExecutiveSummary } from "./BatchExecutiveSummary";
 import { BatchVisibilityModal } from "./BatchVisibilityModal";
+import { BatchReviewSkeleton } from "./batch-review-skeleton";
 
 export default function BatchKnowledgePage({ params }: { params: Promise<{ id: string }> }) {
 	const router = useRouter();
@@ -80,11 +81,7 @@ export default function BatchKnowledgePage({ params }: { params: Promise<{ id: s
 	}
 
 	if (isLoading || !batchDocuments) {
-		return (
-			<div className="flex items-center justify-center h-full text-zinc-500">
-				Loading batch documents...
-			</div>
-		);
+		return <BatchReviewSkeleton />;
 	}
 
 	if (batchDocuments.length === 0) {
@@ -331,7 +328,7 @@ export default function BatchKnowledgePage({ params }: { params: Promise<{ id: s
 							Delete Knowledge
 						</Button>
 					)}
-					{hasWriteAccess && (activeDocStatus === "APPROVED" || activeDocStatus === "PENDING" || !activeDocStatus) && (
+					{hasWriteAccess && (activeDocStatus === "APPROVED" || !activeDocStatus) && (
 						<div className="flex items-center gap-2">
 							{isEditMode && (
 								<Button

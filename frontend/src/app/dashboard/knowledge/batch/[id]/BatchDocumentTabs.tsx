@@ -74,17 +74,41 @@ export function BatchDocumentTabs({
 	}, [activeId]);
 
 	const activeIndex = documents.findIndex((d) => d.id === activeId);
+	const approvedCount = documents.filter((d) => (d.status || "").toUpperCase() === "APPROVED").length;
+	const pendingCount = documents.filter((d) => (d.status || "").toUpperCase() === "PENDING").length;
+	const processingCount = documents.filter((d) => (d.status || "").toUpperCase() === "PROCESSING").length;
 
 	return (
 		<div className="flex flex-col gap-2 w-full min-w-0 max-w-full">
-			{/* Sub-header with document count */}
-			<div className="flex items-center gap-2 min-w-0">
-				<h4 className="text-xs font-semibold text-blue-900 uppercase tracking-wider truncate">
-					Documents in this batch ({documents.length})
-				</h4>
-				<span className="text-xs text-zinc-600 font-normal shrink-0">
-					• Viewing {activeIndex + 1} of {documents.length}
-				</span>
+			{/* Sub-header with document count and batch progress */}
+			<div className="flex flex-wrap items-center justify-between gap-2 min-w-0">
+				<div className="flex items-center gap-2 min-w-0">
+					<h4 className="text-xs font-semibold text-blue-900 uppercase tracking-wider truncate">
+						Documents in this batch ({documents.length})
+					</h4>
+					<span className="text-xs text-zinc-600 font-normal shrink-0">
+						• Viewing {activeIndex + 1} of {documents.length}
+					</span>
+				</div>
+
+				<div className="flex items-center gap-1.5 text-xs font-medium bg-zinc-50 border border-zinc-200/80 px-2.5 py-1 rounded-md text-zinc-700 shrink-0">
+					<span>
+						<span className="font-semibold text-zinc-900">{approvedCount}</span> of{" "}
+						<span className="font-semibold text-zinc-900">{documents.length}</span> Approved
+					</span>
+					{pendingCount > 0 && (
+						<>
+							<span className="text-zinc-300">•</span>
+							<span className="text-amber-700">{pendingCount} On review</span>
+						</>
+					)}
+					{processingCount > 0 && (
+						<>
+							<span className="text-zinc-300">•</span>
+							<span className="text-blue-700">{processingCount} Processing</span>
+						</>
+					)}
+				</div>
 			</div>
 
 			{/* Scrollable Tabs Bar */}

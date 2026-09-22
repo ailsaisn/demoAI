@@ -6,6 +6,7 @@ import {
 	useDeleteKnowledge,
 	useKnowledgeBaseList,
 } from "@/app/dashboard/knowledge/hooks/use-knowledge";
+import { stripMarkdown } from "@/lib/utils";
 import { Checkbox } from "@/components/ui/checkbox";
 import { ConfirmationModal } from "@/components/shared/confirmation-modal";
 import { DataTablePagination } from "@/components/shared/data-table-pagination";
@@ -198,7 +199,7 @@ export function KnowledgeTable({
 					created_at: doc.created_at,
 					approved_at: doc.approved_at,
 					uploadedByName: doc.uploaded_by_name || "Admin",
-					description: doc.ai_summary || doc.content || "No description available.",
+					description: stripMarkdown(doc.ai_summary || doc.content) || "No description available.",
 					documentCount: 1,
 					rawItem: doc,
 					allFileNames: [doc.file_name],
@@ -258,7 +259,7 @@ export function KnowledgeTable({
 					created_at: mostRecentDate,
 					approved_at: mostRecentApprovedAt,
 					uploadedByName: uploader,
-					description: batchSummary || `Batch upload containing ${docs.length} documents.`,
+					description: stripMarkdown(batchSummary) || `Batch upload containing ${docs.length} documents.`,
 					documentCount: docs.length,
 					rawItem: docs[0],
 					allFileNames: allNames,
@@ -279,7 +280,7 @@ export function KnowledgeTable({
 				created_at: doc.created_at,
 				approved_at: doc.approved_at,
 				uploadedByName: doc.uploaded_by_name || "Admin",
-				description: doc.ai_summary || doc.content || "No description available.",
+				description: stripMarkdown(doc.ai_summary || doc.content) || "No description available.",
 				documentCount: 1,
 				rawItem: doc,
 				allFileNames: [doc.file_name],

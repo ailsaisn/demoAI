@@ -1,16 +1,18 @@
 "use client";
 
 import { ChatPreview } from "@/app/dashboard/knowledge/components/preview/chat-preview";
+import { IngestSuccessModal } from "@/app/dashboard/knowledge/components/preview/ingest-success-modal";
 import { ConfirmationModal } from "@/components/shared/confirmation-modal";
 import { Button } from "@/components/ui/button";
-import { RiArrowLeftLine, RiDeleteBin7Line, RiEdit2Line, RiCheckLine, RiStopCircleLine, RiAlertLine } from "@remixicon/react";
+import { RiArrowLeftLine, RiDeleteBin7Line, RiEdit2Line, RiCheckLine, RiStopCircleLine, RiAlertLine, RiLoader4Line } from "@remixicon/react";
 
 import { use, useState, useEffect } from "react";
 import { useSearchParams } from "next/navigation";
-import { useDeleteKnowledge, useKnowledgeDetail, useEditKnowledge } from "../hooks/use-knowledge";
+import { useDeleteKnowledge, useKnowledgeDetail, useEditKnowledge, useApproveKnowledge } from "../hooks/use-knowledge";
 import { useSession } from "@/hooks/use-session";
 import { useSafeBack } from "@/hooks/use-safe-back";
 import { VisibilitySettings, KnowledgeChunkItem, extractKnowledgeCategories } from "../api/types";
+import { KnowledgeDetailSkeleton } from "./knowledge-detail-skeleton";
 
 export default function KnowledgeDetailPage({ params }: { params: Promise<{ id: string }> }) {
 	const unwrappedParams = use(params);
@@ -27,7 +29,10 @@ export default function KnowledgeDetailPage({ params }: { params: Promise<{ id: 
 	const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
 	const [isCancelModalOpen, setIsCancelModalOpen] = useState(false);
 	const [isSaveModalOpen, setIsSaveModalOpen] = useState(false);
+	const [isApproveModalOpen, setIsApproveModalOpen] = useState(false);
+	const [isSuccessModalOpen, setIsSuccessModalOpen] = useState(false);
 	const editKnowledge = useEditKnowledge();
+	const approveKnowledge = useApproveKnowledge();
 
 	const fallbackPath = data?.project_id
 		? `/dashboard/knowledge/project/${data.project_id}`
@@ -87,6 +92,33 @@ export default function KnowledgeDetailPage({ params }: { params: Promise<{ id: 
 		setIsEditMode(false);
 	};
 
+	const handleApprove = async () => {
+		if (
+			(pendingCategories && pendingCategories.length > 0) ||
+			pendingVisibilitySettings ||
+			pendingTitle ||
+			(pendingChunks && pendingChunks.length > 0) ||
+			(pendingSummary && pendingSummary !== data?.ai_summary)
+		) {
+			await editKnowledge.mutateAsync({
+				id,
+				data: {
+					summary: pendingSummary || data?.ai_summary || "",
+					categories: pendingCategories,
+					visibility_settings: pendingVisibilitySettings,
+					title: pendingTitle,
+					chunks: pendingChunks.length > 0 ? pendingChunks : undefined,
+				},
+				hideToast: true,
+			});
+		}
+		await approveKnowledge.mutateAsync(id);
+		if (typeof window !== "undefined") {
+			localStorage.removeItem(`chat_preview_${id}`);
+		}
+		setIsSuccessModalOpen(true);
+	};
+
 	const handleCancel = () => {
 		setPendingCategories(initialCategories);
 		setPendingVisibilitySettings(initialVisibility);
@@ -119,6 +151,10 @@ export default function KnowledgeDetailPage({ params }: { params: Promise<{ id: 
 				</Button>
 			</div>
 		);
+	}
+
+	if (isLoading && !data) {
+		return <KnowledgeDetailSkeleton />;
 	}
 
 	return (
@@ -187,7 +223,26 @@ export default function KnowledgeDetailPage({ params }: { params: Promise<{ id: 
 							{docStatus === "REJECTED" ? "Delete Record" : "Delete Knowledge"}
 						</Button>
 					)}
-					{hasWriteAccess && (docStatus === "APPROVED" || docStatus === "PENDING" || !docStatus) && (
+					{hasWriteAccess && docStatus === "PENDING" && (
+						<Button
+							onClick={() => setIsApproveModalOpen(true)}
+							disabled={isLoading || approveKnowledge.isPending || editKnowledge.isPending}
+							className="gap-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg shadow-none h-10 px-4 font-medium text-sm transition-colors cursor-pointer"
+						>
+							{approveKnowledge.isPending || editKnowledge.isPending ? (
+								<>
+									<RiLoader4Line className="size-4 animate-spin" />
+									Indexing...
+								</>
+							) : (
+								<>
+									<RiCheckLine className="size-4" />
+									Approve Knowledge
+								</>
+							)}
+						</Button>
+					)}
+					{hasWriteAccess && (docStatus === "APPROVED" || !docStatus) && (
 						<div className="flex items-center gap-2">
 							{isEditMode && (
 								<Button
@@ -247,16 +302,40 @@ export default function KnowledgeDetailPage({ params }: { params: Promise<{ id: 
 				/>
 			</div>
 
-			{/* Save Knowledge Confirmation Modal */}
+			{/* Save Knowledge Confirmation Modal (For Approved Docs) */}
 			<ConfirmationModal
 				isOpen={isSaveModalOpen}
 				onOpenChange={setIsSaveModalOpen}
 				title="Save Knowledge?"
-				description="Are you sure you want to save the changes of the  knowledge? If you confirm, it will be implemented into the chatbot."
+				description="Are you sure you want to save the changes of the knowledge? If you confirm, it will be implemented into the chatbot."
 				confirmText="Save Knowledge"
 				cancelText="Cancel"
 				isLoading={editKnowledge.isPending}
 				onConfirm={handleSave}
+			/>
+
+			{/* Approve Knowledge Confirmation Modal (For Pending Docs) */}
+			<ConfirmationModal
+				isOpen={isApproveModalOpen}
+				onOpenChange={setIsApproveModalOpen}
+				title="Save Knowledge?"
+				description="Are you sure you want to save the changes of the knowledge? If you confirm, it will be implemented into the chatbot."
+				confirmText="Save Knowledge"
+				cancelText="Cancel"
+				isLoading={approveKnowledge.isPending || editKnowledge.isPending}
+				onConfirm={handleApprove}
+			/>
+
+			{/* Ingest Success Modal */}
+			<IngestSuccessModal
+				isOpen={isSuccessModalOpen}
+				onOpenChange={setIsSuccessModalOpen}
+				title="Knowledge Ingested Successfully"
+				description="Now the knowledge that you uploaded and approved already added to the system"
+				buttonText="View Knowledge"
+				onAction={() => {
+					handleBack();
+				}}
 			/>
 
 			{/* Cancel Ingestion Confirmation Modal */}

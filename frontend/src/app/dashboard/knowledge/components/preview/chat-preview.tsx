@@ -282,7 +282,6 @@ export function ChatPreview({
 	onChangeVisibilitySettings,
 	title,
 	onChangeTitle,
-	onSave,
 	headerNode,
 	preHeaderNode,
 }: ChatPreviewProps) {
@@ -358,7 +357,6 @@ export function ChatPreview({
 		handleSummaryChange(finalVal);
 		setBackupManualSummary(finalVal);
 		setIsManualEditing(false);
-		onSave?.();
 	};
 
 	const [prevScopeId, setPrevScopeId] = useState(`${knowledgeId}-${sessionId}`);
@@ -807,7 +805,30 @@ export function ChatPreview({
 
 	const renderConfidenceScore = () => {
 		if (!knowledge || mode === "general") return null;
-		const confidence = knowledge.ai_confidence;
+		const meta = knowledge.metadata as Record<string, unknown> | undefined;
+		const rawTextAccuracy =
+			(meta?.text_accuracy as string | number | undefined) ||
+			(meta?.ai_confidence as string | number | undefined) ||
+			(meta?.confidence_score as string | number | undefined);
+		let parsedMetaAccuracy: number | undefined = undefined;
+		if (typeof rawTextAccuracy === "string") {
+			const cleaned = parseFloat(rawTextAccuracy.replace("%", "").trim());
+			if (!isNaN(cleaned)) parsedMetaAccuracy = cleaned;
+		} else if (typeof rawTextAccuracy === "number") {
+			parsedMetaAccuracy = rawTextAccuracy;
+		}
+
+		let confidence =
+			knowledge.ai_confidence !== null &&
+			knowledge.ai_confidence !== undefined &&
+			Number(knowledge.ai_confidence) > 0
+				? Number(knowledge.ai_confidence)
+				: (parsedMetaAccuracy ?? (knowledge.ai_confidence !== null && knowledge.ai_confidence !== undefined ? Number(knowledge.ai_confidence) : undefined));
+
+		if (confidence !== undefined && confidence > 0 && confidence <= 1.0) {
+			confidence = confidence * 100;
+		}
+
 		const isProcessing = knowledgeStatus === "PROCESSING" || knowledge.status === "PROCESSING";
 
 		const numConfidence = confidence !== null && confidence !== undefined ? Number(confidence) : 0;

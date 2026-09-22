@@ -47,14 +47,18 @@ export function PromptAttachmentItem({
 					<span>{formatFileSize(file.size)}</span>
 					{isLoading && uploadProgress !== undefined && (
 						<span className="font-semibold text-blue-600">
-							{uploadProgress > 0 ? `${uploadProgress}%` : "Uploading..."}
+							{uploadProgress >= 100
+								? "Processing..."
+								: uploadProgress > 0
+									? `${uploadProgress}%`
+									: "Uploading..."}
 						</span>
 					)}
 				</div>
 				{isLoading && uploadProgress !== undefined && (
 					<div className="w-full h-1 bg-blue-100 rounded-full overflow-hidden mt-1.5">
 						<div
-							className="h-full bg-blue-600 transition-all duration-150 rounded-full"
+							className="h-full bg-blue-600 transition-all duration-200 rounded-full"
 							style={{ width: `${Math.max(8, uploadProgress)}%` }}
 						/>
 					</div>
