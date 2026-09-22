@@ -31,9 +31,14 @@ class InterceptHandler(logging.Handler):
     Separates HTTP access logs from business workflow logs.
     """
     def emit(self, record):
-        # Ignore noisy periodic 200 OK health check logs and Hugging Face cache HEAD/GET checks
+        # Ignore noisy periodic health check logs, Hugging Face cache checks, and teardown lifecycle logs
         message = record.getMessage()
-        if ("GET /health" in message and " 200" in message) or any(k in message for k in ["huggingface.co", "resolve-cache", "additional_chat_templates"]):
+        if (
+            ("GET /health" in message and " 200" in message)
+            or any(k in message for k in ["huggingface.co", "resolve-cache", "additional_chat_templates"])
+            or message in ("close.started", "close.complete")
+            or record.name == "logging"
+        ):
             return
 
         try:
@@ -55,11 +60,14 @@ class InterceptHandler(logging.Handler):
             else:
                 logger.opt(depth=depth, exception=record.exc_info).bind(channel="app").log(level, clean_msg)
         except Exception:
-            # Fallback if frame depth optimization fails
-            if is_access:
-                logger.bind(channel="access").log(level, clean_msg)
-            else:
-                logger.bind(channel="app").log(level, clean_msg)
+            # Fallback if frame depth optimization fails or if re-entrant logging occurs during process teardown
+            try:
+                if is_access:
+                    logger.bind(channel="access").log(level, clean_msg)
+                else:
+                    logger.bind(channel="app").log(level, clean_msg)
+            except Exception:
+                pass
 
 def _can_write_and_rotate_log(log_dir: str = "logs") -> bool:
     """
@@ -139,11 +147,11 @@ def setup_logging(log_level: str = "INFO"):
     else:
         sys.stderr.write("Notice: Directory 'logs' lacks file rotation permissions. Running via stdout + memory buffer.\n")
 
-    # 3. In-memory buffer sink for web API query
+    # 3. In-memory buffer sink for web API query (enqueue=False to avoid worker thread lock conflicts during subprocess spawn/exit)
     logger.add(
         _memory_log_sink,
         level="DEBUG",
-        enqueue=True,
+        enqueue=False,
         catch=True,
         format="{time:YYYY-MM-DD HH:mm:ss} | {level: <8} | {name}:{function}:{line} - {message}"
     )

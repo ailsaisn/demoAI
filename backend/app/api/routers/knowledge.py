@@ -670,7 +670,7 @@ async def list_knowledge(
             type=item.type,
             status=item.status,
             ai_summary=item.ai_summary,
-            ai_confidence=item.ai_confidence,
+            ai_confidence=float(item.ai_confidence) * 100.0 if (item.ai_confidence is not None and 0 < float(item.ai_confidence) <= 1.0) else (float(item.ai_confidence) if item.ai_confidence is not None else None),
             uploaded_by=item.uploaded_by,
             uploaded_by_name=user_name_map.get(item.uploaded_by) or "Admin",
             approved_by=item.approved_by,
@@ -925,7 +925,7 @@ async def get_knowledge(
             type=knowledge.type,
             status=knowledge.status,
             ai_summary=knowledge.ai_summary,
-            ai_confidence=float(knowledge.ai_confidence) if knowledge.ai_confidence is not None else None,
+            ai_confidence=float(knowledge.ai_confidence) * 100.0 if (knowledge.ai_confidence is not None and 0 < float(knowledge.ai_confidence) <= 1.0) else (float(knowledge.ai_confidence) if knowledge.ai_confidence is not None else None),
             uploaded_by=knowledge.uploaded_by,
             uploaded_by_name=uploader_name or "Admin",
             approved_by=knowledge.approved_by,
@@ -2178,7 +2178,7 @@ async def edit_knowledge(
             final_sum = (res.get("summary") if isinstance(res, dict) and res.get("summary") else payload.summary) or k_entry.ai_summary
             k_entry.ai_summary = final_sum
             k_entry.content = final_sum
-            k_entry.ai_confidence = 1.0
+            k_entry.ai_confidence = 100.0
             if k_entry.metadata_ is None:
                 k_entry.metadata_ = {}
             k_entry.metadata_["is_manually_edited"] = True
