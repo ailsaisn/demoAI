@@ -12,7 +12,7 @@ export default function KnowledgePage() {
 	const debouncedSearch = useDebounce(searchQuery, 300);
 
 	return (
-		<div className="flex flex-col h-full gap-6 p-6">
+		<div className="flex flex-col w-full min-w-0 gap-6 p-6">
 			{/* Overview Summary Cards */}
 			<KnowledgeSummary />
 
