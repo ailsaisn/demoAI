@@ -10,7 +10,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 			<SidebarProvider>
 				<CisSyncListener />
 				<StaffSidebar />
-				<SidebarInset className="bg-background min-w-0">
+				<SidebarInset className="bg-background min-w-0 overflow-x-hidden">
 					<DashboardHeader />
 					<div className="flex-1 min-w-0">{children}</div>
 				</SidebarInset>
