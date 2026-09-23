@@ -1,12 +1,12 @@
 "use client";
 
 import React, { useState } from "react";
-import { RiImageLine, RiZoomInLine } from "@remixicon/react";
+import { RiCloseLine, RiImageLine, RiZoomInLine } from "@remixicon/react";
 import type { Components } from "react-markdown";
 import { extractNodeText, isValidImageUrl, resolveImageUrl } from "./utils";
 import { ImagePreviewDialog } from "../image-preview-dialog";
 
-function MarkdownImage({ src, alt, ...props }: React.ComponentProps<"img">) {
+function MarkdownImage({ src, alt, onDelete, ...props }: React.ComponentProps<"img"> & { onDelete?: (src: string, alt: string) => void }) {
 	const [isOpen, setIsOpen] = useState(false);
 	const [isHidden, setIsHidden] = useState(false);
 	const strSrc = typeof src === "string" ? src.trim() : "";
@@ -67,6 +67,21 @@ function MarkdownImage({ src, alt, ...props }: React.ComponentProps<"img">) {
 			<span
 				className="my-2 inline-flex flex-col w-64 sm:w-72 max-w-full rounded-lg border border-zinc-200/80 bg-zinc-50/60 overflow-hidden align-top shrink-0 relative group shadow-none"
 			>
+				{/* Delete button (only shown when onDelete is provided, i.e. edit mode) */}
+				{onDelete && (
+					<button
+						type="button"
+						onClick={(e) => {
+							e.stopPropagation();
+							e.preventDefault();
+							onDelete(strSrc, typeof alt === "string" ? alt : "");
+						}}
+						className="absolute top-1.5 right-1.5 z-10 p-0.5 rounded-full bg-red-600 text-white hover:bg-red-700 shadow-md cursor-pointer transition-colors"
+						title="Hapus gambar ini"
+					>
+						<RiCloseLine className="size-4" />
+					</button>
+				)}
 				<span
 					className="h-40 sm:h-44 w-full p-2 flex items-center justify-center overflow-hidden relative cursor-pointer"
 					onClick={() => setIsOpen(true)}
@@ -254,3 +269,18 @@ export const defaultMarkdownComponents: Components = {
 		</pre>
 	),
 };
+
+/**
+ * Creates markdown components with image delete support for edit mode.
+ * Pass an onDeleteImage callback and each rendered image will show a red 'x' button.
+ */
+export function createEditableMarkdownComponents(
+	onDeleteImage: (src: string, alt: string) => void
+): Components {
+	return {
+		...defaultMarkdownComponents,
+		img: (imgProps: React.ComponentProps<"img">) => (
+			<MarkdownImage {...imgProps} onDelete={onDeleteImage} />
+		),
+	};
+}

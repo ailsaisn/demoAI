@@ -10,7 +10,7 @@ export function parseMarkdownSegments(markdown: string): Segment[] {
 
 	// Pattern 1: Product or Treatment Overview Cards
 	const cardPattern =
-		/(?:!\[([^\]]*)\]\(([^)]+)\)\s*\n+)?(?:###|##)\s*(Product\s+(?:Overview|Details|Info|Specification|Summary)|Overview\s+Produk|Spesifikasi\s+Produk|Info\s+Produk|Ringkasan\s+Produk|Detail\s+Produk|Informasi\s+Produk|Detail\s+Informasi\s+Produk|Treatment\s+(?:Overview|Details|Info|Procedure|Summary)|Overview\s+Tindakan|Detail\s+Tindakan|Info\s+Tindakan|[^\n#]+)\s*\n+(?:!\[([^\]]*)\]\(([^)]+)\)\s*\n+)?((?:[ \t]*[-*]\s*\*\*[^*]+\*\*\s*[:–-][^\n]+(?:\n|$))+)/gi;
+		/(?:!\[([^\]]*)\]\s*\n*\s*\(([^)]+)\)\s*\n+)?(?:###|##)\s*(Product\s+(?:Overview|Details|Info|Specification|Summary)|Overview\s+Produk|Spesifikasi\s+Produk|Info\s+Produk|Ringkasan\s+Produk|Detail\s+Produk|Informasi\s+Produk|Detail\s+Informasi\s+Produk|Treatment\s+(?:Overview|Details|Info|Procedure|Summary)|Overview\s+Tindakan|Detail\s+Tindakan|Info\s+Tindakan|[^\n#]+)\s*\n+(?:!\[([^\]]*)\]\s*\n*\s*\(([^)]+)\)\s*\n+)?((?:[ \t]*[-*]\s*\*\*[^*]+\*\*\s*[:–-][^\n]+(?:\n|$))+)/gi;
 
 	// Pattern 2: Skincare Regimen / Rutinitas Routine Card
 	const regimenPattern =
@@ -22,7 +22,7 @@ export function parseMarkdownSegments(markdown: string): Segment[] {
 
 	// Pattern 4: Consecutive Images / Before & After Side-by-Side Images
 	const beforeAfterPattern =
-		/!\[([^\]]*)\]\(([^)]+)\)\s*\n+!\[([^\]]*)\]\(([^)]+)\)/gi;
+		/!\[([^\]]*)\]\s*\n*\s*\(([^)]+)\)\s*\n+!\[([^\]]*)\]\s*\n*\s*\(([^)]+)\)/gi;
 
 	// Pattern 5: Clinical SOP & Procedure Stepper Card
 	const sopPattern =
@@ -127,6 +127,7 @@ export function parseMarkdownSegments(markdown: string): Segment[] {
 				content: m[0],
 				data: {
 					imageUrl: cleanImgUrl,
+					rawImageUrl: rawImgUrl,
 					imageAlt: finalAlt,
 					items,
 				},

@@ -12,7 +12,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 				<StaffSidebar />
 				<SidebarInset className="bg-background min-w-0 overflow-x-hidden">
 					<DashboardHeader />
-					<div className="flex-1 min-w-0">{children}</div>
+					<div className="flex-1 min-w-0 relative">{children}</div>
 				</SidebarInset>
 			</SidebarProvider>
 		</RouteGuard>

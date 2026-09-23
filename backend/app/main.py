@@ -232,13 +232,15 @@ except Exception as e:
 
 @app.on_event("startup")
 async def startup_preload_models():
-    """Preloads Cross-Encoder Reranker in background on server startup to eliminate first-request latency."""
+    """Preloads Cross-Encoder Reranker and BM25 index in background on server startup to eliminate first-request latency."""
     import asyncio
     def _preload():
         try:
-            from app.rag.services.rag_retriever import Reranker
-            r = Reranker()
-            r._ensure_loaded()
+            from app.rag.services.factory import AdapterFactory
+            reranker = AdapterFactory.get_reranker()
+            reranker._ensure_loaded()
+            AdapterFactory.get_bm25_index()
+            logger.info("AI RAG models pre-warmed successfully on server startup.")
         except Exception as e:
             logger.warning(f"Background model preloading skipped: {e}")
 

@@ -27,7 +27,12 @@ class DocumentChunk(Base):
 
 class PGVectorAdapter(BaseVectorStoreAdapter):
     def __init__(self):
-        self.conn_str = settings.pg_conn_str
+        conn_str = settings.pg_conn_str
+        try:
+            import psycopg
+        except ImportError:
+            conn_str = conn_str.replace("postgresql+psycopg://", "postgresql+psycopg2://")
+        self.conn_str = conn_str
         self.collection_name = settings.pg_collection_name
         
         # Instantiate embedding adapter first to get dimension

@@ -2308,6 +2308,9 @@ Return ONLY valid JSON (no surrounding markdown code blocks):
                                 summary = str(ai_formatted_summary).strip()
                                 logger.info(f"AI formatted document into structured Markdown ({len(summary)} chars)")
 
+                    if summary:
+                        summary = re.sub(r'!\[([^\]]*)\]\s*\n+\s*\(([^)]+)\)', r'![\1](\2)', summary)
+
                     # Apply deterministic refinements if user specified price/SKU/title in user_prompt
                     if user_prompt and str(user_prompt).strip() and summary:
                         refined_summary, _, refined_title, refined_sku, _ = apply_refinements_to_content(
@@ -2883,8 +2886,18 @@ async def ingest_document(
                     logger.info(f"📥 {file_label} Intake started...")
                     k_type = KnowledgeType.GENERAL
 
-                    file_bytes = await target_file.read()
-                    file_hash = hashlib.sha256(file_bytes).hexdigest()
+                    os.makedirs("data/temp", exist_ok=True)
+                    file_path = f"data/temp/{target_file.filename}"
+                    hasher = hashlib.sha256()
+
+                    # Stream upload chunk-by-chunk directly to disk to prevent RAM spikes (safe for >100MB files)
+                    with open(file_path, "wb") as f_out:
+                        while chunk := await target_file.read(1024 * 1024):
+                            hasher.update(chunk)
+                            f_out.write(chunk)
+
+                    file_hash = hasher.hexdigest()
+                    file_size = os.path.getsize(file_path)
 
                     # -------------------------------------------------------------
                     # 3-WAY DUPLICATE DETECTION LIFECYCLE
@@ -2894,6 +2907,11 @@ async def ingest_document(
 
                     # 1. STATE: PUBLISHED -> BLOCK
                     if dup_status == "PUBLISHED":
+                        if os.path.exists(file_path):
+                            try:
+                                os.remove(file_path)
+                            except Exception:
+                                pass
                         block_msg = (
                             f"Dokumen '{target_file.filename}' sudah terpublikasi (PUBLISHED / APPROVED) "
                             f"di knowledge base aktif ({dup_info.get('match_reason')}: '{dup_info.get('existing_file')}'). "
@@ -2916,6 +2934,11 @@ async def ingest_document(
 
                     # 2. STATE: PENDING -> REQUIRE ADMIN CONFIRMATION (DO NOT SILENTLY OVERWRITE)
                     if dup_status == "PENDING" and not replace_existing:
+                        if os.path.exists(file_path):
+                            try:
+                                os.remove(file_path)
+                            except Exception:
+                                pass
                         existing_k_id = dup_info.get("knowledge_id")
                         pending_msg = (
                             f"Draft peninjauan untuk '{target_file.filename}' (ID: {existing_k_id}) "
@@ -2938,11 +2961,6 @@ async def ingest_document(
                         }
 
                     # 3. STATE: NEW or PENDING with replace_existing=True -> PROCEED
-                    file_path = f"data/temp/{target_file.filename}"
-                    with open(file_path, "wb") as f_out:
-                        f_out.write(file_bytes)
-
-                    file_size = os.path.getsize(file_path)
                     k_id = dup_info.get("knowledge_id") if (dup_status == "PENDING" and replace_existing) else None
 
                     try:
@@ -3022,7 +3040,7 @@ async def ingest_document(
                     try:
                         from app.services.storage import upload_document
                         doc_upload = upload_document(
-                            content=file_bytes,
+                            file_path=file_path,
                             filename=target_file.filename,
                             document_id=k_id,
                             content_type=target_file.content_type or "application/octet-stream"

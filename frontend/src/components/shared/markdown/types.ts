@@ -5,6 +5,7 @@ export interface KeyValueItem {
 
 export interface CardData {
 	imageUrl?: string;
+	rawImageUrl?: string;
 	imageAlt?: string;
 	items: KeyValueItem[];
 }

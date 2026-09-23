@@ -792,12 +792,8 @@ async def create_chat_message(
         async with AsyncSessionLocal() as session:
             try:
                 vector_store = AdapterFactory.get_vector_store()
-                bm25_index = BM25Index()
-                try:
-                    bm25_index.load(rag_settings.bm25_index_path)
-                except Exception:
-                    pass
-                reranker = Reranker(model_name=rag_settings.reranker_model_name)
+                bm25_index = AdapterFactory.get_bm25_index()
+                reranker = AdapterFactory.get_reranker()
                 retriever = HybridRetriever(vector_store=vector_store, bm25_index=bm25_index, reranker=reranker)
                 llm_adapter = await AdapterFactory.get_dynamic_llm(session)
                 pipeline = GenerationPipeline(retriever=retriever, llm_adapter=llm_adapter)
@@ -1062,12 +1058,8 @@ async def stream_chat_message(
         async with AsyncSessionLocal() as session:
             try:
                 vector_store = AdapterFactory.get_vector_store()
-                bm25_index = BM25Index()
-                try:
-                    bm25_index.load(rag_settings.bm25_index_path)
-                except Exception:
-                    pass
-                reranker = Reranker(model_name=rag_settings.reranker_model_name)
+                bm25_index = AdapterFactory.get_bm25_index()
+                reranker = AdapterFactory.get_reranker()
                 retriever = HybridRetriever(vector_store=vector_store, bm25_index=bm25_index, reranker=reranker)
                 llm_adapter = await AdapterFactory.get_dynamic_llm(session)
                 pipeline = GenerationPipeline(retriever=retriever, llm_adapter=llm_adapter)

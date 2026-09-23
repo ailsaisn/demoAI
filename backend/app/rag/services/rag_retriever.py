@@ -1,6 +1,7 @@
 import os
 import re
 import pickle
+import concurrent.futures
 from datetime import datetime, date, timezone
 from typing import List, Dict, Any, Optional
 from loguru import logger
@@ -9,6 +10,9 @@ from rank_bm25 import BM25Okapi
 
 from app.rag.services.interfaces import BaseVectorStoreAdapter
 from app.rag.config import settings
+
+# Shared persistent worker pool for parallel hybrid dense + sparse retrieval
+_RETRIEVAL_EXECUTOR = concurrent.futures.ThreadPoolExecutor(max_workers=8)
 
 
 # --- Temporal Filtering Helpers ---
@@ -257,7 +261,10 @@ class BM25Index:
                             continue
                         # If chunk has specific restrictions, check if user's specific attributes match
                         user_specific_items = [item for item in v if item and item != "all"]
-                        if not any(item in chunk_val for item in user_specific_items):
+                        if not any(
+                            any(str(item).lower() in str(c).lower() or str(c).lower() in str(item).lower() for c in chunk_val)
+                            for item in user_specific_items
+                        ):
                             match = False
                             break
                     elif meta.get(k) != v:
@@ -384,23 +391,32 @@ class BM25Index:
 
 
 # --- Cross-Encoder Reranker ---
+import threading
+
 class Reranker:
+    _shared_models: Dict[str, Any] = {}
+    _lock = threading.Lock()
+
     def __init__(self, model_name: str = "BAAI/bge-reranker-base"):
         self.model_name = model_name
-        self.model = None
-        self._initialized = False
 
     def _ensure_loaded(self):
-        if not self._initialized:
-            self._initialized = True
-            logger.info(f"Loading Cross-Encoder Reranker model: {self.model_name}...")
-            try:
-                from sentence_transformers import CrossEncoder
-                self.model = CrossEncoder(self.model_name)
-                logger.info("Cross-Encoder Reranker model loaded successfully.")
-            except Exception as e:
-                logger.error(f"Failed to load CrossEncoder model: {e}")
-                self.model = None
+        if self.model_name not in Reranker._shared_models or Reranker._shared_models[self.model_name] is None:
+            with Reranker._lock:
+                if self.model_name not in Reranker._shared_models or Reranker._shared_models[self.model_name] is None:
+                    logger.info(f"Loading Cross-Encoder Reranker model: {self.model_name}...")
+                    try:
+                        from sentence_transformers import CrossEncoder
+                        Reranker._shared_models[self.model_name] = CrossEncoder(self.model_name)
+                        logger.info("Cross-Encoder Reranker model loaded successfully.")
+                    except Exception as e:
+                        logger.error(f"Failed to load CrossEncoder model: {e}")
+                        Reranker._shared_models[self.model_name] = None
+
+    @property
+    def model(self):
+        self._ensure_loaded()
+        return Reranker._shared_models.get(self.model_name)
 
     def rerank(self, query: str, hits: List[Dict[str, Any]], top_n: int = 3) -> List[Dict[str, Any]]:
         """
@@ -573,31 +589,115 @@ def get_chunk_key(hit: Dict[str, Any]) -> str:
 
 # --- Clinical Synonym & Slang Dictionary ---
 CLINICAL_SYNONYM_DICTIONARY = {
+    # ── Acne, Comedones & Scars ──────────────────────────────
     "bruntusan": ["comedonal acne", "closed comedones", "komedo tertutup", "sumbatan pori"],
     "komedoan": ["comedones", "blackhead", "whitehead", "komedo terbuka tertutup"],
+    "komedo terbuka": ["open comedones", "blackhead", "ekstraksi komedo"],
+    "komedo tertutup": ["closed comedones", "whitehead", "ekstraksi komedo"],
+    "ekstraksi komedo": ["deep acne extraction", "ekstraksi komedo terbuka tertutup", "comedone extraction"],
+    "deep acne extraction": ["ekstraksi jerawat", "ekstraksi komedo mendalam", "acne extraction", "deep extraction"],
     "bopeng": ["atrophic acne scar", "acne scar", "bopeng bekas jerawat", "microneedling"],
     "scar": ["atrophic acne scar", "acne scar", "bekas jerawat"],
-    "flek": ["hyperpigmentation", "melasma", "PIH", "flek hitam"],
-    "flek hitam": ["melasma", "hyperpigmentation", "PIH", "lentigo"],
-    "kusam": ["dull skin", "brightening", "kulit kusam", "regenerasi kulit"],
+    "ice pick": ["ice pick scar", "tca cross", "atrophic scar"],
+    "boxcar": ["boxcar scar", "subcision", "fractional co2"],
+    "rolling scar": ["rolling scar", "subcision", "cannula subcision"],
     "mendem": ["cystic acne", "nodular acne", "jerawat meradang kistik"],
     "jerawat batu": ["cystic acne", "nodul kistik", "inflammatory acne berat"],
     "kebal": ["acne resistant", "keratolytic", "peeling"],
     "badak": ["acne resistant", "keratolytic", "peeling kuat"],
     "merah": ["erythema", "post acne erythema", "PAE", "inflamasi kemerahan"],
     "meradang": ["inflammatory acne", "papule", "pustule", "lesi inflamasi"],
+    "totol": ["acne spot gel", "spot treatment", "totol jerawat", "penggunaan lokal"],
+    "secara lokal": ["spot treatment", "totol jerawat", "acne spot gel", "penggunaan lokal"],
+    "spot gel": ["acne spot gel", "spot treatment", "totol jerawat"],
+    
+    # ── Pigmentation & Center Indication ────────────────────
+    "flek": ["hyperpigmentation", "melasma", "PIH", "flek hitam"],
+    "flek hitam": ["melasma", "hyperpigmentation", "PIH", "lentigo"],
+    "kusam": ["dull skin", "brightening", "kulit kusam", "regenerasi kulit"],
+    "melasma": ["melasma", "hyperpigmentation", "flek hormonal", "brightening center"],
+    "melasma ringan": ["melasma ringan", "mild melasma", "brightening center", "pih"],
+    "pih": ["post-inflammatory hyperpigmentation", "hiperpigmentasi pasca inflamasi", "noda hitam bekas jerawat"],
+    "brightening center": ["brightening center", "erha brightening", "produk pencerah melasma"],
+    
+    # ── Reverse Ingredient & Active Substances ───────────────
+    "ethyl ascorbic acid": ["10% ethyl ascorbic acid", "active glow booster", "vitamin c", "brightening peptides"],
+    "10% ethyl ascorbic acid": ["erha truwhite active glow booster", "ethyl ascorbic acid", "brightening peptides"],
+    "brightening peptides": ["erha truwhite active glow booster", "peptides pencerah", "ethyl ascorbic acid"],
+    "active glow booster": ["erha truwhite active glow booster", "glow booster", "brightening serum"],
+    "truwhite": ["erha truwhite", "brightening facial wash", "active glow booster"],
+    "acneact": ["erha acneact", "gentle acne moisturizer", "acne spot gel"],
+    "gentle acne moisturizer": ["erha acneact gentle acne moisturizer", "pelembap jerawat", "acne moisturizer"],
+    
+    # ── Pores, Sebum & Cleansers ─────────────────────────────
     "pori gede": ["enlarged pores", "pori pori besar", "seborrhea"],
     "pori besar": ["enlarged pores", "pori pori besar", "sebum oily"],
     "minyakan": ["sebum oily", "kulit berminyak", "excess sebum", "oil control"],
     "sabun": ["facial wash", "cleanser", "pembersih wajah"],
     "sabun muka": ["gentle acne facial wash", "cleanser", "pembersih wajah"],
-    "totol": ["acne spot gel", "spot treatment", "totol jerawat"],
+    "facial wash": ["facial wash", "cleanser", "pembersih wajah", "brightening facial wash"],
+    
+    # ── Product Attributes (Size, Category, Ingredients) ────
+    "ukuran": ["netto", "kemasan", "gram", "ml", "size"],
+    "kategori": ["category", "lini produk", "center", "klasifikasi produk"],
+    "key ingredients": ["kandungan utama", "bahan aktif", "komposisi utama", "active ingredients"],
+    "kandungan": ["ingredients", "bahan aktif", "komposisi", "active substances"],
+    
+    # ── Creams & Protection ──────────────────────────────────
     "krim malam": ["night cream", "retinol", "moisturizer malam"],
     "krim siang": ["day cream", "sunscreen", "moisturizer pagi"],
     "sunscreen": ["tabir surya", "SPF50", "sun protection", "sunblock"],
+    
+    # ── Procedures, Duration & Downtime ──────────────────────
     "tahapan": ["tahapan treatment", "prosedur tindakan", "protokol perawatan", "langkah treatment"],
     "tahapan treatment": ["prosedur tindakan", "tahapan perawatan", "langkah treatment", "protokol klinis"],
     "prosedur": ["tahapan tindakan", "protokol perawatan", "prosedur medis", "clinical procedure"],
+    "durasi": ["durasi tindakan", "waktu pengerjaan", "treatment duration", "lama pengerjaan"],
+    "downtime": ["masa pemulihan", "downtime tindakan", "recovery time", "kemerahan bengkak"],
+    
+    # ── Hair & Scalp (Rambut & Kulit Kepala) ─────────────────
+    "akar rambut": ["folikel rambut", "hair follicle", "hair growth therapy", "kerontokan akar"],
+    "rambut rontok": ["hair loss", "telogen effluvium", "alopecia", "hair fall", "hair tonic"],
+    "kebotakan": ["alopecia androgenetica", "male pattern baldness", "female pattern hair loss"],
+    "benang rambut": ["hair thread lift", "tanam benang rambut", "follicle stimulation"],
+    "penempatan benang rambut": ["hair thread lift", "protokol benang kulit kepala"],
+    "hair growth": ["hair growth therapy", "hgt", "penumbuh rambut", "redensyl"],
+    "ketombe": ["seborrheic dermatitis scalp", "pityriasis capitis", "ketombe membandel", "zinc pyrithione"],
+    
+    # ── Lasers, EBD & Devices ────────────────────────────────
+    "laser pico": ["picosecond laser", "pico laser", "melasma pico", "rejuvenation pico"],
+    "laser co2": ["fractional co2 laser", "co2 ablatif", "co2 scar bopeng"],
+    "nd yag": ["q-switched nd:yag", "laser flek", "laser pigmentasi"],
+    "ipl": ["intense pulsed light", "ipl acne", "ipl brightening"],
+    "vbeam": ["v-beam", "pulsed dye laser", "laser vaskular kemerahan"],
+    "hifu": ["high intensity focused ultrasound", "pengencangan hifu", "skin tightening"],
+    "rf": ["radiofrequency", "microneedling rf", "pengencangan kulit rf"],
+    "fluence": ["energi laser", "joule per cm2", "parameter alat"],
+    "spot size": ["ukuran spot laser", "diameter beam laser"],
+    
+    # ── Injections & Skin Boosters ───────────────────────────
+    "skin booster": ["salmon dna", "pdrn", "profhilo", "skin booster hyaluronic acid"],
+    "salmon dna": ["pdrn", "polydeoxyribonucleotide", "rejuvenasi salmon dna"],
+    "profhilo": ["hybrid hyaluronic acid", "bioremodeling", "profhilo anti aging"],
+    "botox": ["botulinum toxin", "injeksi botox", "kerutan ekspresi", "masseter botox"],
+    "filler": ["dermal filler", "hyaluronic acid filler", "filler bibir", "filler dagu"],
+    "oklusi": ["vascular occlusion", "komplikasi filler", "hialuronidase darurat"],
+    "hialuronidase": ["hyaluronidase", "penawar filler", "protokol darurat filler"],
+    
+    # ── Thread Lift (Tanam Benang) ───────────────────────────
+    "tanam benang": ["thread lift", "benang pdo", "benang pcl", "lifting benang", "benang kolagen"],
+    "tarik benang": ["thread lift", "barbed thread", "foxy eyes thread"],
+    
+    # ── Skin Barrier, Sensitivity & Safety ───────────────────
+    "skin barrier": ["barrier kulit", "ceramide", "panthenol", "transepidermal water loss", "tewl"],
+    "rosacea": ["eritema fasial", "kulit sensitif kemerahan", "flushing"],
+    "dermatitis": ["dermatitis atopik", "dermatitis kontak", "dermatitis seboroik"],
+    "perih": ["stinging", "sensasi terbakar", "iritasi", "barrier rusak"],
+    "kerutan": ["wrinkles", "fine lines", "garis halus", "penuaan dini", "anti-aging"],
+    "kendur": ["skin laxity", "sagging skin", "elastisitas kulit menurun"],
+    "ibu hamil": ["pregnancy safe", "kehamilan", "kontraindikasi hamil", "kategori b/c"],
+    "ibu menyusui": ["lactation safe", "menyusui", "busui", "keamanan laktasi"],
+    "pantangan": ["aftercare", "edukasi pasien", "kontraindikasi pasca tindakan"],
 }
 
 def expand_clinical_query(query: str) -> str:
@@ -774,6 +874,7 @@ class HybridRetriever:
 
         # 3. Direct chemical ingredient mention in query
         known_ingredients = [
+            "10% ethyl ascorbic acid", "ethyl ascorbic acid", "ascorbic acid", "vitamin c", "brightening peptides",
             "centella", "retinol", "ceramide", "niacinamide", "betaine", "salicylic acid", "salicylic",
             "glycolic acid", "glycolic", "hyaluronic acid", "hyaluronic", "allantoin", "panthenol",
             "azelaic acid", "azelaic", "benzoyl peroxide", "benzoyl", "clindamycin", "tea tree", "cica"
@@ -826,13 +927,11 @@ class HybridRetriever:
 
         candidate_k = top_k * 2
 
-        import concurrent.futures
-        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
-            future_dense = executor.submit(self.vector_store.search, expanded_query, candidate_k, filter_metadata) if self.vector_store else None
-            future_sparse = executor.submit(self.bm25_index.search, expanded_query, candidate_k, filter_metadata, include_expired) if self.bm25_index else None
-            
-            dense_hits = future_dense.result() if future_dense else []
-            sparse_hits = future_sparse.result() if future_sparse else []
+        future_dense = _RETRIEVAL_EXECUTOR.submit(self.vector_store.search, expanded_query, candidate_k, filter_metadata) if self.vector_store else None
+        future_sparse = _RETRIEVAL_EXECUTOR.submit(self.bm25_index.search, expanded_query, candidate_k, filter_metadata, include_expired) if self.bm25_index else None
+        
+        dense_hits = future_dense.result() if future_dense else []
+        sparse_hits = future_sparse.result() if future_sparse else []
 
         if self.vector_store:
             logger.debug(f"Dense retrieval returned {len(dense_hits)} candidates.")
@@ -883,9 +982,28 @@ class HybridRetriever:
                 logger.info(f"Target ingredient '{target_ingredient}' matched {len(matching_active)} chunks in pre-filtering.")
                 active_hits = matching_active
 
+        # Fast-Path / Exact Match Reranker Bypass
+        # If dense and sparse agree on top chunk with high confidence,
+        # we can bypass the heavy PyTorch Cross-Encoder, saving 1.5-2.5s CPU latency.
+        skip_heavy_reranker = False
+        if dense_hits and sparse_hits:
+            top_dense_src = dense_hits[0].get("metadata", {}).get("source_file") or dense_hits[0].get("metadata", {}).get("knowledge_id")
+            top_sparse_src = sparse_hits[0].get("metadata", {}).get("source_file") or sparse_hits[0].get("metadata", {}).get("knowledge_id")
+            top_dense_score = float(dense_hits[0].get("score", 0.0))
+            if top_dense_src and top_dense_src == top_sparse_src and top_dense_score >= 0.80:
+                skip_heavy_reranker = True
+                logger.info(f"⚡ [Fast-Path Bypass] Dense & Sparse top match agreed on '{top_dense_src}' (score: {top_dense_score:.3f}). Skipping CPU cross-encoder.")
+
         final_hits = active_hits
         if rerank and self.reranker and active_hits:
-            all_reranked = self.reranker.rerank(query, active_hits, top_n=len(active_hits))
+            if skip_heavy_reranker:
+                all_reranked = []
+                for h in active_hits:
+                    hc = h.copy()
+                    hc["rerank_score"] = float(hc.get("rrf_score", hc.get("score", 0.85)))
+                    all_reranked.append(hc)
+            else:
+                all_reranked = self.reranker.rerank(query, active_hits, top_n=len(active_hits))
             
             query_lower = query.lower()
             usage_keywords = ["how to use", "directions", "cara pakai", "cara penggunaan", "aturan pakai", "dosis", "instruksi"]

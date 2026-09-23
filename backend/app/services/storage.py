@@ -1059,26 +1059,38 @@ def _build_canonical_s3_key(document_id: str) -> str:
 
 
 def upload_document(
-    content: bytes,
-    filename: str,
-    document_id: str,
-    content_type: str = "application/octet-stream"
+    content: Optional[bytes] = None,
+    filename: str = "",
+    document_id: str = "",
+    content_type: str = "application/octet-stream",
+    file_path: Optional[str] = None
 ) -> dict:
     """
     Uploads original document file to knowledge-documents bucket.
+    Supports both in-memory bytes and direct disk file_path.
+    For large files (>10MB), uses boto3 managed multipart upload to prevent timeouts and high RAM usage.
     Falls back cleanly to local disk storage if MinIO is offline.
     """
     s3_key = _build_document_s3_key(document_id, filename)
     bucket_name = _docs_bucket()
 
+    file_size = 0
+    if file_path and os.path.exists(file_path):
+        file_size = os.path.getsize(file_path)
+    elif content is not None:
+        file_size = len(content)
+
     client = _get_client()
     if not client:
-        _save_file_to_local_disk(content, filename, s3_key=s3_key)
+        if file_path and os.path.exists(file_path) and content is None:
+            with open(file_path, "rb") as f:
+                content = f.read()
+        _save_file_to_local_disk(content or b"", filename, s3_key=s3_key)
         return {
             "s3_key": s3_key,
             "bucket": bucket_name,
             "document_url": _format_browser_url(None, s3_key),
-            "size": len(content),
+            "size": file_size,
             "status": "fallback"
         }
 
@@ -1087,31 +1099,53 @@ def upload_document(
         if content_type:
             extra_args["ContentType"] = content_type
 
-        client.put_object(
-            Bucket=bucket_name,
-            Key=s3_key,
-            Body=content,
-            **extra_args
-        )
+        # Use managed multipart upload for file_path (efficient streaming from disk)
+        if file_path and os.path.exists(file_path):
+            client.upload_file(
+                Filename=file_path,
+                Bucket=bucket_name,
+                Key=s3_key,
+                ExtraArgs=extra_args
+            )
+        elif content is not None:
+            import io
+            if len(content) > 10 * 1024 * 1024:  # >10MB
+                bio = io.BytesIO(content)
+                client.upload_fileobj(
+                    Fileobj=bio,
+                    Bucket=bucket_name,
+                    Key=s3_key,
+                    ExtraArgs=extra_args
+                )
+            else:
+                client.put_object(
+                    Bucket=bucket_name,
+                    Key=s3_key,
+                    Body=content,
+                    **extra_args
+                )
 
         doc_url = _generate_presigned_url(bucket_name, s3_key, expires=3600)
 
-        logger.info(f"📄 Uploaded original document '{filename}' -> {bucket_name}/{s3_key}")
+        logger.info(f"📄 Uploaded original document '{filename}' ({file_size / (1024*1024):.2f} MB) -> {bucket_name}/{s3_key}")
         return {
             "s3_key": s3_key,
             "bucket": bucket_name,
             "document_url": doc_url,
-            "size": len(content),
+            "size": file_size,
             "status": "success"
         }
     except Exception as e:
         logger.warning(f"Document upload to MinIO failed for '{filename}': {e}. Falling back to local disk.")
-        _save_file_to_local_disk(content, filename, s3_key=s3_key)
+        if file_path and os.path.exists(file_path) and content is None:
+            with open(file_path, "rb") as f:
+                content = f.read()
+        _save_file_to_local_disk(content or b"", filename, s3_key=s3_key)
         return {
             "s3_key": s3_key,
             "bucket": bucket_name,
             "document_url": _format_browser_url(None, s3_key),
-            "size": len(content),
+            "size": file_size,
             "status": "fallback"
         }
 

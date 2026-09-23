@@ -30,6 +30,7 @@ def _is_valid_image_content(img_bytes: bytes, min_dim: int = 40) -> Tuple[bool, 
     1. Rejects tiny spacer/icon images (< min_dim in width or height).
     2. Rejects solid black, pitch-black (>95% black), or flat unicolor blocks.
     3. Converts WMF/EMF or palette formats to clean PNG.
+    4. Sanitizes circular icons with solid black corners → transparent RGBA PNG.
     Returns: (is_valid, cleaned_bytes, cleaned_ext)
     """
     if not img_bytes or len(img_bytes) < 100:
@@ -62,6 +63,27 @@ def _is_valid_image_content(img_bytes: bytes, min_dim: int = 40) -> Tuple[bool, 
                 if all(c[1][0] < 18 and c[1][1] < 18 and c[1][2] < 18 for c in colors):
                     return False, b"", ""
 
+            # Sanitize circular/rounded icons or images with solid black borders/corners:
+            # If corners are pitch-black, flood fill the outer black areas to transparent RGBA.
+            try:
+                from PIL import ImageDraw
+                rgba_im = im.convert("RGBA")
+                w, h = rgba_im.size
+                corners = [(0, 0), (w - 1, 0), (0, h - 1), (w - 1, h - 1)]
+                has_black_corner = False
+                for cx, cy in corners:
+                    px = rgba_im.getpixel((cx, cy))
+                    if px[0] < 20 and px[1] < 20 and px[2] < 20 and px[3] > 200:
+                        has_black_corner = True
+                        ImageDraw.floodfill(rgba_im, (cx, cy), (0, 0, 0, 0), thresh=25)
+                if has_black_corner:
+                    buf = io.BytesIO()
+                    rgba_im.save(buf, format="PNG")
+                    out_bytes = buf.getvalue()
+                    ext = "png"
+            except Exception:
+                pass
+
             return True, out_bytes, ext
     except Exception:
         # Fallback: if Pillow fails, allow bytes if sufficiently large
@@ -79,49 +101,138 @@ def _is_ornamental_pdf_image(
 ) -> bool:
     """
     Detects and filters out non-substantive ornamental PDF images such as:
-    - Publisher/journal logos in headers/footers (e.g. HJKK, Elsevier, Springer logos)
+    - Publisher/journal logos in headers/footers (e.g. HJKK, Elsevier, Springer, Nature logos)
+    - University insignias, academic emblems, hospital/clinic seals
     - DOI badges & icons (e.g. 44x44 DOI icon)
     - Creative Commons / copyright license banners (e.g. 133x46 CC-BY-SA badge)
-    - Social media icons / tiny badges (< 50px or banner aspect with tiny height)
-    Preserves genuine product photos, clinical figures, histology, charts, and diagrams.
+    - Running headers, page footer banners, separator rules
+    - Social media icons / tiny badges (< 55px or banner aspect with tiny height)
+    Preserves genuine product photos, clinical figures, histology, charts, diagrams, and patient before/after.
     """
     # 1. Dimension checks
-    # Tiny icons/badges (e.g. DOI icon 44x44, favicons, bullets)
-    if pix_width < 50 or pix_height < 50:
+    # Tiny icons/badges (e.g. DOI icon 44x44, favicons, bullets, social media icons)
+    if pix_width < 55 or pix_height < 55:
         return True
     
-    # License / copyright banner aspect ratio (e.g. CC badge 133x46, 88x31)
-    if pix_height <= 55 and pix_width <= 220:
+    # License / copyright banner aspect ratio (e.g. CC badge 133x46, 88x31, barcode 200x50)
+    if pix_height <= 60 and pix_width <= 250:
         return True
 
     # 2. Textual pattern checks on label and nearby text
     combined_text = f"{prod_label} {nearby_text}".lower()
     
+    # Check if this image has an explicit scientific figure/chart caption (e.g. Figure 1, Gambar 2)
+    has_figure_caption = bool(re.search(r'\b(?:figure|fig\.|gambar|diagram|bagan|grafik|chart)\s+[ivx0-9]+', combined_text))
+
     # Obvious ornamental / metadata badges
     badge_keywords = [
-        "doi.org", "http://doi", "https://doi", "creative commons", "creativecommons",
-        "cc-by", "cc by", "cc_by", "crossmark", "open access", "openaccess",
-        "issn", "e-issn", "p-issn", "scopus", "sinta", "pubmed"
+        "doi.org", "http://doi", "https://doi", "doi:", "dx.doi.org",
+        "creative commons", "creativecommons", "cc-by", "cc by", "cc_by", "cc-sa", "cc-nc", "cc-nd", "cc0",
+        "crossmark", "open access", "openaccess", "open-access",
+        "issn", "e-issn", "p-issn", "isbn",
+        "scopus", "sinta", "sinta 1", "sinta 2", "sinta 3", "sinta 4", "sinta 5", "sinta 6",
+        "pubmed", "pmc", "medline", "doaj", "google scholar", "garuda",
+        "dimensions", "clarivate", "web of science", "wos", "scimago", "sjr",
+        "copernicus", "index copernicus", "ebsco", "proquest", "cabi",
+        "orcid", "orcid.org", "researchgate", "zenodo", "figshare"
     ]
     if any(kw in combined_text for kw in badge_keywords):
         return True
 
-    # 3. Header & Footer checks (especially on Page 1)
-    is_header = bbox[3] < (page_height * 0.18) if page_height > 0 else False
-    is_footer = bbox[1] > (page_height * 0.88) if page_height > 0 else False
+    # Stop words in prod_label (if PyMuPDF extracted nearby words as label)
+    label_stop_words = [
+        "logo", "banner", "header", "footer", "badge", "crest", "lambang", "kop",
+        "cover", "icon", "watermark", "stamp", "stempel", "cap", "emblem", "insignia"
+    ]
+    if any(sw in prod_label.lower() for sw in label_stop_words) and not has_figure_caption:
+        return True
 
-    # Check if this image has an explicit scientific figure/chart caption (e.g. Figure 1, Gambar 2)
-    has_figure_caption = bool(re.search(r'\b(?:figure|fig\.|gambar|diagram|bagan|grafik|chart)\s+[ivx0-9]+', combined_text))
-    
-    if (is_header or is_footer) and not has_figure_caption:
-        # In header/footer, if nearby text mentions journal, publisher, volume, or education/university
-        header_meta_words = [
-            "journal", "jurnal", "volume", "vol.", "issue", "no.", "published",
-            "penerbit", "universitas", "university", "fakultas", "faculty",
-            "kependidikan", "kimia", "department", "departemen", "hydrogen"
+    # 2b. Global journal/publisher metadata keyword filter (position-independent).
+    # Catches journal logos like "Borneo Journal of Pharmacy", "HYDROGEN - Jurnal Kependidikan Kimia"
+    # regardless of whether they sit in header/footer zone.
+    # Only filter if the image does NOT have a genuine scientific figure caption.
+    if not has_figure_caption:
+        journal_meta_keywords = [
+            # Major international academic publishers
+            "elsevier", "sciencedirect", "springer", "springer nature", "nature publishing",
+            "wiley", "john wiley", "blackwell", "taylor & francis", "taylor and francis",
+            "sage pub", "sage publications", "sage journals", "ieee", "acm",
+            "mdpi", "frontiers in", "frontiers media", "oxford university press", "oup",
+            "cambridge university press", "cup", "wolters kluwer", "lippincott williams", "lww",
+            "plos", "plos one", "hindawi", "biomed central", "bmc",
+            "emerald publishing", "de gruyter", "bmj", "bmj publishing", "dovepress", "dove medical press",
+            "bentham science", "karger", "thieme", "mary ann liebert", "spandidos", "sciendo",
+            "academic press", "university press", "ios press", "world scientific",
+
+            # Indonesian & Regional journals / institutions
+            "borneo journal", "hydrogen", "jurnal farmasi", "jurnal kedokteran", "jurnal kesehatan",
+            "jurnal kependidikan", "jurnal ilmiah", "jurnal penelitian", "media farmasi",
+            "majalah farmasi", "acta medica", "folia medica", "berkala kedokteran",
+            "perdoski", "ikatan apoteker", "ikatan dokter", "kemenkes", "kemendikbud", "kemenristek",
+            "brin", "lipi", "universitas", "university", "fakultas", "faculty", "politeknik", "sekolah tinggi",
+            "institut teknologi", "institut pertanian",
+
+            # Journal / Periodical structural terms
+            "journal of", "jurnal of", "journal ", "jurnal ", "the journal", "international journal",
+            "indonesian journal", "asian journal", "american journal", "european journal",
+            "world journal", "global journal", "national journal",
+            "bulletin of", "archives of", "annals of", "proceedings of", "review of",
+            "advances in", "trends in", "current research in", "periodical",
+            "penerbit", "publisher", "published by", "diterbitkan oleh", "diterbitkan", "dipublikasikan",
+            "e-journal", "ejournal", "oai:",
+
+            # Medical, Dermatology, Cosmetic & Pharma journal phrases
+            "dermatology journal", "clinical dermatology", "pharmaceutical sciences",
+            "pharmacy and", "pharmaceutical journal", "pharmacology", "pharmacognosy",
+            "biomedical journal", "cosmetic dermatology", "cosmetic science",
+            "aesthetic medicine", "aesthetic dermatology", "skin research", "skin pharmacology",
+            "experimental dermatology", "investigative dermatology",
+
+            # Submission & Publication tracking metadata
+            "manuscript", "how to cite", "how to reference", "cara sitasi", "cara merujuk",
+            "suggested citation", "cite this", "homepage:", "homepage :", "available at",
+            "available online", "correspondence", "corresponding author", "penulis korespondensi",
+            "author for correspondence", "received:", "received :", "accepted:", "accepted :",
+            "revised:", "revised :", "published online", "diterima:", "disetujui:", "direvisi:",
+            "article info", "informasi artikel", "article history", "riwayat artikel",
+            "keywords:", "kata kunci:",
+            "volume ", "vol. ", "vol ", "issue ", "no. ", "nomor ", "edisi ", "pp. ",
+            "issn ", "e-issn ", "p-issn "
         ]
-        if any(hw in combined_text for hw in header_meta_words):
+        if any(jk in combined_text for jk in journal_meta_keywords):
             return True
+
+    # 3. Header & Footer checks
+    header_threshold = 0.35 if page_idx == 0 else 0.18
+    # bbox[1] is y0 (top edge of image), bbox[3] is y1 (bottom edge of image)
+    is_header = (bbox[1] < page_height * header_threshold) if page_height > 0 else False
+    is_footer = (bbox[3] > page_height * 0.85 or bbox[1] > page_height * 0.82) if page_height > 0 else False
+    
+    if not has_figure_caption:
+        # On Page 1, any image starting in top 28% of page without a figure caption is a journal logo/header
+        if page_idx == 0 and bbox[1] < (page_height * 0.28):
+            return True
+
+        # Any horizontal banner aspect ratio (width >= 2.5x height) located in header or footer
+        if (is_header or is_footer) and (pix_width >= pix_height * 2.5):
+            return True
+
+        # If in header or footer and text contains any academic/header metadata
+        if is_header or is_footer:
+            header_meta_words = [
+                "journal", "jurnal", "volume", "vol.", "vol ", "issue", "no.", "nomor", "edisi", "edition",
+                "published", "penerbit", "publisher", "universitas", "university", "fakultas", "faculty",
+                "kependidikan", "kimia", "department", "departemen", "hydrogen", "borneo",
+                "pharmacy", "farmasi", "sciences", "research", "international", "indonesian",
+                "institut", "institute", "politeknik", "polytechnic", "sekolah tinggi", "akademi",
+                "jurusan", "program studi", "prodi", "laboratorium", "laboratory",
+                "suplemen", "supplement", "halaman", "pages", "pp.", "p-issn", "e-issn", "issn", "isbn",
+                "doi:", "doi.org", "copyright", "hak cipta", "all rights reserved", "©", "(c)",
+                "license", "lisensi", "annual", "conference", "prosiding", "proceedings",
+                "seminar nasional", "symposium", "congress", "symposia"
+            ]
+            if any(hw in combined_text for hw in header_meta_words):
+                return True
 
     # 4. Signatures, Paraf, Official Stamps, and Approval block images
     sig_keywords = [
@@ -907,10 +1018,19 @@ class DocumentParser:
                         if smask and smask > 0:
                             try:
                                 mask_pix = fitz.Pixmap(doc, smask)
+                                if mask_pix.colorspace != fitz.csGRAY:
+                                    mask_pix = fitz.Pixmap(fitz.csGRAY, mask_pix)
+                                if mask_pix.alpha:
+                                    mask_pix = fitz.Pixmap(mask_pix, 0)
                                 if pix.colorspace != fitz.csRGB:
                                     pix = fitz.Pixmap(fitz.csRGB, pix)
-                                pix = fitz.Pixmap(pix, mask_pix)
-                                img_ext = "png"
+                                # Strip existing alpha channel before applying mask
+                                # to prevent fitz ValueError: "pixmap must not have an alpha channel"
+                                if pix.alpha:
+                                    pix = fitz.Pixmap(pix, 0)  # drop alpha
+                                if pix.width == mask_pix.width and pix.height == mask_pix.height:
+                                    pix = fitz.Pixmap(pix, mask_pix)
+                                    img_ext = "png"
                             except Exception:
                                 pass
                         if pix.colorspace and pix.colorspace != fitz.csRGB and pix.colorspace != fitz.csGRAY:
@@ -975,8 +1095,28 @@ class DocumentParser:
                         prod_label = f"Image p{i+1}_{img_idx+1}"
 
                     # Filter out non-substantive ornamental images
-                    clip_rect = fitz.Rect(max(0, bbox[0] - 50), max(0, bbox[1] - 80), min(page_width, bbox[2] + 50), min(page_height, bbox[3] + 80))
+                    clip_rect = fitz.Rect(
+                        max(0, bbox[0] - 80),
+                        max(0, bbox[1] - 100),
+                        min(page_width, bbox[2] + 80),
+                        min(page_height, bbox[3] + 100)
+                    )
                     surrounding_text = page.get_text("text", clip=clip_rect).strip()
+
+                    # If image is in the upper 35% of the page, also grab the full-width header strip
+                    # so logos in the top-right corner catch journal titles on the top-left
+                    header_zone_y = page_height * (0.35 if i == 0 else 0.18)
+                    if bbox[1] < header_zone_y:
+                        header_rect = fitz.Rect(0, 0, page_width, min(page_height, max(bbox[3] + 50, header_zone_y)))
+                        header_text = page.get_text("text", clip=header_rect).strip()
+                        surrounding_text = f"{header_text} {surrounding_text}"
+
+                    # If image is in bottom 18% of the page, also grab full-width footer strip
+                    if bbox[3] > page_height * 0.82:
+                        footer_rect = fitz.Rect(0, max(0, min(bbox[1] - 50, page_height * 0.82)), page_width, page_height)
+                        footer_text = page.get_text("text", clip=footer_rect).strip()
+                        surrounding_text = f"{footer_text} {surrounding_text}"
+
                     nearby_text = f"{prod_label} {surrounding_text}"
                     if _is_ornamental_pdf_image(
                         pix_width=pix.width,

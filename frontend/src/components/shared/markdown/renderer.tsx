@@ -14,18 +14,22 @@ import { PromoCard } from "./cards/promo-card";
 import { RegimenCard } from "./cards/regimen-card";
 import { TieredPricingCard } from "./cards/pricing-card";
 import { TreatmentCard } from "./cards/treatment-card";
-import { defaultMarkdownComponents } from "./elements";
+import { defaultMarkdownComponents, createEditableMarkdownComponents } from "./elements";
 import { parseMarkdownSegments } from "./parser";
 import { stripInternalMetadata } from "./utils";
 
 export interface MarkdownContentProps {
 	content: string;
 	components?: Components;
+	onDeleteImage?: (src: string, alt: string) => void;
 }
 
-export function MarkdownContent({ content, components }: MarkdownContentProps) {
+export function MarkdownContent({ content, components, onDeleteImage }: MarkdownContentProps) {
 	const sanitizedContent = stripInternalMetadata(content);
-	const mergedComponents = { ...defaultMarkdownComponents, ...components };
+	const baseComponents = onDeleteImage
+		? { ...createEditableMarkdownComponents(onDeleteImage), ...components }
+		: { ...defaultMarkdownComponents, ...components };
+	const mergedComponents = baseComponents;
 	const segments = parseMarkdownSegments(sanitizedContent);
 
 	if (segments.length === 1 && segments[0].type === "markdown") {
@@ -40,10 +44,10 @@ export function MarkdownContent({ content, components }: MarkdownContentProps) {
 		<div className="flex flex-col gap-1">
 			{segments.map((seg, idx) => {
 				if (seg.type === "product-card" && seg.data) {
-					return <ProductCard key={idx} data={seg.data} />;
+					return <ProductCard key={idx} data={seg.data} onDeleteImage={onDeleteImage} />;
 				}
 				if (seg.type === "treatment-card" && seg.data) {
-					return <TreatmentCard key={idx} data={seg.data} />;
+					return <TreatmentCard key={idx} data={seg.data} onDeleteImage={onDeleteImage} />;
 				}
 				if (seg.type === "regimen-card" && seg.data) {
 					return <RegimenCard key={idx} data={seg.data} />;

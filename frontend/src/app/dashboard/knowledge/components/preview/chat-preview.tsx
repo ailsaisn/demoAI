@@ -40,6 +40,7 @@ import {
 	RiH3,
 	RiImage2Line,
 	RiItalic,
+	RiLayoutColumnLine,
 	RiListCheck2,
 	RiListOrdered,
 	RiListUnordered,
@@ -68,7 +69,7 @@ import {
 } from "@/app/dashboard/knowledge/hooks/use-knowledge";
 import { MarkdownContent } from "@/components/shared/markdown-content";
 import { StreamingMarkdown } from "@/components/shared/streaming-markdown";
-import { cleanMessageTurn, cleanDeletedItemFromMarkdown } from "@/components/shared/markdown/utils";
+import { cleanMessageTurn, cleanDeletedItemFromMarkdown, resolveImageUrl } from "@/components/shared/markdown/utils";
 import { toast } from "sonner";
 import { ApprovalActions } from "./approval-actions";
 import { CategorySettings } from "./category-settings";
@@ -301,7 +302,7 @@ export function ChatPreview({
 	const [activeOpId, setActiveOpId] = useState<string | null>(null);
 	const [activeOpAction, setActiveOpAction] = useState<"confirm" | "cancel" | null>(null);
 	const [completedOps, setCompletedOps] = useState<Record<string, "confirmed" | "cancelled">>({});
-	const [activeEditTab, setActiveEditTab] = useState<"write" | "preview">("write");
+	const [activeEditTab, setActiveEditTab] = useState<"write" | "preview" | "split">("split");
 	const [isManualEditing, setIsManualEditing] = useState(false);
 	const incomingSummary = summaryValue || aiSummary || knowledge?.ai_summary || "";
 	const [prevIncomingSummary, setPrevIncomingSummary] = useState(incomingSummary);
@@ -345,12 +346,68 @@ export function ChatPreview({
 		onChangeSummary?.(val);
 	};
 
-	const handleStartManualEdit = (currentDisplayContent: string) => {
-		const initialText = localSummary || currentDisplayContent;
-		setBackupManualSummary(initialText);
-		if (!localSummary) {
-			setLocalSummary(initialText);
+	/** Handles image deletion from edit mode: removes the ![alt](src) markdown tag and directly updates local summary */
+	const handleDeleteImage = (src: string, _alt: string) => {
+		const currentContent =
+			localSummary ||
+			(firstAssistantIndex >= 0 ? messages[firstAssistantIndex]?.content : "") ||
+			aiSummary ||
+			knowledge?.ai_summary ||
+			"";
+		if (!currentContent || !src) return;
+
+		// Normalize src: strip resolved backend base URL to get the relative path as stored in markdown
+		const backendBase = (process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api").replace(/\/api\/?$/, "");
+		let normalizedSrc = src.trim();
+		if (normalizedSrc.startsWith(backendBase)) {
+			normalizedSrc = normalizedSrc.slice(backendBase.length);
 		}
+		// Also try decoded version (resolveImageUrl encodes spaces as %20)
+		const decodedSrc = decodeURIComponent(normalizedSrc);
+
+		// Build a list of src variants to try matching against
+		const srcVariants = [normalizedSrc, decodedSrc, src.trim()];
+		// Add encoded variant if different
+		const encodedSrc = encodeURI(decodedSrc);
+		if (!srcVariants.includes(encodedSrc)) srcVariants.push(encodedSrc);
+
+		let updated = currentContent;
+		for (const variant of srcVariants) {
+			if (updated !== currentContent) break; // already matched
+			const escapedSrc = variant.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+			// Remove markdown image tag: ![alt](src) or ![alt](src "title"), allowing flexible spaces/newlines
+			const exactPattern = new RegExp(`!\\[[^\\]]*\\]\\s*\\(\\s*${escapedSrc}(?:\\s+["'][^"']*["'])?\\s*\\)`, "g");
+			updated = currentContent.replace(exactPattern, "");
+			// Also try matching standard HTML img tag if any
+			if (updated === currentContent) {
+				const htmlPattern = new RegExp(`<img[^>]*${escapedSrc}[^>]*\\/?>`, "gi");
+				updated = currentContent.replace(htmlPattern, "");
+			}
+		}
+
+		// If none of the exact URL variants matched, fallback to basename filename matching
+		if (updated === currentContent) {
+			const filename = normalizedSrc.split("/").pop()?.split("?")[0];
+			if (filename && filename.length > 3) {
+				const escapedFile = filename.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+				const filePattern = new RegExp(`!\\[[^\\]]*\\]\\s*\\([^)]*${escapedFile}[^)]*\\)`, "g");
+				updated = currentContent.replace(filePattern, "");
+				if (updated === currentContent) {
+					const htmlFilePattern = new RegExp(`<img[^>]*${escapedFile}[^>]*\\/?>`, "gi");
+					updated = currentContent.replace(htmlFilePattern, "");
+				}
+			}
+		}
+
+		updated = updated.replace(/\n{3,}/g, "\n\n").trim();
+		handleSummaryChange(updated);
+	};
+
+	const handleStartManualEdit = (currentDisplayContent: string) => {
+		const rawText = localSummary || currentDisplayContent;
+		const initialText = rawText.replace(/!\[([^\]]*)\]\s*\n+\s*\(([^)]+)\)/g, "![$1]($2)");
+		setBackupManualSummary(initialText);
+		setLocalSummary(initialText);
 		setIsManualEditing(true);
 	};
 
@@ -851,6 +908,7 @@ export function ChatPreview({
 	const initialPromptTriggeredRef = useRef<string | null>(null);
 	const abortControllerRef = useRef<AbortController | null>(null);
 	const viewportRef = useRef<HTMLDivElement>(null);
+	const isSubmittingRef = useRef(false);
 
 	const isFailedState =
 		knowledgeStatus === "REJECTED" ||
@@ -1108,13 +1166,21 @@ export function ChatPreview({
 		messages.push(...dbMessages);
 	} else if (mode === "knowledge") {
 		// Prevent duplicate turns if initialMsgs already absorbed the turns from server metadata
-		if (initialMsgs.length > 2 && chatTurns.length > 0) {
-			const lastInitial = initialMsgs[initialMsgs.length - 1];
-			const lastChatTurn = chatTurns[chatTurns.length - 1];
-			if (lastChatTurn && lastInitial && lastInitial.content === lastChatTurn.content) {
+		const k = chatTurns.length;
+		if (k > 0 && initialMsgs.length >= k) {
+			const recentInitial = initialMsgs.slice(-k);
+			const isFullyAbsorbed = recentInitial.every(
+				(init, idx) => init.role === chatTurns[idx].role && init.content.trim() === chatTurns[idx].content.trim()
+			);
+			if (isFullyAbsorbed) {
 				messages.push(...initialMsgs);
 			} else {
-				messages.push(...initialMsgs, ...chatTurns);
+				const lastInitial = initialMsgs[initialMsgs.length - 1];
+				if (lastInitial && chatTurns[0].role === lastInitial.role && chatTurns[0].content.trim() === lastInitial.content.trim()) {
+					messages.push(...initialMsgs, ...chatTurns.slice(1));
+				} else {
+					messages.push(...initialMsgs, ...chatTurns);
+				}
 			}
 		} else {
 			messages.push(...initialMsgs, ...chatTurns);
@@ -1329,7 +1395,10 @@ export function ChatPreview({
 	};
 
 	const handleSend = async () => {
+		if (isSubmittingRef.current) return;
 		if ((!input.trim() && attachedFiles.length === 0) || isProcessing) return;
+
+		isSubmittingRef.current = true;
 
 		const filesToSend = [...attachedFiles];
 		const fileNames = filesToSend.map((f) => f.name);
@@ -1462,6 +1531,12 @@ export function ChatPreview({
 				if (knowledgeId) {
 					invalidateAllKnowledgeQueries(queryClient, { knowledgeId });
 				}
+
+				// Clear local chatTurns after successful refine:
+				// The server persists the full conversation in metadata.edit_history,
+				// and after query invalidation, initialMsgs will rebuild from that
+				// server metadata. Keeping chatTurns would cause duplicate messages.
+				setTimeout(() => setChatTurns([]), 300);
 			} else {
 				const response = await api.post(
 					"/knowledge/chat",
@@ -1489,6 +1564,7 @@ export function ChatPreview({
 			sendGeneralMsg.reset();
 			setIsLoading(false);
 			setOptimisticUserMsg(null);
+			isSubmittingRef.current = false;
 		}
 	};
 
@@ -1728,7 +1804,7 @@ export function ChatPreview({
 							</Button>
 						</div>
 
-						<MarkdownContent content={displayContent} />
+						<MarkdownContent content={displayContent} onDeleteImage={handleDeleteImage} />
 						{renderOperationActions(msg)}
 					</div>
 				);
@@ -1751,6 +1827,18 @@ export function ChatPreview({
 							>
 								<RiEyeLine className="size-3.5" />
 								Preview
+							</button>
+							<button
+								type="button"
+								onClick={() => setActiveEditTab("split")}
+								className={`inline-flex items-center gap-1.5 px-3 h-8 text-xs font-medium rounded-md transition-colors cursor-pointer shadow-none ${
+									activeEditTab === "split"
+										? "bg-white text-zinc-900 border border-zinc-200/80 font-semibold"
+										: "text-zinc-600 hover:text-zinc-900 hover:bg-zinc-200/60 border border-transparent"
+								}`}
+							>
+								<RiLayoutColumnLine className="size-3.5" />
+								Split View
 							</button>
 							<button
 								type="button"
@@ -1898,7 +1986,117 @@ export function ChatPreview({
 						</div>
 					)}
 
-					{activeEditTab === "write" ? (
+					{activeEditTab !== "preview" && (
+						(() => {
+							const text = localSummary || displayContent || "";
+							const matches = Array.from(text.matchAll(/!\[([^\]]*)\]\s*\n*\s*\(([^)]+)\)/g));
+							const seen = new Set<string>();
+							const docImages: { alt: string; url: string }[] = [];
+							for (const m of matches) {
+								const u = (m[2] || "").trim();
+								if (u && !seen.has(u)) {
+									seen.add(u);
+									docImages.push({ alt: (m[1] || "").trim(), url: u });
+								}
+							}
+							if (docImages.length === 0) return null;
+							return (
+								<div className="flex flex-col gap-2 p-3 bg-blue-50/70 border border-blue-200/90 rounded-xl mb-1 shadow-xs">
+									<div className="flex items-center justify-between">
+										<div className="flex items-center gap-2">
+											<div className="size-6 rounded-md bg-blue-600 text-white flex items-center justify-center shrink-0">
+												<RiImage2Line className="size-3.5" />
+											</div>
+											<span className="text-xs font-semibold text-blue-950">
+												Foto Terdeteksi ({docImages.length} foto)
+											</span>
+											<span className="text-[11px] text-blue-700 hidden sm:inline">
+												— Foto visual dalam dokumen. Klik ikon sampah merah untuk menghapus dari teks.
+											</span>
+										</div>
+										{activeEditTab !== "split" && (
+											<button
+												type="button"
+												onClick={() => setActiveEditTab("split")}
+												className="text-xs font-medium text-blue-700 hover:text-blue-900 underline flex items-center gap-1 cursor-pointer"
+											>
+												Buka Split View (Berdampingan) →
+											</button>
+										)}
+									</div>
+									<div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5 pt-1">
+										{docImages.map((img, idx) => (
+											<div
+												key={idx}
+												className="flex items-center gap-2.5 bg-white border border-blue-200/80 rounded-lg p-2 shadow-xs hover:border-blue-400 transition-colors"
+											>
+												{/* eslint-disable-next-line @next/next/no-img-element */}
+												<img
+													src={resolveImageUrl(img.url)}
+													alt={img.alt || `Gambar ${idx + 1}`}
+													className="size-14 object-contain rounded-md border border-zinc-200 bg-zinc-50 shrink-0"
+													onError={(e) => {
+														(e.currentTarget as HTMLElement).style.display = "none";
+													}}
+												/>
+												<div className="flex flex-col flex-1 min-w-0 pr-1">
+													<span className="text-xs font-semibold text-zinc-900 truncate" title={img.alt}>
+														{img.alt || `Gambar ${idx + 1}`}
+													</span>
+													<span className="text-[10px] text-zinc-400 font-mono truncate" title={img.url}>
+														{img.url.split("/").pop()}
+													</span>
+													<span className="text-[10px] text-emerald-600 font-medium">
+														✓ Terhubung ke dokumen
+													</span>
+												</div>
+												<button
+													type="button"
+													onClick={(e) => {
+														e.stopPropagation();
+														e.preventDefault();
+														handleDeleteImage(img.url, img.alt);
+													}}
+													className="size-8 rounded-lg bg-red-50 hover:bg-red-600 text-red-600 hover:text-white border border-red-200 hover:border-red-600 flex items-center justify-center shrink-0 cursor-pointer transition-colors shadow-xs"
+													title={`Hapus foto ${img.alt || ""}`}
+												>
+													<RiDeleteBin7Line className="size-4" />
+												</button>
+											</div>
+										))}
+									</div>
+								</div>
+							);
+						})()
+					)}
+
+					{activeEditTab === "split" ? (
+						<div className="grid grid-cols-1 lg:grid-cols-2 gap-3.5 w-full">
+							<div className="flex flex-col gap-2 min-w-0">
+								<div className="text-[11px] font-semibold text-zinc-500 uppercase tracking-wide">
+									Editor Teks Markdown
+								</div>
+								<textarea
+									ref={manualTextareaRef}
+									value={localSummary}
+									onChange={(e) => handleSummaryChange(e.target.value)}
+									onKeyDown={handleTextareaKeyDown}
+									rows={18}
+									placeholder="Type or edit document content manually here..."
+									className="w-full font-mono text-xs sm:text-sm text-zinc-900 leading-relaxed border border-gray-200 bg-white rounded-lg p-3.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 resize-y min-h-80 shadow-none"
+								/>
+							</div>
+							<div className="flex flex-col gap-2 min-w-0">
+								<div className="text-[11px] font-semibold text-zinc-500 uppercase tracking-wide flex items-center justify-between">
+									<span>Hasil Render Visual (Live Preview)</span>
+									<span className="text-[10px] text-zinc-400 font-normal">Tombol merah X pada gambar aktif</span>
+								</div>
+								<div className="min-h-80 max-h-[600px] overflow-y-auto p-3.5 bg-zinc-50/50 rounded-lg border border-zinc-200 shadow-none">
+									<MarkdownContent content={localSummary || displayContent} onDeleteImage={handleDeleteImage} />
+								</div>
+							</div>
+						</div>
+					) : activeEditTab === "write" ? (
 						<textarea
 							ref={manualTextareaRef}
 							value={localSummary}
@@ -1910,7 +2108,7 @@ export function ChatPreview({
 						/>
 					) : (
 						<div className="min-h-80 p-3.5 bg-zinc-50/50 rounded-lg border border-zinc-200 shadow-none">
-							<MarkdownContent content={localSummary || displayContent} />
+							<MarkdownContent content={localSummary || displayContent} onDeleteImage={handleDeleteImage} />
 						</div>
 					)}
 
@@ -2405,7 +2603,9 @@ export function ChatPreview({
 						onKeyDown={(e) => {
 							if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
 								e.preventDefault();
-								handleSend();
+								if (!isSubmittingRef.current) {
+									handleSend();
+								}
 							} else if (e.key === "Escape") {
 								e.currentTarget.blur();
 							}

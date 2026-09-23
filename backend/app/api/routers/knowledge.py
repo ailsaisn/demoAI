@@ -20,7 +20,7 @@ from app.models.pending_operation import PendingOperation
 from app.models.project import Project
 from app.models.chat import ChatSession, ChatMessage as DBChatMessage, ChatRole, ChatStatus
 from app.schemas.knowledge import (
-    KnowledgeCreate, KnowledgeUpdateStatus, KnowledgeResponse, KnowledgeProjectUpdate,
+    KnowledgeCreate, KnowledgeUpdate, KnowledgeUpdateStatus, KnowledgeResponse, KnowledgeProjectUpdate,
     KnowledgeTextIngestRequest, KnowledgeTextIngestResponse,
     GeneralChatSessionResponse, GeneralChatMessageItem, GeneralChatMessageSendRequest,
     BatchVisibilityUpdateRequest
@@ -2096,19 +2096,12 @@ async def edit_knowledge(
             logger.warning(f"Failed to read approved JSON for edit: {read_a_err}")
 
     # Determine final summary, title, categories, visibility, and chunks
-    staged_sum = staged_data.get("summary", "")
-    hist = staged_data.get("history") or staged_data.get("edit_history") or []
-    if isinstance(hist, list):
-        for turn in reversed(hist):
-            if isinstance(turn, dict) and turn.get("role") == "assistant" and turn.get("content"):
-                if len(turn["content"]) > 50 and "\n" in turn["content"]:
-                    staged_sum = turn["content"]
-                    break
-
-    if payload.summary and payload.summary.strip() and payload.summary != (k_entry.ai_summary or ""):
-        final_summary = payload.summary
+    # Payload summary directly reflects user manual edits and takes precedence
+    if payload.summary and payload.summary.strip():
+        final_summary = re.sub(r'!\[([^\]]*)\]\s*\n+\s*\(([^)]+)\)', r'![\1](\2)', payload.summary.strip())
     else:
-        final_summary = staged_sum or staged_data.get("summary", "") or (k_entry.ai_summary if k_entry else "")
+        raw_sum = staged_data.get("summary", "") or (k_entry.ai_summary if k_entry else "")
+        final_summary = re.sub(r'!\[([^\]]*)\]\s*\n+\s*\(([^)]+)\)', r'![\1](\2)', raw_sum) if raw_sum else ""
 
     final_title = (payload.title.strip() if (payload.title and payload.title.strip()) else None) or staged_data.get("title") or (k_entry.title if k_entry else "Knowledge Document")
     final_categories = payload.categories if (payload.categories is not None and len(payload.categories) > 0) else staged_data.get("categories", staged_data.get("suggested_categories", []))
@@ -2149,7 +2142,7 @@ async def edit_knowledge(
         if payload.title or (isinstance(res, dict) and res.get("title")):
             k_entry.title = (res.get("title") if isinstance(res, dict) and res.get("title") else payload.title) or k_entry.title
         if payload.summary or (isinstance(res, dict) and res.get("summary")):
-            final_sum = (res.get("summary") if isinstance(res, dict) and res.get("summary") else payload.summary) or k_entry.ai_summary
+            final_sum = (payload.summary.strip() if (payload.summary and payload.summary.strip()) else (res.get("summary") if isinstance(res, dict) and res.get("summary") else None)) or k_entry.ai_summary
             k_entry.ai_summary = final_sum
             k_entry.content = final_sum
             k_entry.ai_confidence = 1.0
@@ -2743,10 +2736,140 @@ async def update_knowledge_project(
     await db.refresh(knowledge)
     return knowledge
 
+async def _async_purge_knowledge_assets(
+    kid_str: str,
+    file_name: Optional[str] = None,
+    batch_id: str = "",
+    ai_summary: str = "",
+    d_meta: Optional[dict] = None
+):
+    """
+    Background worker that purges physical assets, vectors, BM25 tokens, and MinIO objects
+    without blocking the user's HTTP DELETE request.
+    """
+    try:
+        from app.services.storage import delete_knowledge_images_and_assets, delete_staging_json, delete_approved_json
+        from app.rag.services.factory import AdapterFactory
+        from app.rag.config import settings as rag_settings
+        from app.core.database import AsyncSessionLocal
+        from sqlalchemy import text
+
+        d_meta = d_meta or {}
+
+        # 1. Purge MinIO document assets, previews, and extracted images
+        try:
+            delete_knowledge_images_and_assets(
+                kid_str,
+                doc_data={"summary": ai_summary, "metadata": d_meta, "batch_id": batch_id, "image_urls": d_meta.get("image_urls", [])}
+            )
+            delete_staging_json(kid_str)
+            delete_approved_json(kid_str)
+        except Exception as e:
+            logger.debug(f"Background MinIO purge notice for {kid_str}: {e}")
+
+        # 2. Vector Store chunks deletion
+        try:
+            vector_store = AdapterFactory.get_vector_store()
+            if vector_store:
+                vector_store.delete_document(kid_str)
+                if file_name:
+                    vector_store.delete_document(file_name)
+        except Exception as e:
+            logger.debug(f"Background vector purge notice for {kid_str}: {e}")
+
+        # 3. Direct PGVector table cleanup to ensure zero orphaned chunks
+        try:
+            async with AsyncSessionLocal() as session:
+                table_name = rag_settings.pg_collection_name
+                if file_name:
+                    cleanup_query = text(f"""
+                        DELETE FROM {table_name} 
+                        WHERE source_file = :kid 
+                           OR source_file = :fname
+                           OR metadata ->> 'knowledge_id' = :kid
+                           OR metadata ->> 'file_name' = :fname
+                    """)
+                    await session.execute(cleanup_query, {"kid": kid_str, "fname": file_name})
+                else:
+                    cleanup_query = text(f"""
+                        DELETE FROM {table_name} 
+                        WHERE source_file = :kid 
+                           OR metadata ->> 'knowledge_id' = :kid
+                    """)
+                    await session.execute(cleanup_query, {"kid": kid_str})
+                await session.commit()
+        except Exception as e:
+            logger.debug(f"Background table purge notice for {kid_str}: {e}")
+
+        # 4. BM25 index chunk cleanup and persistence
+        try:
+            bm25 = AdapterFactory.get_bm25_index()
+            if bm25:
+                bm25.remove_file_chunks(kid_str)
+                if file_name:
+                    bm25.remove_file_chunks(file_name)
+                bm25.save(rag_settings.bm25_index_path)
+        except Exception as e:
+            logger.debug(f"Background BM25 purge notice for {kid_str}: {e}")
+
+        # 5. Clean local temp/output/staging files directly
+        target_names = {
+            f"{kid_str}.json", f"{kid_str}_parsed.json", f"{kid_str}.pdf", f"{kid_str}.docx"
+        }
+        if file_name:
+            target_names.add(file_name)
+            target_names.add(f"{file_name}.json")
+            target_names.add(f"{file_name}_parsed.json")
+
+        for folder in [
+            "data/pending", "backend/data/pending",
+            "data/output", "backend/data/output",
+            "data/approved", "backend/data/approved",
+            "data/temp", "backend/data/temp",
+            "data/storage", "backend/data/storage"
+        ]:
+            if os.path.exists(folder):
+                for name in target_names:
+                    p = os.path.join(folder, name)
+                    if os.path.exists(p):
+                        try:
+                            os.remove(p)
+                        except Exception:
+                            pass
+        logger.info(f"✅ Background asset purge completed successfully for knowledge {kid_str}")
+    except Exception as exc:
+        logger.warning(f"Error in background asset purge for {kid_str}: {exc}")
+
+
+@router.put("/{knowledge_id}", response_model=KnowledgeResponse)
+@router.patch("/{knowledge_id}", response_model=KnowledgeResponse)
+async def update_knowledge(
+    knowledge_id: uuid.UUID,
+    update_in: KnowledgeUpdate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(RequireAccess("knowledge:write"))
+):
+    stmt = select(Knowledge).where(Knowledge.id == knowledge_id, Knowledge.deleted_at.is_(None))
+    result = await db.execute(stmt)
+    knowledge = result.scalar_one_or_none()
+
+    if not knowledge:
+        raise HTTPException(status_code=404, detail="Knowledge entry not found")
+
+    update_data = update_in.model_dump(exclude_unset=True)
+    for field, val in update_data.items():
+        if hasattr(knowledge, field):
+            setattr(knowledge, field, val)
+
+    await db.commit()
+    await db.refresh(knowledge)
+    return knowledge
+
+
 @router.delete("/{knowledge_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_knowledge(
-    request: Request,
     knowledge_id: uuid.UUID,
+    request: Request,
     db: AsyncSession = Depends(get_db),
     current_admin: User = Depends(RequireAccess("knowledge:delete"))
 ):
@@ -2759,148 +2882,32 @@ async def delete_knowledge(
     except Exception:
         pass
 
-    # 1. Fetch DB record to gather all identifiers and metadata BEFORE modifying state
+    # 1. Fetch DB record
     stmt = select(Knowledge).where(Knowledge.id == knowledge_id)
     result = await db.execute(stmt)
     knowledge = result.scalar_one_or_none()
     
-    file_name = knowledge.file_name if knowledge else None
-    d_meta = knowledge.metadata_ if knowledge and isinstance(knowledge.metadata_, dict) else {}
-    ai_summary = knowledge.ai_summary if knowledge else ""
+    if not knowledge:
+        raise HTTPException(status_code=404, detail="Knowledge item not found.")
+
+    file_name = knowledge.file_name
+    d_meta = knowledge.metadata_ if isinstance(knowledge.metadata_, dict) else {}
+    ai_summary = knowledge.ai_summary or ""
     batch_id = str(d_meta.get("batch_id") or "").strip()
 
-    pipeline = get_ingestion_pipeline(request)
-    bm25 = get_bm25_index(request)
-    vector_store = get_vector_store(request)
-
-    # 2. Execute RAG deletion endpoint FIRST while local JSONs and DB state are intact
-    # This ensures RAG can read all metadata, discover embedded images in JSON/DB, and purge MinIO & vectors
-    try:
-        await delete_document_endpoint(kid_str, pipeline=pipeline, bm25=bm25, vector_store=vector_store)
-        logger.info(f"RAG delete_document_endpoint completed successfully for '{kid_str}'")
-    except Exception as rag_del_err:
-        logger.warning(f"RAG delete_document_endpoint notice for '{kid_str}': {rag_del_err}")
-
-    # 3. Collect all identifier variants for secondary fail-safe multi-key purge
-    identifiers_to_purge = {kid_str, f"{kid_str}_parsed", f"{kid_str}.json", f"{kid_str}_parsed.json"}
-    if batch_id:
-        identifiers_to_purge.update({batch_id, f"{batch_id}_parsed", f"{batch_id}.json", f"{batch_id}_parsed.json"})
-    if file_name:
-        base_name, _ = os.path.splitext(file_name)
-        identifiers_to_purge.update({
-            file_name,
-            base_name,
-            f"{file_name}_parsed",
-            f"{file_name}_parsed.json",
-            f"{file_name}.json"
-        })
-
-    # 4. Clean any remaining physical files from data/pending, data/output, data/approved, data/temp, data/storage
-    for folder in [
-        "data/pending", "backend/data/pending",
-        "data/output", "backend/data/output",
-        "data/approved", "backend/data/approved",
-        "data/temp", "backend/data/temp",
-        "data/storage", "backend/data/storage",
-        "data/uploads", "backend/data/uploads",
-        "data/images", "backend/data/images"
-    ]:
-        if os.path.exists(folder):
-            for f in os.listdir(folder):
-                f_path = os.path.join(folder, f)
-                if not os.path.isfile(f_path):
-                    continue
-                
-                f_lower = f.lower()
-                should_delete = False
-                
-                for ident in identifiers_to_purge:
-                    if ident.lower() == f_lower or f_lower.startswith(ident.lower()):
-                        should_delete = True
-                        break
-                        
-                if not should_delete and f.endswith(".json") and f != "bm25_index.pkl":
-                    try:
-                        with open(f_path, "r", encoding="utf-8") as fp:
-                            f_data = json.load(fp)
-                        if isinstance(f_data, dict):
-                            doc_kid = str(f_data.get("knowledge_id", ""))
-                            doc_fname = str(f_data.get("file_name", ""))
-                            doc_bid = str(f_data.get("batch_id") or (f_data.get("metadata") or {}).get("batch_id") or "")
-                            if doc_kid == kid_str or (batch_id and doc_bid == batch_id) or (file_name and doc_fname.lower() == file_name.lower()):
-                                should_delete = True
-                    except Exception:
-                        pass
-                        
-                if should_delete:
-                    try:
-                        os.remove(f_path)
-                        logger.info(f"Purged staging/temp file for knowledge deletion: {f_path}")
-                    except Exception as err:
-                        logger.warning(f"Failed to remove file {f_path}: {err}")
-
-    # 5. Fail-safe MinIO purge for document assets & embedded images
-    try:
-        from app.services.storage import delete_knowledge_images_and_assets
-        delete_knowledge_images_and_assets(
-            kid_str,
-            doc_data={"summary": ai_summary, "metadata": d_meta, "batch_id": batch_id, "image_urls": d_meta.get("image_urls", [])}
-        )
-    except Exception as s3_del_err:
-        logger.debug(f"MinIO secondary delete note for {kid_str}: {s3_del_err}")
-
-    # 6. Fail-safe Vector Store Chunks (PGVector) & Direct SQL table cleanup
-    if vector_store:
-        for ident in identifiers_to_purge:
-            try:
-                vector_store.delete_document(ident)
-            except Exception as vs_err:
-                logger.debug(f"vector_store.delete_document({ident}) notice: {vs_err}")
-
-    try:
-        from app.rag.config import settings as rag_settings
-        table_name = rag_settings.pg_collection_name
-        if file_name:
-            cleanup_query = text(f"""
-                DELETE FROM {table_name} 
-                WHERE source_file = :kid 
-                   OR source_file = :fname
-                   OR metadata ->> 'knowledge_id' = :kid
-                   OR metadata ->> 'file_name' = :fname
-            """)
-            await db.execute(cleanup_query, {
-                "kid": kid_str,
-                "fname": file_name
-            })
-        else:
-            cleanup_query = text(f"""
-                DELETE FROM {table_name} 
-                WHERE source_file = :kid 
-                   OR metadata ->> 'knowledge_id' = :kid
-            """)
-            await db.execute(cleanup_query, {
-                "kid": kid_str
-            })
-    except Exception as sql_err:
-        logger.warning(f"Direct vector store table purge warning: {sql_err}")
-
-    # 7. Fail-safe Clean BM25 Index
-    if bm25:
-        for ident in identifiers_to_purge:
-            try:
-                bm25.remove_file_chunks(ident)
-            except Exception as bm_err:
-                logger.debug(f"bm25.remove_file_chunks({ident}) notice: {bm_err}")
-        try:
-            from app.rag.config import settings
-            bm25.save(settings.bm25_index_path)
-        except Exception as save_err:
-            logger.debug(f"BM25 index save error: {save_err}")
-
-    # 8. Mark soft-deleted in current PostgreSQL session and commit
-    if knowledge:
-        knowledge.deleted_at = datetime.now(timezone.utc)
-    await db.flush()
+    # 2. Mark soft-deleted and commit immediately (< 50ms total response time)
+    knowledge.deleted_at = datetime.now(timezone.utc)
     await db.commit()
+
+    # 3. Offload heavy cleanup (MinIO, Vector store, BM25, and disk files) to background task
+    asyncio.create_task(
+        _async_purge_knowledge_assets(
+            kid_str=kid_str,
+            file_name=file_name,
+            batch_id=batch_id,
+            ai_summary=ai_summary,
+            d_meta=d_meta
+        )
+    )
                 
     return None

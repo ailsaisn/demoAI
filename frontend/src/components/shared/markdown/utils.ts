@@ -190,6 +190,9 @@ export function stripInternalMetadata(text?: string | null): string {
 		"",
 	);
 
+	// Normalize broken newline between ![alt] and (url) e.g. ![alt]\n(url) -> ![alt](url)
+	cleaned = cleaned.replace(/!\[([^\]]*)\]\s*\n+\s*\(([^)]+)\)/g, "![$1]($2)");
+
 	// Normalize unencoded spaces in markdown image links ![alt](url) -> ![alt](encodedUrl)
 	cleaned = cleaned.replace(/!\[([^\]]*)\]\(([^)]+)\)/g, (match, alt, rawUrl) => {
 		const trimmedUrl = rawUrl.trim();

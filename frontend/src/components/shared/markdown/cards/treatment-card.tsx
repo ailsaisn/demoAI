@@ -1,12 +1,18 @@
 import React, { useState } from "react";
-import { RiStethoscopeLine, RiZoomInLine } from "@remixicon/react";
+import { RiCloseLine, RiStethoscopeLine, RiZoomInLine } from "@remixicon/react";
 import type { CardData, KeyValueItem } from "../types";
 import { isValidImageUrl, resolveImageUrl } from "../utils";
 import { ImagePreviewDialog } from "@/components/shared/image-preview-dialog";
 
-export function TreatmentCard({ data }: { data: CardData }) {
+export function TreatmentCard({
+	data,
+	onDeleteImage,
+}: {
+	data: CardData;
+	onDeleteImage?: (src: string, alt: string) => void;
+}) {
 	const [isPreviewOpen, setIsPreviewOpen] = useState(false);
-	const { imageUrl, imageAlt, items } = data;
+	const { imageUrl, rawImageUrl, imageAlt, items } = data;
 
 	let treatmentName = "";
 	let category = "";
@@ -88,6 +94,20 @@ export function TreatmentCard({ data }: { data: CardData }) {
 						>
 							<RiZoomInLine className="size-3.5" />
 						</button>
+						{onDeleteImage && (
+							<button
+								type="button"
+								onClick={(e) => {
+									e.stopPropagation();
+									e.preventDefault();
+									onDeleteImage(rawImageUrl || imageUrl || "", imageAlt || treatmentName || "");
+								}}
+								className="absolute top-1.5 right-1.5 z-10 size-6 flex items-center justify-center rounded-full bg-red-600 hover:bg-red-700 text-white shadow-sm cursor-pointer transition-transform hover:scale-110"
+								title="Hapus gambar tindakan ini"
+							>
+								<RiCloseLine className="size-3.5" />
+							</button>
+						)}
 					</div>
 
 					<ImagePreviewDialog

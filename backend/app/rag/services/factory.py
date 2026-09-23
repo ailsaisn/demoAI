@@ -123,3 +123,50 @@ class AdapterFactory:
 
         return AdapterFactory._vector_store_instance
 
+    _reranker_instance = None
+    _bm25_instance = None
+
+    @staticmethod
+    def get_reranker():
+        """
+        Thread-safe singleton for CrossEncoder Reranker.
+        Prevents expensive PyTorch model reloading (~400MB) on every incoming chat request.
+        """
+        if AdapterFactory._reranker_instance is None:
+            from app.rag.services.rag_retriever import Reranker
+            from app.rag.config import settings as rag_settings
+            model_name = getattr(rag_settings, "reranker_model_name", "BAAI/bge-reranker-base")
+            AdapterFactory._reranker_instance = Reranker(model_name=model_name)
+        return AdapterFactory._reranker_instance
+
+    @staticmethod
+    def get_bm25_index():
+        """
+        In-memory singleton for BM25Index.
+        Prevents downloading and rebuilding the BM25 index on every incoming chat request.
+        """
+        if AdapterFactory._bm25_instance is None:
+            from app.rag.services.rag_retriever import BM25Index
+            from app.rag.config import settings as rag_settings
+            bm25 = BM25Index()
+            try:
+                bm25.load(rag_settings.bm25_index_path)
+            except Exception as e:
+                logger.warning(f"Could not load BM25 index on startup: {e}")
+            AdapterFactory._bm25_instance = bm25
+        return AdapterFactory._bm25_instance
+
+    @staticmethod
+    def invalidate_bm25_index():
+        """
+        Forces a reload of the BM25 index from storage/SSOT when documents are added, updated, or removed.
+        """
+        from app.rag.config import settings as rag_settings
+        if AdapterFactory._bm25_instance is not None:
+            try:
+                AdapterFactory._bm25_instance.load(rag_settings.bm25_index_path)
+                logger.info("Successfully reloaded in-memory BM25 index.")
+            except Exception as e:
+                logger.warning(f"Failed to reload BM25 index: {e}")
+
+
