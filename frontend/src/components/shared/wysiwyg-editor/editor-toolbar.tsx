@@ -68,25 +68,29 @@ export function EditorToolbar({ editor }: EditorToolbarProps) {
 					className="w-36 bg-white border border-zinc-200 rounded-lg shadow-none p-1"
 				>
 					<DropdownMenuItem
-						onClick={() => editor.chain().focus().setParagraph().run()}
+						onMouseDown={(e) => e.preventDefault()}
+							onClick={() => editor.chain().focus().setParagraph().run()}
 						className={`text-xs cursor-pointer rounded-md ${editor.isActive("paragraph") ? "font-semibold bg-zinc-100" : ""}`}
 					>
 						Normal Text
 					</DropdownMenuItem>
 					<DropdownMenuItem
-						onClick={() => editor.chain().focus().toggleHeading({ level: 1 }).run()}
+						onMouseDown={(e) => e.preventDefault()}
+							onClick={() => editor.chain().focus().toggleHeading({ level: 1 }).run()}
 						className={`text-xs cursor-pointer font-bold rounded-md ${editor.isActive("heading", { level: 1 }) ? "bg-zinc-100" : ""}`}
 					>
 						Heading 1
 					</DropdownMenuItem>
 					<DropdownMenuItem
-						onClick={() => editor.chain().focus().toggleHeading({ level: 2 }).run()}
+						onMouseDown={(e) => e.preventDefault()}
+							onClick={() => editor.chain().focus().toggleHeading({ level: 2 }).run()}
 						className={`text-xs cursor-pointer font-semibold rounded-md ${editor.isActive("heading", { level: 2 }) ? "bg-zinc-100" : ""}`}
 					>
 						Heading 2
 					</DropdownMenuItem>
 					<DropdownMenuItem
-						onClick={() => editor.chain().focus().toggleHeading({ level: 3 }).run()}
+						onMouseDown={(e) => e.preventDefault()}
+							onClick={() => editor.chain().focus().toggleHeading({ level: 3 }).run()}
 						className={`text-xs cursor-pointer font-medium rounded-md ${editor.isActive("heading", { level: 3 }) ? "bg-zinc-100" : ""}`}
 					>
 						Heading 3
@@ -101,7 +105,8 @@ export function EditorToolbar({ editor }: EditorToolbarProps) {
 				type="button"
 				variant="ghost"
 				size="icon"
-				onClick={() => editor.chain().focus().toggleBold().run()}
+				onMouseDown={(e) => e.preventDefault()}
+							onClick={() => editor.chain().focus().toggleBold().run()}
 				title="Bold (Ctrl+B)"
 				className={`size-8 rounded-lg shadow-none cursor-pointer ${
 					editor.isActive("bold")
@@ -116,7 +121,8 @@ export function EditorToolbar({ editor }: EditorToolbarProps) {
 				type="button"
 				variant="ghost"
 				size="icon"
-				onClick={() => editor.chain().focus().toggleItalic().run()}
+				onMouseDown={(e) => e.preventDefault()}
+							onClick={() => editor.chain().focus().toggleItalic().run()}
 				title="Italic (Ctrl+I)"
 				className={`size-8 rounded-lg shadow-none cursor-pointer ${
 					editor.isActive("italic")
@@ -131,7 +137,8 @@ export function EditorToolbar({ editor }: EditorToolbarProps) {
 				type="button"
 				variant="ghost"
 				size="icon"
-				onClick={() => editor.chain().focus().toggleStrike().run()}
+				onMouseDown={(e) => e.preventDefault()}
+							onClick={() => editor.chain().focus().toggleStrike().run()}
 				title="Strikethrough"
 				className={`size-8 rounded-lg shadow-none cursor-pointer ${
 					editor.isActive("strike")
@@ -146,7 +153,8 @@ export function EditorToolbar({ editor }: EditorToolbarProps) {
 				type="button"
 				variant="ghost"
 				size="icon"
-				onClick={() => editor.chain().focus().toggleCode().run()}
+				onMouseDown={(e) => e.preventDefault()}
+							onClick={() => editor.chain().focus().toggleCode().run()}
 				title="Inline Code"
 				className={`size-8 rounded-lg shadow-none cursor-pointer ${
 					editor.isActive("code")
@@ -164,7 +172,8 @@ export function EditorToolbar({ editor }: EditorToolbarProps) {
 				type="button"
 				variant="ghost"
 				size="icon"
-				onClick={() => editor.chain().focus().toggleBulletList().run()}
+				onMouseDown={(e) => e.preventDefault()}
+							onClick={() => editor.chain().focus().toggleBulletList().run()}
 				title="Bullet List"
 				className={`size-8 rounded-lg shadow-none cursor-pointer ${
 					editor.isActive("bulletList")
@@ -179,7 +188,8 @@ export function EditorToolbar({ editor }: EditorToolbarProps) {
 				type="button"
 				variant="ghost"
 				size="icon"
-				onClick={() => editor.chain().focus().toggleOrderedList().run()}
+				onMouseDown={(e) => e.preventDefault()}
+							onClick={() => editor.chain().focus().toggleOrderedList().run()}
 				title="Numbered List"
 				className={`size-8 rounded-lg shadow-none cursor-pointer ${
 					editor.isActive("orderedList")
@@ -197,7 +207,8 @@ export function EditorToolbar({ editor }: EditorToolbarProps) {
 				type="button"
 				variant="ghost"
 				size="icon"
-				onClick={() => editor.chain().focus().toggleBlockquote().run()}
+				onMouseDown={(e) => e.preventDefault()}
+							onClick={() => editor.chain().focus().toggleBlockquote().run()}
 				title="Quote"
 				className={`size-8 rounded-lg shadow-none cursor-pointer ${
 					editor.isActive("blockquote")
@@ -212,7 +223,8 @@ export function EditorToolbar({ editor }: EditorToolbarProps) {
 				type="button"
 				variant="ghost"
 				size="icon"
-				onClick={() => editor.chain().focus().toggleCodeBlock().run()}
+				onMouseDown={(e) => e.preventDefault()}
+							onClick={() => editor.chain().focus().toggleCodeBlock().run()}
 				title="Code Block"
 				className={`size-8 rounded-lg shadow-none cursor-pointer ${
 					editor.isActive("codeBlock")
@@ -227,7 +239,8 @@ export function EditorToolbar({ editor }: EditorToolbarProps) {
 				type="button"
 				variant="ghost"
 				size="icon"
-				onClick={() => editor.chain().focus().setHorizontalRule().run()}
+				onMouseDown={(e) => e.preventDefault()}
+							onClick={() => editor.chain().focus().setHorizontalRule().run()}
 				title="Divider"
 				className="size-8 rounded-lg shadow-none cursor-pointer text-zinc-600 hover:text-zinc-900 hover:bg-zinc-100"
 			>
@@ -273,28 +286,32 @@ export function EditorToolbar({ editor }: EditorToolbarProps) {
 					) : (
 						<>
 							<DropdownMenuItem
-								onClick={() => editor.chain().focus().addRowBefore().run()}
+								onMouseDown={(e) => e.preventDefault()}
+							onClick={() => editor.chain().focus().addRowBefore().run()}
 								className="text-xs cursor-pointer gap-2 rounded-md"
 							>
 								<RiInsertRowTop className="size-3.5 text-zinc-500" />
 								Add Row Above
 							</DropdownMenuItem>
 							<DropdownMenuItem
-								onClick={() => editor.chain().focus().addRowAfter().run()}
+								onMouseDown={(e) => e.preventDefault()}
+							onClick={() => editor.chain().focus().addRowAfter().run()}
 								className="text-xs cursor-pointer gap-2 rounded-md"
 							>
 								<RiInsertRowBottom className="size-3.5 text-zinc-500" />
 								Add Row Below
 							</DropdownMenuItem>
 							<DropdownMenuItem
-								onClick={() => editor.chain().focus().addColumnBefore().run()}
+								onMouseDown={(e) => e.preventDefault()}
+							onClick={() => editor.chain().focus().addColumnBefore().run()}
 								className="text-xs cursor-pointer gap-2 rounded-md"
 							>
 								<RiInsertColumnLeft className="size-3.5 text-zinc-500" />
 								Add Column Left
 							</DropdownMenuItem>
 							<DropdownMenuItem
-								onClick={() => editor.chain().focus().addColumnAfter().run()}
+								onMouseDown={(e) => e.preventDefault()}
+							onClick={() => editor.chain().focus().addColumnAfter().run()}
 								className="text-xs cursor-pointer gap-2 rounded-md"
 							>
 								<RiInsertColumnRight className="size-3.5 text-zinc-500" />
@@ -302,21 +319,24 @@ export function EditorToolbar({ editor }: EditorToolbarProps) {
 							</DropdownMenuItem>
 							<DropdownMenuSeparator />
 							<DropdownMenuItem
-								onClick={() => editor.chain().focus().deleteRow().run()}
+								onMouseDown={(e) => e.preventDefault()}
+							onClick={() => editor.chain().focus().deleteRow().run()}
 								className="text-xs cursor-pointer gap-2 text-red-600 rounded-md"
 							>
 								<RiDeleteBin7Line className="size-3.5 text-red-500" />
 								Delete Current Row
 							</DropdownMenuItem>
 							<DropdownMenuItem
-								onClick={() => editor.chain().focus().deleteColumn().run()}
+								onMouseDown={(e) => e.preventDefault()}
+							onClick={() => editor.chain().focus().deleteColumn().run()}
 								className="text-xs cursor-pointer gap-2 text-red-600 rounded-md"
 							>
 								<RiDeleteBin7Line className="size-3.5 text-red-500" />
 								Delete Current Column
 							</DropdownMenuItem>
 							<DropdownMenuItem
-								onClick={() => editor.chain().focus().deleteTable().run()}
+								onMouseDown={(e) => e.preventDefault()}
+							onClick={() => editor.chain().focus().deleteTable().run()}
 								className="text-xs cursor-pointer gap-2 text-red-600 font-medium rounded-md"
 							>
 								<RiDeleteBin7Line className="size-3.5 text-red-500" />
@@ -334,7 +354,8 @@ export function EditorToolbar({ editor }: EditorToolbarProps) {
 				type="button"
 				variant="ghost"
 				size="icon"
-				onClick={() => editor.chain().focus().undo().run()}
+				onMouseDown={(e) => e.preventDefault()}
+							onClick={() => editor.chain().focus().undo().run()}
 				disabled={!editor.can().undo()}
 				title="Undo (Ctrl+Z)"
 				className="size-8 rounded-lg shadow-none cursor-pointer text-zinc-600 hover:text-zinc-900 hover:bg-zinc-100 disabled:opacity-40"
@@ -346,7 +367,8 @@ export function EditorToolbar({ editor }: EditorToolbarProps) {
 				type="button"
 				variant="ghost"
 				size="icon"
-				onClick={() => editor.chain().focus().redo().run()}
+				onMouseDown={(e) => e.preventDefault()}
+							onClick={() => editor.chain().focus().redo().run()}
 				disabled={!editor.can().redo()}
 				title="Redo (Ctrl+Shift+Z)"
 				className="size-8 rounded-lg shadow-none cursor-pointer text-zinc-600 hover:text-zinc-900 hover:bg-zinc-100 disabled:opacity-40"

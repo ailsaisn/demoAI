@@ -300,6 +300,7 @@ export function ChatPreview({
 	const [prevIncomingSummary, setPrevIncomingSummary] = useState(incomingSummary);
 	const [localSummary, setLocalSummary] = useState(incomingSummary);
 	const [backupManualSummary, setBackupManualSummary] = useState<string>("");
+	const [manualEditRevision, setManualEditRevision] = useState(0);
 
 	const handleRetryFileSelected = async (e: React.ChangeEvent<HTMLInputElement>) => {
 		const selectedFile = e.target.files?.[0];
@@ -399,6 +400,7 @@ export function ChatPreview({
 
 		updated = updated.replace(/\n{3,}/g, "\n\n").trim();
 		handleSummaryChange(updated);
+		setManualEditRevision((r) => r + 1);
 	};
 
 	const handleStartManualEdit = (currentDisplayContent: string) => {
@@ -406,6 +408,7 @@ export function ChatPreview({
 		const initialText = rawText.replace(/!\[([^\]]*)\]\s*\n+\s*\(([^)]+)\)/g, "![$1]($2)");
 		setBackupManualSummary(initialText);
 		setLocalSummary(initialText);
+		setManualEditRevision((r) => r + 1);
 		setIsManualEditing(true);
 	};
 
@@ -1603,11 +1606,10 @@ export function ChatPreview({
 					})()}
 
 					<WysiwygEditor
-						key={localSummary.length}
+						key={manualEditRevision}
 						initialContent={localSummary || displayContent}
 						onSave={(markdown) => handleSaveManualEdit(markdown)}
 						onCancel={handleCancelManualEdit}
-						onChange={(markdown) => handleSummaryChange(markdown)}
 					/>
 				</div>
 			);
