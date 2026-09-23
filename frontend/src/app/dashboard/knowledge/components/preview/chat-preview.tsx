@@ -338,7 +338,7 @@ export function ChatPreview({
 	};
 
 	/** Handles image deletion from edit mode: removes the ![alt](src) markdown tag and directly updates local summary */
-	const handleDeleteImage = (src: string, _alt: string) => {
+	const handleDeleteImage = (src: string, altText?: string) => {
 		const currentContent =
 			localSummary ||
 			(firstAssistantIndex >= 0 ? messages[firstAssistantIndex]?.content : "") ||
@@ -388,6 +388,13 @@ export function ChatPreview({
 					updated = currentContent.replace(htmlFilePattern, "");
 				}
 			}
+		}
+
+		// Also try matching by exact alt text if provided and still unchanged
+		if (updated === currentContent && altText && altText.trim().length > 2) {
+			const escapedAlt = altText.trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+			const altPattern = new RegExp(`!\\[\\s*${escapedAlt}\\s*\\]\\s*\\([^)]*\\)`, "g");
+			updated = currentContent.replace(altPattern, "");
 		}
 
 		updated = updated.replace(/\n{3,}/g, "\n\n").trim();
