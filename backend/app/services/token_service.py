@@ -87,9 +87,15 @@ async def check_chat_token_quota(
                 }
 
         # 2. Branch limit check (Custom Branch Limit OR Shared Global Pool OR fallback to Global Threshold)
-        has_branch_custom = branch.token_limit is not None and branch.token_limit > 0
+        has_branch_custom = getattr(branch, "has_custom_limit", False) is True
         if has_branch_custom:
-            branch_limit = branch.token_limit
+            branch_limit = branch.token_limit if branch.token_limit is not None else 0
+            if branch_limit <= 0:
+                return False, f"Branch '{branch.name}' token limit is set to 0 tokens. Please contact your administrator.", {
+                    "mode": "branch_custom",
+                    "branch_limit": 0,
+                    "reason": "branch_limit_zero"
+                }
         elif is_branch_global_active:
             global_branch_limit_str = await get_app_config_value(db, "GLOBAL_TOKEN_LIMIT", None)
             branch_limit = int(global_branch_limit_str) if (global_branch_limit_str and global_branch_limit_str.isdigit()) else 0

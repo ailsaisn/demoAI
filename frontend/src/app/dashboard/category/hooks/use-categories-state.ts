@@ -1,12 +1,25 @@
+import { useSearchParams } from "next/navigation";
 import { useDebounce } from "@/hooks/use-debounce";
 import { usePagination } from "@/hooks/use-pagination";
 import { useTableSort } from "@/hooks/use-table-sort";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { CategoryResponse } from "../api/types";
 import { useCategories, useDeleteCategory } from "./use-categories";
 
 export function useCategoriesState() {
-	const [searchQuery, setSearchQuery] = useState("");
+	const searchParams = useSearchParams();
+	const initialSearch = searchParams.get("search") || "";
+	const [searchQuery, setSearchQuery] = useState(initialSearch);
+
+	useEffect(() => {
+		const searchFromUrl = searchParams.get("search");
+		if (searchFromUrl) {
+			const timer = setTimeout(() => {
+				setSearchQuery(searchFromUrl);
+			}, 0);
+			return () => clearTimeout(timer);
+		}
+	}, [searchParams]);
 	const debouncedSearch = useDebounce(searchQuery, 300);
 	const [isDialogOpen, setIsDialogOpen] = useState(false);
 	const [dialogMode, setDialogMode] = useState<"add" | "edit">("add");

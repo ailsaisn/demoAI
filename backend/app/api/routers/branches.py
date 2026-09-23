@@ -41,7 +41,7 @@ async def _hydrate_branch(branch: Branch, db: AsyncSession) -> dict:
     b_act_res = await db.execute(b_act_stmt)
     is_branch_global_active = is_global_mode and ((b_act_res.scalar_one_or_none() or "false").lower() == "true")
 
-    has_custom_limit = branch.token_limit is not None and branch.token_limit > 0
+    has_custom_limit = getattr(branch, "has_custom_limit", False) is True
     branch_dict["has_custom_limit"] = has_custom_limit
 
     if has_custom_limit:
@@ -246,9 +246,19 @@ async def update_branch(
     if not branch:
         raise HTTPException(status_code=404, detail="Branch not found")
         
-    update_data = branch_in.model_dump(exclude_unset=True)
-    for field, value in update_data.items():
-        setattr(branch, field, value)
+    if branch_in.reset_to_global:
+        branch.has_custom_limit = False
+        branch.token_limit = 0
+    elif branch_in.has_custom_limit is not None:
+        branch.has_custom_limit = branch_in.has_custom_limit
+        if branch_in.token_limit is not None:
+            branch.token_limit = branch_in.token_limit
+    elif branch_in.token_limit is not None:
+        branch.token_limit = branch_in.token_limit
+        branch.has_custom_limit = True
+
+    if branch_in.name is not None:
+        branch.name = branch_in.name
         
     await db.commit()
     await db.refresh(branch)

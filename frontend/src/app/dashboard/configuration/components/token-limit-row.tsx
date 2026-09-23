@@ -39,28 +39,38 @@ export function TokenLimitRow({
 	placeholder = "1,000,000",
 	suffix = "per month",
 }: TokenLimitRowProps) {
+	const isEditable = isEditing || !isActive;
+
 	return (
 		<div className="flex flex-col gap-1.5">
-			<span className="text-sm text-zinc-600">{label}</span>
+			<div className="flex items-center gap-2">
+				<span className="text-sm text-zinc-600">{label}</span>
+				<span
+					className={`size-2 rounded-full shrink-0 ${
+						isActive ? "bg-emerald-500" : "bg-zinc-300"
+					}`}
+					title={isActive ? "Active" : "Inactive"}
+				/>
+			</div>
 			<div className="flex items-start gap-4">
 				<div className="w-64">
 					<TokenInput
-						disabled={!isEditing}
+						disabled={!isEditable}
 						value={value}
 						placeholder={placeholder}
 						onChange={(val) => onChange(val.toString())}
 						suffix={suffix}
-						showPreview={isEditing}
+						showPreview={isEditable}
 						previewSuffix={suffix}
 						min={0}
 						className={
-							!isEditing
+							!isEditable
 								? "bg-zinc-50 border-gray-200 text-zinc-700 disabled:opacity-90"
 								: "bg-white border-gray-200 focus-visible:ring-blue-500"
 						}
 					/>
 				</div>
-				{isEditing ? (
+				{isEditable ? (
 					<div className="flex items-center gap-2">
 						<Button
 							type="button"

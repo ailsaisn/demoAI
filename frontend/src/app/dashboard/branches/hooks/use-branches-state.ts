@@ -42,11 +42,7 @@ export function useBranchesState() {
 			);
 		}
 		return sortItems<BranchResponse>(result, (branch: BranchResponse, key: string) => {
-			const hasCustomLimit =
-				branch.has_custom_limit ??
-				(branch.token_limit !== undefined &&
-					branch.token_limit !== null &&
-					branch.token_limit > 0);
+			const hasCustomLimit = branch.has_custom_limit ?? false;
 			const effectiveLimit = hasCustomLimit
 				? (branch.token_limit ?? 0)
 				: isGlobalLimitActive

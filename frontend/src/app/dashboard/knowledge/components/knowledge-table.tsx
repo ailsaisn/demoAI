@@ -6,6 +6,7 @@ import {
 	useDeleteKnowledge,
 	useKnowledgeBaseList,
 } from "@/app/dashboard/knowledge/hooks/use-knowledge";
+import { stripMarkdown } from "@/lib/utils";
 import { Checkbox } from "@/components/ui/checkbox";
 import { ConfirmationModal } from "@/components/shared/confirmation-modal";
 import { DataTablePagination } from "@/components/shared/data-table-pagination";
@@ -40,6 +41,7 @@ import {
 	RiCloseLine,
 	RiDatabase2Line,
 	RiDeleteBinLine,
+	RiEdit2Line,
 	RiEyeLine,
 	RiFilterOffLine,
 	RiLoader4Line,
@@ -197,7 +199,7 @@ export function KnowledgeTable({
 					created_at: doc.created_at,
 					approved_at: doc.approved_at,
 					uploadedByName: doc.uploaded_by_name || "Admin",
-					description: doc.ai_summary || doc.content || "No description available.",
+					description: stripMarkdown(doc.ai_summary || doc.content) || "No description available.",
 					documentCount: 1,
 					rawItem: doc,
 					allFileNames: [doc.file_name],
@@ -257,7 +259,7 @@ export function KnowledgeTable({
 					created_at: mostRecentDate,
 					approved_at: mostRecentApprovedAt,
 					uploadedByName: uploader,
-					description: batchSummary || `Batch upload containing ${docs.length} documents.`,
+					description: stripMarkdown(batchSummary) || `Batch upload containing ${docs.length} documents.`,
 					documentCount: docs.length,
 					rawItem: docs[0],
 					allFileNames: allNames,
@@ -278,7 +280,7 @@ export function KnowledgeTable({
 				created_at: doc.created_at,
 				approved_at: doc.approved_at,
 				uploadedByName: doc.uploaded_by_name || "Admin",
-				description: doc.ai_summary || doc.content || "No description available.",
+				description: stripMarkdown(doc.ai_summary || doc.content) || "No description available.",
 				documentCount: 1,
 				rawItem: doc,
 				allFileNames: [doc.file_name],
@@ -306,7 +308,8 @@ export function KnowledgeTable({
 					item.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
 					item.allFileNames.some((f) => f.toLowerCase().includes(searchQuery.toLowerCase())) ||
 					item.description.toLowerCase().includes(searchQuery.toLowerCase()) ||
-					item.categories.some((c) => c.toLowerCase().includes(searchQuery.toLowerCase())),
+					item.categories.some((c) => c.toLowerCase().includes(searchQuery.toLowerCase())) ||
+					(item.uploadedByName && item.uploadedByName.toLowerCase().includes(searchQuery.toLowerCase())),
 			);
 
 		return sortItems<DisplayRowItem>(result);
@@ -837,10 +840,7 @@ export function KnowledgeTable({
 										</div>
 									</TableCell>
 									<TableCell className="max-w-xl">
-										<p
-											className="text-sm text-gray-600 truncate"
-											title={row.description || undefined}
-										>
+										<p className="text-sm text-gray-600 truncate">
 											{row.description}
 										</p>
 									</TableCell>
@@ -866,6 +866,19 @@ export function KnowledgeTable({
 													>
 														<RiEyeLine className="size-3.5 mr-2" />
 														<span>View Details</span>
+													</DropdownMenuItem>
+													<DropdownMenuItem
+														onClick={() => {
+															if (row.isBatch && row.batchId) {
+																router.push(`${basePath}/batch/${row.batchId}?edit=true`);
+															} else {
+																router.push(`${basePath}/${row.id}?edit=true`);
+															}
+														}}
+														className="text-xs text-gray-700 cursor-pointer"
+													>
+														<RiEdit2Line className="size-3.5 mr-2" />
+														<span>Edit Knowledge</span>
 													</DropdownMenuItem>
 													<DropdownMenuItem
 														onClick={() => {

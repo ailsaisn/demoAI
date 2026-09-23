@@ -80,6 +80,16 @@ export const useKnowledgeDetail = (id: string) => {
 			if (data?.status === "PROCESSING") {
 				return 1500;
 			}
+			// If newly PENDING but summary or accuracy is still settling from background task, continue polling
+			const meta = data?.metadata as Record<string, unknown> | undefined;
+			const hasAccuracy =
+				(data?.ai_confidence !== null && data?.ai_confidence !== undefined && Number(data.ai_confidence) > 0) ||
+				meta?.text_accuracy !== undefined ||
+				meta?.ai_confidence !== undefined ||
+				meta?.confidence_score !== undefined;
+			if (data?.status === "PENDING" && (!data?.ai_summary || !hasAccuracy)) {
+				return 1500;
+			}
 			return false;
 		},
 	});

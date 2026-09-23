@@ -13,6 +13,8 @@ class BranchCreate(BranchBase):
 class BranchUpdate(BaseModel):
     name: Optional[str] = None
     token_limit: Optional[int] = None
+    has_custom_limit: Optional[bool] = None
+    reset_to_global: Optional[bool] = False
 
 class BranchDoctorResponse(BaseModel):
     id: UUID

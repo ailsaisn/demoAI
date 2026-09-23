@@ -9,6 +9,7 @@ import {
 	RiSparklingLine,
 } from "@remixicon/react";
 import { cn } from "@/lib/utils";
+import { getFileIconAndColor } from "@/app/dashboard/ingest/utils/prompt-input-utils";
 
 interface ProcessingPipelineCardProps {
 	headerNode?: React.ReactNode;
@@ -44,7 +45,7 @@ const PIPELINE_STEPS: StepItem[] = [
 	},
 ];
 
-export function ProcessingPipelineCard({ headerNode }: ProcessingPipelineCardProps) {
+export function ProcessingPipelineCard({ headerNode, fileName }: ProcessingPipelineCardProps) {
 	const [elapsedSeconds, setElapsedSeconds] = useState(0);
 
 	useEffect(() => {
@@ -79,6 +80,13 @@ export function ProcessingPipelineCard({ headerNode }: ProcessingPipelineCardPro
 		return `${m.toString().padStart(2, "0")}:${s.toString().padStart(2, "0")}`;
 	};
 
+	const { Icon: FileIcon, bgColor: fileBgColor, textColor: fileTextColor } = getFileIconAndColor(
+		fileName,
+	);
+	const extName = fileName?.includes(".")
+		? fileName.split(".").pop()?.toUpperCase() || "DOC"
+		: "DOC";
+
 	return (
 		<div className="flex items-start gap-3 w-full min-w-0 max-w-full animate-in fade-in duration-300">
 			{/* AI Avatar */}
@@ -89,6 +97,23 @@ export function ProcessingPipelineCard({ headerNode }: ProcessingPipelineCardPro
 			{/* Main Processing Card */}
 			<div className="bg-blue-50/70 text-zinc-950 p-4 rounded-lg text-sm w-full min-w-0 max-w-full border border-blue-200/70 flex flex-col gap-3.5 shadow-none overflow-hidden">
 				{headerNode}
+
+				{/* File Metadata Header */}
+				{fileName && (
+					<div className="flex items-center gap-2.5 p-2.5 bg-white/95 rounded-lg border border-blue-200/80 shadow-none">
+						<div className={cn(fileBgColor, fileTextColor, "p-2 rounded-md shrink-0")}>
+							<FileIcon className="size-4" />
+						</div>
+						<div className="flex flex-col min-w-0 flex-1">
+							<span className="text-xs font-semibold text-zinc-900 truncate" title={fileName}>
+								{fileName}
+							</span>
+							<span className="text-[11px] text-zinc-500 font-medium">
+								{extName} Document • Extraction & Indexing in Progress
+							</span>
+						</div>
+					</div>
+				)}
 
 				{/* Top Status & Elapsed Timer */}
 				<div className="flex flex-wrap items-center justify-between gap-2 border-b border-blue-100 pb-3">
@@ -149,13 +174,13 @@ export function ProcessingPipelineCard({ headerNode }: ProcessingPipelineCardPro
 								{/* Step Status Icon */}
 								<div className="mt-0.5 shrink-0">
 									{isDone ? (
-										<div className="size-4 rounded-full bg-emerald-100 text-emerald-600 flex items-center justify-center">
+										<div className="size-4 rounded-md bg-emerald-100 text-emerald-600 flex items-center justify-center">
 											<RiCheckLine className="size-3 stroke-2" />
 										</div>
 									) : isCurrent ? (
 										<RiLoader4Line className="size-4 animate-spin text-blue-600" />
 									) : (
-										<div className="size-4 rounded-full border border-zinc-300 flex items-center justify-center text-[10px] text-zinc-400 font-mono">
+										<div className="size-4 rounded-md border border-zinc-300 flex items-center justify-center text-[10px] text-zinc-400 font-mono">
 											{idx + 1}
 										</div>
 									)}

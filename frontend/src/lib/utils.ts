@@ -47,3 +47,37 @@ export function getErrorMessage(error: any, defaultMessage = "An error occurred.
 
 	return formatErrorDetail(error.message || defaultMessage);
 }
+
+export function stripMarkdown(markdown?: string | null): string {
+	if (!markdown) return "";
+	return markdown
+		// Remove code blocks
+		.replace(/```[\s\S]*?```/g, "")
+		// Remove inline code
+		.replace(/`([^`]+)`/g, "$1")
+		// Remove images
+		.replace(/!\[([^\]]*)\]\([^)]*\)/g, "$1")
+		// Remove links, keep text
+		.replace(/\[([^\]]+)\]\([^)]*\)/g, "$1")
+		// Remove headers (# Header)
+		.replace(/^#{1,6}\s+/gm, "")
+		.replace(/#{1,6}\s+/g, "")
+		// Remove bold/italic (***text***, **text**, *text*, ___text___, __text__, _text_)
+		.replace(/[*_]{1,3}([^*_]+)[*_]{1,3}/g, "$1")
+		// Remove strikethrough (~~text~~)
+		.replace(/~~([^~]+)~~/g, "$1")
+		// Remove blockquotes (> quote)
+		.replace(/^>\s+/gm, "")
+		// Remove list bullets (- item, * item, + item, 1. item)
+		.replace(/^(\s*[-*+]\s+|\s*\d+\.\s+)/gm, "")
+		// Remove table delimiters and pipes (| col1 | col2 | or |---|---|)
+		.replace(/\|[-:\s|]+\|/g, " ")
+		.replace(/\|/g, " ")
+		// Remove horizontal rules (---, ***, ___)
+		.replace(/^[-*_]{3,}\s*$/gm, "")
+		// Replace multiple newlines or tabs with a single space
+		.replace(/[\r\n\t]+/g, " ")
+		// Replace multiple spaces with a single space
+		.replace(/\s{2,}/g, " ")
+		.trim();
+}

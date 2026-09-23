@@ -1,6 +1,6 @@
 import uuid
 from typing import Optional
-from sqlalchemy import String, Numeric, Integer, ForeignKey, CheckConstraint, UniqueConstraint, Index
+from sqlalchemy import String, Numeric, Integer, Boolean, ForeignKey, CheckConstraint, UniqueConstraint, Index
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.dialects.postgresql import UUID
 from .base import Base, TimestampMixin, SoftDeleteMixin
@@ -14,6 +14,7 @@ class Branch(Base, TimestampMixin, SoftDeleteMixin):
     code: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     ecosystem: Mapped[str] = mapped_column(String, default="Erha", server_default="Erha", nullable=False)
     token_limit: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    has_custom_limit: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false", nullable=False)
 
     __table_args__ = (
         UniqueConstraint("ecosystem", "external_id", name="uq_branch_ecosystem_external_id"),

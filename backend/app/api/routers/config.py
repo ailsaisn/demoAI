@@ -149,6 +149,20 @@ async def update_config(
     else:
         config.value = config_in.value
 
+    # Handle updating global branch limit: reset all branch custom overrides and synchronize limit
+    if key == "GLOBAL_TOKEN_LIMIT":
+        try:
+            val_int = int(config_in.value)
+            from app.models.branch import Branch
+            from sqlalchemy import update
+            b_stmt = update(Branch).where(Branch.deleted_at.is_(None)).values(
+                has_custom_limit=False,
+                token_limit=val_int
+            )
+            await db.execute(b_stmt)
+        except (ValueError, TypeError):
+            pass
+
     # Handle master switch cascade
     if key == "GLOBAL_TOKEN_LIMIT_ACTIVE":
         if config_in.value.lower() == "true":

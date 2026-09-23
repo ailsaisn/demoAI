@@ -9,6 +9,7 @@ import { AttachProjectDialog } from "@/app/dashboard/knowledge/components/attach
 import { ProjectDialog } from "@/app/dashboard/knowledge/components/project-dialog";
 import { useDeleteKnowledge } from "@/app/dashboard/knowledge/hooks/use-knowledge";
 import { useDeleteProject, useProjectDetail } from "@/app/dashboard/knowledge/hooks/use-projects";
+import { stripMarkdown } from "@/lib/utils";
 import { ConfirmationModal } from "@/components/shared/confirmation-modal";
 import { DataTablePagination } from "@/components/shared/data-table-pagination";
 import { SearchBar } from "@/components/shared/search-bar";
@@ -193,7 +194,7 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
 					title: doc.title || doc.file_name,
 					status: doc.status,
 					created_at: doc.created_at,
-					description: doc.ai_summary || doc.content || "No description available.",
+					description: stripMarkdown(doc.ai_summary || doc.content) || "No description available.",
 					documentCount: 1,
 					rawItem: doc,
 					allFileNames: [doc.file_name],
@@ -237,7 +238,7 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
 					title: displayTitle,
 					status: aggStatus,
 					created_at: mostRecentDate,
-					description: batchSummary || `Batch upload containing ${docs.length} documents.`,
+					description: stripMarkdown(batchSummary) || `Batch upload containing ${docs.length} documents.`,
 					documentCount: docs.length,
 					rawItem: docs[0],
 					allFileNames: allNames,
@@ -255,7 +256,7 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
 				title: doc.title || doc.file_name,
 				status: doc.status,
 				created_at: doc.created_at,
-				description: doc.ai_summary || doc.content || "No description available.",
+				description: stripMarkdown(doc.ai_summary || doc.content) || "No description available.",
 				documentCount: 1,
 				rawItem: doc,
 				allFileNames: [doc.file_name],
@@ -754,10 +755,7 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
 											</TableCell>
 
 											<TableCell className="max-w-xl">
-												<p
-													className="text-sm text-gray-600 truncate"
-													title={row.description || undefined}
-												>
+												<p className="text-sm text-gray-600 truncate">
 													{row.description}
 												</p>
 											</TableCell>
