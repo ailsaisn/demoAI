@@ -4,7 +4,9 @@ export interface BranchBase {
 }
 
 export interface BranchUpdate {
-	token_limit: number;
+	token_limit?: number;
+	has_custom_limit?: boolean;
+	reset_to_global?: boolean;
 }
 
 export interface BranchDoctorResponse {

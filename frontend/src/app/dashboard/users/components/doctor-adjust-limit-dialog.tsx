@@ -50,9 +50,19 @@ export function DoctorAdjustLimitDialog({
 	// Determine branch token limit bounds
 	const branches = doctor?.branches || [];
 	const rawMaxBranchLimit =
-		branches.length > 0 ? Math.max(...branches.map((b) => b.token_limit ?? 0)) : 0;
+		branches.length > 0
+			? Math.max(
+					...branches.map((b) =>
+						b.has_custom_limit
+							? b.token_limit ?? 0
+							: isBranchGlobalActive
+							? Number(globalBranchLimit)
+							: b.token_limit ?? 0,
+					),
+				)
+			: 0;
 
-	const maxBranchLimit = isBranchGlobalActive ? Number(globalBranchLimit) : rawMaxBranchLimit;
+	const maxBranchLimit = rawMaxBranchLimit;
 
 	const hasCustomLimit =
 		doctor?.token_limit !== null && doctor?.token_limit !== undefined && doctor.token_limit > 0;
@@ -124,7 +134,9 @@ export function DoctorAdjustLimitDialog({
 							branches.map((b) => (
 								<span key={b.id} className="text-gray-600 text-xs">
 									• {b.name}:{" "}
-									{isBranchGlobalActive
+									{b.has_custom_limit
+										? `${(b.token_limit ?? 0).toLocaleString()} tokens (Custom Override)`
+										: isBranchGlobalActive
 										? `${Number(globalBranchLimit).toLocaleString()} tokens (Global Pool)`
 										: b.token_limit
 											? `${b.token_limit.toLocaleString()} tokens`

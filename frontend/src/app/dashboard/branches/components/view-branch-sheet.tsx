@@ -26,11 +26,7 @@ export function ViewBranchSheet({ branch }: ViewBranchSheetProps) {
 	const globalBranchLimit =
 		configs?.find((c) => c.key === "GLOBAL_TOKEN_LIMIT")?.value || "3000000";
 
-	const hasCustomLimit =
-		branch.has_custom_limit ??
-		(branch.token_limit !== undefined &&
-			branch.token_limit !== null &&
-			branch.token_limit > 0);
+	const hasCustomLimit = branch.has_custom_limit ?? false;
 
 	const effectiveBranchLimit = hasCustomLimit
 		? (branch.token_limit ?? 0)
@@ -111,9 +107,15 @@ export function ViewBranchSheet({ branch }: ViewBranchSheetProps) {
 										</span>
 										{hasCustomLimit ? (
 											<div className="pt-0.5">
-												<span className="inline-flex items-center text-[11px] bg-amber-50 text-amber-700 px-2 py-0.5 rounded-md font-medium border border-amber-200">
-													Custom Override
-												</span>
+												{effectiveBranchLimit === 0 ? (
+													<span className="inline-flex items-center text-[11px] bg-red-50 text-red-700 px-2 py-0.5 rounded-md font-medium border border-red-200">
+														Custom Override (Blocked: 0)
+													</span>
+												) : (
+													<span className="inline-flex items-center text-[11px] bg-amber-50 text-amber-700 px-2 py-0.5 rounded-md font-medium border border-amber-200">
+														Custom Override
+													</span>
+												)}
 											</div>
 										) : isGlobalLimitActive ? (
 											<div className="pt-0.5">

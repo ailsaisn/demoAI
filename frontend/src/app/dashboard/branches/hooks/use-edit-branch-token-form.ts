@@ -51,8 +51,26 @@ export function useEditBranchTokenForm({ branch, isOpen, onSuccess }: UseEditBra
 		}
 	}, [isOpen, branch.token_limit, branch.tokensMonth, form]);
 
+	const handleResetToGlobal = () => {
+		updateBranch.mutate(
+			{
+				id: branch.id,
+				data: {
+					reset_to_global: true,
+				},
+			},
+			{
+				onSuccess: () => {
+					onSuccess?.();
+					form.reset();
+				},
+			},
+		);
+	};
+
 	return {
 		form,
 		isPending: updateBranch.isPending,
+		handleResetToGlobal,
 	};
 }

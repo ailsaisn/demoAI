@@ -15,11 +15,7 @@ export function BranchesTableRow({
 	isGlobalLimitActive,
 	globalBranchLimit,
 }: BranchesTableRowProps) {
-	const hasCustomLimit =
-		branch.has_custom_limit ??
-		(branch.token_limit !== undefined &&
-			branch.token_limit !== null &&
-			branch.token_limit > 0);
+	const hasCustomLimit = branch.has_custom_limit ?? false;
 	const limit = hasCustomLimit
 		? (branch.token_limit ?? 0)
 		: isGlobalLimitActive

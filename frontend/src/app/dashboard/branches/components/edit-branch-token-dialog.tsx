@@ -21,11 +21,13 @@ interface EditBranchTokenDialogProps {
 
 export function EditBranchTokenDialog({ branch }: EditBranchTokenDialogProps) {
 	const [open, setOpen] = React.useState(false);
-	const { form, isPending } = useEditBranchTokenForm({
+	const { form, isPending, handleResetToGlobal } = useEditBranchTokenForm({
 		branch,
 		isOpen: open,
 		onSuccess: () => setOpen(false),
 	});
+
+	const hasCustomLimit = branch.has_custom_limit ?? false;
 
 	return (
 		<Dialog open={open} onOpenChange={setOpen}>
@@ -56,9 +58,16 @@ export function EditBranchTokenDialog({ branch }: EditBranchTokenDialogProps) {
 								const isInvalid = field.state.meta.errors && field.state.meta.errors.length > 0;
 								return (
 									<Field data-invalid={isInvalid}>
-										<FieldLabel htmlFor="token_limit" className="text-xs font-medium text-zinc-700">
-											Token Limit
-										</FieldLabel>
+										<div className="flex items-center justify-between">
+											<FieldLabel htmlFor="token_limit" className="text-xs font-medium text-zinc-700">
+												Custom Token Limit
+											</FieldLabel>
+											{hasCustomLimit && (
+												<span className="inline-flex items-center text-[11px] bg-amber-50 text-amber-700 px-2 py-0.5 rounded-md font-medium border border-amber-200">
+													Custom Override Active
+												</span>
+											)}
+										</div>
 										<TokenInput
 											name={field.name}
 											id="token_limit"
@@ -78,31 +87,60 @@ export function EditBranchTokenDialog({ branch }: EditBranchTokenDialogProps) {
 								);
 							}}
 						</form.Field>
+
+						<div className="text-xs text-zinc-500 bg-zinc-50 p-3 rounded-lg border border-gray-100 flex flex-col gap-1">
+							<span>
+								• Setting an amount (e.g. <strong>2,000,000</strong> or <strong>0</strong>) applies a strict custom limit for this branch.
+							</span>
+							<span>
+								• Setting <strong>0</strong> will explicitly disable/block AI token usage in this branch.
+							</span>
+							{hasCustomLimit && (
+								<span>
+									• To reconnect to the shared global quota, click <strong>Reset to Global Pool</strong> below.
+								</span>
+							)}
+						</div>
 					</div>
 
-					<div className="p-4 border-t border-gray-200 flex justify-end gap-2 bg-zinc-50/50">
-						<Button
-							type="button"
-							variant="outline"
-							className="border-gray-200 bg-white text-zinc-700 hover:bg-zinc-50 rounded-lg px-4 h-10 font-medium text-sm transition-colors cursor-pointer shadow-none"
-							onClick={() => setOpen(false)}
-						>
-							Cancel
-						</Button>
-						<form.Subscribe selector={(state) => [state.canSubmit, state.isSubmitting]}>
-							{([canSubmit, isSubmitting]) => (
+					<div className="p-4 border-t border-gray-200 flex items-center justify-between gap-2 bg-zinc-50/50">
+						<div>
+							{hasCustomLimit && (
 								<Button
-									type="submit"
-									disabled={!canSubmit || isPending || isSubmitting}
-									className="bg-blue-600 text-white hover:bg-blue-700 rounded-lg px-4 h-10 font-medium text-sm transition-colors cursor-pointer shadow-none disabled:opacity-50"
+									type="button"
+									variant="secondary"
+									className="rounded-lg px-3 h-10 font-medium text-xs cursor-pointer shadow-none"
+									onClick={handleResetToGlobal}
+									disabled={isPending}
 								>
-									{isPending || isSubmitting ? (
-										<RiLoader4Line className="mr-2 h-4 w-4 animate-spin shrink-0" />
-									) : null}
-									{isPending || isSubmitting ? "Saving..." : "Save Changes"}
+									Reset to Global Pool
 								</Button>
 							)}
-						</form.Subscribe>
+						</div>
+						<div className="flex items-center gap-2">
+							<Button
+								type="button"
+								variant="outline"
+								className="border-gray-200 bg-white text-zinc-700 hover:bg-zinc-50 rounded-lg px-4 h-10 font-medium text-sm transition-colors cursor-pointer shadow-none"
+								onClick={() => setOpen(false)}
+							>
+								Cancel
+							</Button>
+							<form.Subscribe selector={(state) => [state.canSubmit, state.isSubmitting]}>
+								{([canSubmit, isSubmitting]) => (
+									<Button
+										type="submit"
+										disabled={!canSubmit || isPending || isSubmitting}
+										className="bg-blue-600 text-white hover:bg-blue-700 rounded-lg px-4 h-10 font-medium text-sm transition-colors cursor-pointer shadow-none disabled:opacity-50"
+									>
+										{isPending || isSubmitting ? (
+											<RiLoader4Line className="mr-2 h-4 w-4 animate-spin shrink-0" />
+										) : null}
+										{isPending || isSubmitting ? "Saving..." : "Save Changes"}
+									</Button>
+								)}
+							</form.Subscribe>
+						</div>
 					</div>
 				</form>
 			</DialogContent>
