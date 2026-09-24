@@ -644,12 +644,15 @@ async def run_performance_check(
     err_str = None
     details = {}
     try:
-        from app.services.storage import get_s3_client
-        from app.core.config import settings as app_settings
-        s3 = get_s3_client()
-        bucket = app_settings.MINIO_BUCKET or "skin-clinic-chatbot-dev"
-        await asyncio.to_thread(s3.head_bucket, Bucket=bucket)
-        details = {"bucket": bucket}
+        from app.services.storage import _get_client, _images_bucket
+        s3 = _get_client()
+        bucket = _images_bucket()
+        if s3:
+            await asyncio.to_thread(s3.head_bucket, Bucket=bucket)
+            details = {"bucket": bucket}
+        else:
+            status_st = "warning"
+            err_str = "S3 client is in local fallback mode"
     except Exception as e:
         status_st = "warning"
         err_str = str(e)
