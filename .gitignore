@@ -42,4 +42,7 @@ backend/test_dummy_parse.py
 *DUMMY*
 *dummy*
 DUMMY_TEST_*
+logs/
+*.log
+
 
