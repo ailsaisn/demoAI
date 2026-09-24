@@ -18,197 +18,77 @@ depends_on: Union[str, Sequence[str], None] = None
 
 def upgrade() -> None:
     # -------------------------------------------------------------
-    # 1. Chat Subsystem Indexes
+    # 1. Chat Subsystem Indexes (Idempotent)
     # -------------------------------------------------------------
-    op.create_index(
-        'ix_chat_messages_session_created',
-        'chat_messages',
-        ['session_id', 'created_at'],
-        unique=False
-    )
-    op.create_index(
-        'ix_chat_session_user_status',
-        'chat_session',
-        ['user_id', 'status'],
-        unique=False
-    )
-    op.create_index(
-        'ix_chat_session_branch_id',
-        'chat_session',
-        ['branch_id'],
-        unique=False
-    )
-    op.create_index(
-        'ix_chat_session_feedback_issue',
-        'chat_session',
-        ['has_data_issue', 'session_type'],
-        unique=False
-    )
-    op.create_index(
-        'ix_chat_session_updated_at',
-        'chat_session',
-        ['updated_at'],
-        unique=False
-    )
+    op.execute(sa.text("CREATE INDEX IF NOT EXISTS ix_chat_messages_session_created ON chat_messages (session_id, created_at);"))
+    op.execute(sa.text("CREATE INDEX IF NOT EXISTS ix_chat_session_user_status ON chat_session (user_id, status);"))
+    op.execute(sa.text("CREATE INDEX IF NOT EXISTS ix_chat_session_branch_id ON chat_session (branch_id);"))
+    op.execute(sa.text("CREATE INDEX IF NOT EXISTS ix_chat_session_feedback_issue ON chat_session (has_data_issue, session_type);"))
+    op.execute(sa.text("CREATE INDEX IF NOT EXISTS ix_chat_session_updated_at ON chat_session (updated_at);"))
 
     # -------------------------------------------------------------
-    # 2. User & Branch Subsystem Indexes
+    # 2. User & Branch Subsystem Indexes (Idempotent)
     # -------------------------------------------------------------
-    op.create_index(
-        'ix_user_branch_branch_status',
-        'user_branch',
-        ['branch_id', 'status'],
-        unique=False
-    )
-    op.create_index(
-        'ix_user_branch_user_status',
-        'user_branch',
-        ['user_id', 'status'],
-        unique=False
-    )
-    op.create_index(
-        'ix_branches_code',
-        'branches',
-        ['code'],
-        unique=False
-    )
-    op.create_index(
-        'ix_branches_ecosystem',
-        'branches',
-        ['ecosystem'],
-        unique=False
-    )
-    op.create_index(
-        'ix_users_type_deleted',
-        'users',
-        ['type', 'deleted_at'],
-        unique=False
-    )
-    op.create_index(
-        'ix_users_dr_type',
-        'users',
-        ['dr_type'],
-        unique=False
-    )
-    op.create_index(
-        'ix_users_ecosystem',
-        'users',
-        ['ecosystem'],
-        unique=False
-    )
-    op.create_index(
-        'ix_user_token_usage_user_ym',
-        'user_token_usage',
-        ['user_id', 'year_month'],
-        unique=False
-    )
-    op.create_index(
-        'ix_user_token_usage_branch_ym',
-        'user_token_usage',
-        ['branch_id', 'year_month'],
-        unique=False
-    )
+    op.execute(sa.text("CREATE INDEX IF NOT EXISTS ix_user_branch_branch_status ON user_branch (branch_id, status);"))
+    op.execute(sa.text("CREATE INDEX IF NOT EXISTS ix_user_branch_user_status ON user_branch (user_id, status);"))
+    op.execute(sa.text("CREATE INDEX IF NOT EXISTS ix_branches_code ON branches (code);"))
+    op.execute(sa.text("CREATE INDEX IF NOT EXISTS ix_branches_ecosystem ON branches (ecosystem);"))
+    op.execute(sa.text("CREATE INDEX IF NOT EXISTS ix_users_type_deleted ON users (type, deleted_at);"))
+    op.execute(sa.text("CREATE INDEX IF NOT EXISTS ix_users_dr_type ON users (dr_type);"))
+    op.execute(sa.text("CREATE INDEX IF NOT EXISTS ix_users_ecosystem ON users (ecosystem);"))
+    op.execute(sa.text("CREATE INDEX IF NOT EXISTS ix_user_token_usage_user_ym ON user_token_usage (user_id, year_month);"))
+    op.execute(sa.text("CREATE INDEX IF NOT EXISTS ix_user_token_usage_branch_ym ON user_token_usage (branch_id, year_month);"))
 
     # -------------------------------------------------------------
-    # 3. RBAC & Exclusion Junction Table Foreign Key Indexes
+    # 3. RBAC & Exclusion Junction Table Foreign Key Indexes (Idempotent)
     # -------------------------------------------------------------
-    op.create_index(
-        'ix_role_access_access_id',
-        'role_access',
-        ['access_id'],
-        unique=False
-    )
-    op.create_index(
-        'ix_user_access_access_id',
-        'user_access',
-        ['access_id'],
-        unique=False
-    )
-    op.create_index(
-        'ix_user_role_role_id',
-        'user_role',
-        ['role_id'],
-        unique=False
-    )
-    op.create_index(
-        'ix_user_category_exclusion_cat_id',
-        'user_category_exclusion',
-        ['category_id'],
-        unique=False
-    )
+    op.execute(sa.text("CREATE INDEX IF NOT EXISTS ix_role_access_access_id ON role_access (access_id);"))
+    op.execute(sa.text("CREATE INDEX IF NOT EXISTS ix_user_access_access_id ON user_access (access_id);"))
+    op.execute(sa.text("CREATE INDEX IF NOT EXISTS ix_user_role_role_id ON user_role (role_id);"))
+    op.execute(sa.text("CREATE INDEX IF NOT EXISTS ix_user_category_exclusion_cat_id ON user_category_exclusion (category_id);"))
 
     # -------------------------------------------------------------
-    # 4. Knowledge & Project Subsystem Indexes
+    # 4. Knowledge & Project Subsystem Indexes (Idempotent)
     # -------------------------------------------------------------
-    op.create_index(
-        'ix_knowledge_status_deleted',
-        'knowledge',
-        ['status', 'deleted_at'],
-        unique=False
-    )
-    op.create_index(
-        'ix_knowledge_uploaded_by',
-        'knowledge',
-        ['uploaded_by'],
-        unique=False
-    )
-    op.create_index(
-        'ix_knowledge_approved_by',
-        'knowledge',
-        ['approved_by'],
-        unique=False
-    )
-    op.create_index(
-        'ix_knowledge_category_cat_id',
-        'knowledge_category',
-        ['category_id'],
-        unique=False
-    )
-    op.create_index(
-        'ix_pending_operations_user_status',
-        'pending_operations',
-        ['user_id', 'status'],
-        unique=False
-    )
-    op.create_index(
-        'ix_projects_created_by',
-        'projects',
-        ['created_by'],
-        unique=False
-    )
+    op.execute(sa.text("CREATE INDEX IF NOT EXISTS ix_knowledge_status_deleted ON knowledge (status, deleted_at);"))
+    op.execute(sa.text("CREATE INDEX IF NOT EXISTS ix_knowledge_uploaded_by ON knowledge (uploaded_by);"))
+    op.execute(sa.text("CREATE INDEX IF NOT EXISTS ix_knowledge_approved_by ON knowledge (approved_by);"))
+    op.execute(sa.text("CREATE INDEX IF NOT EXISTS ix_knowledge_category_cat_id ON knowledge_category (category_id);"))
+    op.execute(sa.text("CREATE INDEX IF NOT EXISTS ix_pending_operations_user_status ON pending_operations (user_id, status);"))
+    op.execute(sa.text("CREATE INDEX IF NOT EXISTS ix_projects_created_by ON projects (created_by);"))
 
 
 def downgrade() -> None:
-    # 4. Knowledge & Project
-    op.drop_index('ix_projects_created_by', table_name='projects')
-    op.drop_index('ix_pending_operations_user_status', table_name='pending_operations')
-    op.drop_index('ix_knowledge_category_cat_id', table_name='knowledge_category')
-    op.drop_index('ix_knowledge_approved_by', table_name='knowledge')
-    op.drop_index('ix_knowledge_uploaded_by', table_name='knowledge')
-    op.drop_index('ix_knowledge_status_deleted', table_name='knowledge')
+    # 4. Knowledge & Project (Idempotent)
+    op.execute(sa.text("DROP INDEX IF EXISTS ix_projects_created_by;"))
+    op.execute(sa.text("DROP INDEX IF EXISTS ix_pending_operations_user_status;"))
+    op.execute(sa.text("DROP INDEX IF EXISTS ix_knowledge_category_cat_id;"))
+    op.execute(sa.text("DROP INDEX IF EXISTS ix_knowledge_approved_by;"))
+    op.execute(sa.text("DROP INDEX IF EXISTS ix_knowledge_uploaded_by;"))
+    op.execute(sa.text("DROP INDEX IF EXISTS ix_knowledge_status_deleted;"))
 
-    # 3. RBAC & Exclusion Junctions
-    op.drop_index('ix_user_category_exclusion_cat_id', table_name='user_category_exclusion')
-    op.drop_index('ix_user_role_role_id', table_name='user_role')
-    op.drop_index('ix_user_access_access_id', table_name='user_access')
-    op.drop_index('ix_role_access_access_id', table_name='role_access')
+    # 3. RBAC & Exclusion Junctions (Idempotent)
+    op.execute(sa.text("DROP INDEX IF EXISTS ix_user_category_exclusion_cat_id;"))
+    op.execute(sa.text("DROP INDEX IF EXISTS ix_user_role_role_id;"))
+    op.execute(sa.text("DROP INDEX IF EXISTS ix_user_access_access_id;"))
+    op.execute(sa.text("DROP INDEX IF EXISTS ix_role_access_access_id;"))
 
-    # 2. User & Branch
-    op.drop_index('ix_user_token_usage_branch_ym', table_name='user_token_usage')
-    op.drop_index('ix_user_token_usage_user_ym', table_name='user_token_usage')
-    op.drop_index('ix_users_ecosystem', table_name='users')
-    op.drop_index('ix_users_dr_type', table_name='users')
-    op.drop_index('ix_users_type_deleted', table_name='users')
-    op.drop_index('ix_branches_ecosystem', table_name='branches')
-    op.drop_index('ix_branches_code', table_name='branches')
-    op.drop_index('ix_user_branch_user_status', table_name='user_branch')
-    op.drop_index('ix_user_branch_branch_status', table_name='user_branch')
+    # 2. User & Branch (Idempotent)
+    op.execute(sa.text("DROP INDEX IF EXISTS ix_user_token_usage_branch_ym;"))
+    op.execute(sa.text("DROP INDEX IF EXISTS ix_user_token_usage_user_ym;"))
+    op.execute(sa.text("DROP INDEX IF EXISTS ix_users_ecosystem;"))
+    op.execute(sa.text("DROP INDEX IF EXISTS ix_users_dr_type;"))
+    op.execute(sa.text("DROP INDEX IF EXISTS ix_users_type_deleted;"))
+    op.execute(sa.text("DROP INDEX IF EXISTS ix_branches_ecosystem;"))
+    op.execute(sa.text("DROP INDEX IF EXISTS ix_branches_code;"))
+    op.execute(sa.text("DROP INDEX IF EXISTS ix_user_branch_user_status;"))
+    op.execute(sa.text("DROP INDEX IF EXISTS ix_user_branch_branch_status;"))
 
-    # 1. Chat
-    op.drop_index('ix_chat_session_updated_at', table_name='chat_session')
-    op.drop_index('ix_chat_session_feedback_issue', table_name='chat_session')
-    op.drop_index('ix_chat_session_branch_id', table_name='chat_session')
-    op.drop_index('ix_chat_session_user_status', table_name='chat_session')
-    op.drop_index('ix_chat_messages_session_created', table_name='chat_messages')
+    # 1. Chat (Idempotent)
+    op.execute(sa.text("DROP INDEX IF EXISTS ix_chat_session_updated_at;"))
+    op.execute(sa.text("DROP INDEX IF EXISTS ix_chat_session_feedback_issue;"))
+    op.execute(sa.text("DROP INDEX IF EXISTS ix_chat_session_branch_id;"))
+    op.execute(sa.text("DROP INDEX IF EXISTS ix_chat_session_user_status;"))
+    op.execute(sa.text("DROP INDEX IF EXISTS ix_chat_messages_session_created;"))
 
 

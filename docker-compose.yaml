@@ -42,8 +42,8 @@ services:
       target: development
     container_name: skin_clinic_backend
     restart: always
-    cpus: 1.5
-    mem_limit: 3000m
+    cpus: 2.0
+    mem_limit: 6144m
     ports:
       - "8000:8000"
     command: ["/app/start.sh", "prod"]
@@ -56,7 +56,8 @@ services:
       - POSTGRES_HOST=db
       - POSTGRES_PORT=5432
       - ENV=prod
-      - WORKERS=2
+      - WORKERS=1
+      - RATE_LIMIT_PER_MINUTE=1000
     depends_on:
       db:
         condition: service_healthy
