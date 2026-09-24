@@ -1475,13 +1475,14 @@ class GenerationPipeline:
         is_complex = force_agent or QueryIntentDetector.should_use_agent(query, intent)
         agent_used = False
 
-        if is_complex and self.medical_agent:
+        if is_complex and self.medical_agent and settings.rag_agent_enabled:
             effective_context, results = await asyncio.to_thread(
                 self.medical_agent.run_tool_orchestration,
                 question=query,
                 history=history
             )
             agent_used = True
+
         else:
             search_query = self.contextualize_retrieval_query(query, history)
             retrieval_response = await asyncio.to_thread(

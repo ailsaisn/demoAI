@@ -450,6 +450,7 @@ export const useDeleteKnowledge = () => {
 				toast.success("Knowledge deleted successfully!");
 			}
 			const id = typeof variables === "string" ? variables : variables.id;
+			queryClient.removeQueries({ queryKey: knowledgeKeys.detail(id) });
 			invalidateAllKnowledgeQueries(queryClient, { knowledgeId: id });
 		},
 		onError: (error: unknown) => {

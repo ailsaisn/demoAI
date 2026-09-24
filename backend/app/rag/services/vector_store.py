@@ -4,7 +4,8 @@ from typing import List, Dict, Any
 from functools import lru_cache
 from loguru import logger
 
-from sqlalchemy import create_engine, Column, String, Text, Integer, JSON, text
+from sqlalchemy import create_engine, Column, String, Text, Integer, text
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import declarative_base, sessionmaker
 # pyrefly: ignore [missing-import]
 from pgvector.sqlalchemy import Vector
@@ -21,8 +22,9 @@ class DocumentChunk(Base):
     id = Column(String, primary_key=True)
     text = Column(Text, nullable=False)
     source_file = Column(String, nullable=False, index=True)
-    metadata_ = Column("metadata", JSON, nullable=False)
+    metadata_ = Column("metadata", JSONB, nullable=False)
     embedding = Column(Vector(768), nullable=False)
+
 
 
 class PGVectorAdapter(BaseVectorStoreAdapter):
@@ -173,21 +175,25 @@ class PGVectorAdapter(BaseVectorStoreAdapter):
                 q = session.query(DocumentChunk, dist_col)
                 
                 if filter_metadata:
-                    from sqlalchemy import cast, String, not_, or_
+                    from sqlalchemy import not_, or_, func
                     for k, v in filter_metadata.items():
                         if k == "excluded_categories" and isinstance(v, list):
                             for item in v:
                                 if item:
-                                    q = q.filter(not_(cast(DocumentChunk.metadata_["categories"], String).ilike(f"%{item}%")))
+                                    # Native JSONB array containment exclusion (coalesce handles missing/null categories key safely)
+                                    q = q.filter(not_(func.coalesce(DocumentChunk.metadata_["categories"].astext, "").ilike(f"%{item}%")))
                         elif isinstance(v, list):
-                            or_clauses = [cast(DocumentChunk.metadata_[k], String).ilike(f"%{item}%") for item in v if item]
-                            if "all" in v:
-                                or_clauses.append(cast(DocumentChunk.metadata_[k], String).ilike("%all%"))
+                            or_clauses = []
+                            for item in v:
+                                if item:
+                                    or_clauses.append(DocumentChunk.metadata_[k].astext.ilike(f"%{item}%"))
+                            if any(str(x).lower() == "all" for x in v):
+                                or_clauses.append(DocumentChunk.metadata_[k].astext.ilike("%all%"))
                                 or_clauses.append(DocumentChunk.metadata_[k].is_(None))
                             if or_clauses:
                                 q = q.filter(or_(*or_clauses))
                         elif v:
-                            q = q.filter(cast(DocumentChunk.metadata_[k], String).ilike(f"%{v}%"))
+                            q = q.filter(DocumentChunk.metadata_[k].astext.ilike(f"%{v}%"))
                         
                 results = q.order_by(dist_col).limit(top_k).all()
                 
