@@ -12,8 +12,10 @@ import os
 import asyncio
 import mimetypes
 import re
+import shutil
 
 from app.core.database import get_db
+from app.core.config import settings
 from app.api.dependencies import get_current_user, RequireAccess
 from app.models.user import User, UserType
 from app.models.knowledge import Knowledge, KnowledgeStatus, KnowledgeType
@@ -1659,6 +1661,7 @@ async def upload_knowledge_file(
     llm: BaseLLMAdapter = Depends(get_llm)
 ):
     upload_list = file if isinstance(file, list) else [file]
+    max_bytes = settings.MAX_UPLOAD_SIZE_MB * 1024 * 1024
     for target_file in upload_list:
         raw_ctype = (target_file.content_type or "").lower().strip()
         if raw_ctype not in ALLOWED_MIME_TYPES:
@@ -1668,6 +1671,21 @@ async def upload_knowledge_file(
                     status_code=400,
                     detail=f"File type '{target_file.content_type}' not allowed for file '{target_file.filename}'. Allowed types: PDF, Word, Excel, PowerPoint, Text, CSV, and Images."
                 )
+
+        # Validate file size against MAX_UPLOAD_SIZE_MB
+        f_size = getattr(target_file, "size", None)
+        if f_size is None and hasattr(target_file, "file"):
+            try:
+                target_file.file.seek(0, os.SEEK_END)
+                f_size = target_file.file.tell()
+                target_file.file.seek(0)
+            except Exception:
+                f_size = None
+        if f_size and f_size > max_bytes:
+            raise HTTPException(
+                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                detail=f"Ukuran file '{target_file.filename}' ({f_size / (1024*1024):.1f} MB) melebihi batas maksimal {settings.MAX_UPLOAD_SIZE_MB} MB."
+            )
         
     # Check monthly ingestion quota (soft warning / notice model for Staff/Admin)
     allowed, quota_info = await check_ingestion_quota(db)
@@ -1747,6 +1765,215 @@ async def upload_knowledge_file(
                     logger.warning(f"Error updating knowledge record after upload: {up_err}")
 
     return ingest_res
+
+
+@router.post("/upload/chunk", status_code=status.HTTP_200_OK)
+async def upload_knowledge_chunk(
+    upload_id: str = Form(...),
+    chunk_index: int = Form(...),
+    total_chunks: int = Form(...),
+    filename: str = Form(...),
+    chunk: UploadFile = File(...),
+    current_user: User = Depends(RequireAccess("knowledge:write")),
+):
+    """
+    Receives a single chunk slice (typically <= 4 MB) for an upload session.
+    Enables uploading large files through strict corporate WAF/Ingress layers with 5 MB body limits.
+    """
+    clean_upload_id = re.sub(r'[^a-zA-Z0-9_\-]', '', upload_id)
+    clean_filename = os.path.basename(filename)
+    if not clean_upload_id:
+        raise HTTPException(status_code=400, detail="Invalid upload_id.")
+    if chunk_index < 0 or chunk_index >= total_chunks:
+        raise HTTPException(status_code=400, detail=f"Invalid chunk_index {chunk_index} for total_chunks {total_chunks}.")
+
+    # Validate file type using filename and chunk
+    raw_ctype = (chunk.content_type or "").lower().strip()
+    if raw_ctype not in ALLOWED_MIME_TYPES:
+        guessed_type, _ = mimetypes.guess_type(clean_filename)
+        if not guessed_type or guessed_type.lower().strip() not in ALLOWED_MIME_TYPES:
+            raise HTTPException(
+                status_code=400,
+                detail=f"File type '{clean_filename}' not allowed. Allowed types: PDF, Word, Excel, PowerPoint, Text, CSV, and Images."
+            )
+
+    chunk_dir = os.path.join("data", "temp", "chunks", clean_upload_id)
+    os.makedirs(chunk_dir, exist_ok=True)
+    chunk_path = os.path.join(chunk_dir, f"{chunk_index}.part")
+
+    with open(chunk_path, "wb") as f_out:
+        while content := await chunk.read(1024 * 1024):
+            f_out.write(content)
+
+    part_size = os.path.getsize(chunk_path)
+    logger.info(
+        f"🧩 [CHUNKED UPLOAD] Received chunk {chunk_index + 1}/{total_chunks} "
+        f"({part_size / (1024*1024):.2f} MB) for '{clean_filename}' (ID: {clean_upload_id[:8]}...)"
+    )
+
+    return {
+        "status": "chunk_received",
+        "upload_id": clean_upload_id,
+        "chunk_index": chunk_index,
+        "total_chunks": total_chunks,
+        "filename": clean_filename
+    }
+
+
+@router.post("/upload/complete", status_code=status.HTTP_202_ACCEPTED)
+async def complete_knowledge_chunk_upload(
+    request: Request,
+    background_tasks: BackgroundTasks,
+    upload_id: str = Form(...),
+    filename: str = Form(...),
+    total_chunks: int = Form(...),
+    project_id: Optional[uuid.UUID] = Form(None),
+    prompt: Optional[str] = Form(None),
+    replace_existing: bool = Form(True),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(RequireAccess("knowledge:write")),
+    llm: BaseLLMAdapter = Depends(get_llm)
+):
+    """
+    Reassembles all chunk slices into the final file, validates integrity,
+    and dispatches to the standard background ingestion pipeline.
+    """
+    clean_upload_id = re.sub(r'[^a-zA-Z0-9_\-]', '', upload_id)
+    clean_filename = os.path.basename(filename)
+    chunk_dir = os.path.join("data", "temp", "chunks", clean_upload_id)
+
+    if not os.path.exists(chunk_dir):
+        raise HTTPException(status_code=400, detail=f"Upload session '{clean_upload_id}' not found.")
+
+    # 1. Verify all expected chunk slices are present
+    missing_chunks = [idx for idx in range(total_chunks) if not os.path.exists(os.path.join(chunk_dir, f"{idx}.part"))]
+    if missing_chunks:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Incomplete upload: missing chunks {missing_chunks} of {total_chunks}."
+        )
+
+    # 2. Reassemble slices into an isolated staging destination
+    os.makedirs(os.path.join("data", "temp", "assembled"), exist_ok=True)
+    assembled_path = os.path.join("data", "temp", "assembled", f"{clean_upload_id}_{clean_filename}")
+
+    try:
+        with open(assembled_path, "wb") as f_out:
+            for idx in range(total_chunks):
+                part_path = os.path.join(chunk_dir, f"{idx}.part")
+                with open(part_path, "rb") as f_in:
+                    while buf := f_in.read(1024 * 1024):
+                        f_out.write(buf)
+
+        # 3. Clean up the temporary chunk slices directory
+        shutil.rmtree(chunk_dir, ignore_errors=True)
+
+        # 4. Check file size against MAX_UPLOAD_SIZE_MB
+        f_size = os.path.getsize(assembled_path)
+        logger.info(
+            f"🚀 [CHUNKED UPLOAD] Successfully reassembled all {total_chunks} chunks "
+            f"into '{clean_filename}' ({f_size / (1024*1024):.2f} MB)! Dispatching to ingestion pipeline..."
+        )
+        max_bytes = settings.MAX_UPLOAD_SIZE_MB * 1024 * 1024
+        if f_size > max_bytes:
+            if os.path.exists(assembled_path):
+                os.remove(assembled_path)
+            raise HTTPException(
+                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                detail=f"Ukuran file '{clean_filename}' ({f_size / (1024*1024):.1f} MB) melebihi batas maksimal {settings.MAX_UPLOAD_SIZE_MB} MB."
+            )
+
+        # 5. Check monthly ingestion quota
+        allowed, quota_info = await check_ingestion_quota(db)
+        if quota_info.get("exceeded"):
+            logger.warning(f"Monthly knowledge ingestion threshold exceeded ({quota_info['tokens_used']:,} / {quota_info['token_limit']:,} tokens). Ingestion proceeding with soft warning.")
+        elif quota_info.get("warning"):
+            logger.info(f"Monthly knowledge ingestion threshold near limit ({quota_info['percentage']}% used).")
+
+        pipeline = get_ingestion_pipeline(request)
+
+        # Record estimated token usage for 1 document
+        estimated_doc_tokens = 500
+        await record_ingestion_token_usage(
+            db=db,
+            input_tokens=estimated_doc_tokens,
+            output_tokens=200,
+            documents_count=1
+        )
+        await record_chat_token_usage(
+            db=db,
+            user_id=current_user.id,
+            branch_id=None,
+            input_tokens=estimated_doc_tokens,
+            output_tokens=200
+        )
+
+        # 6. Wrap reassembled file into Starlette UploadFile and invoke standard ingestion pipeline
+        f_obj = open(assembled_path, "rb")
+        target_upload_file = UploadFile(filename=clean_filename, file=f_obj)
+
+        ingest_res = await ingest_document(
+            background_tasks=background_tasks,
+            file=[target_upload_file],
+            prompt=prompt,
+            replace_existing=replace_existing,
+            pipeline=pipeline,
+            llm=llm
+        )
+
+        # Update metadata for uploaded documents
+        if isinstance(ingest_res, dict):
+            docs = ingest_res.get("documents", [])
+            batch_id = ingest_res.get("batch_id")
+            for doc in docs:
+                k_id = doc.get("knowledge_id")
+                if k_id:
+                    try:
+                        k_uuid = uuid.UUID(str(k_id))
+                        stmt = select(Knowledge).where(Knowledge.id == k_uuid)
+                        res = await db.execute(stmt)
+                        k_obj = res.scalar_one_or_none()
+                        if k_obj:
+                            modified = False
+                            if k_obj.metadata_ is None:
+                                k_obj.metadata_ = {}
+                            k_obj.metadata_["history"] = []
+                            k_obj.metadata_["chat_history"] = []
+                            k_obj.metadata_["staging_history"] = []
+                            k_obj.metadata_["edit_history"] = []
+                            k_obj.metadata_.pop("feedback", None)
+                            k_obj.metadata_.pop("batch_summary", None)
+                            k_obj.metadata_.pop("initial_summary", None)
+
+                            k_obj.uploaded_by = current_user.id
+                            if batch_id:
+                                k_obj.metadata_["batch_id"] = batch_id
+                                modified = True
+                            if project_id:
+                                k_obj.project_id = project_id
+                                modified = True
+                            if prompt and str(prompt).strip():
+                                k_obj.metadata_["initial_prompt"] = str(prompt).strip()
+                            else:
+                                k_obj.metadata_.pop("initial_prompt", None)
+                            from sqlalchemy.orm.attributes import flag_modified
+                            flag_modified(k_obj, "metadata_")
+                            modified = True
+                            if modified:
+                                await db.commit()
+                    except Exception as up_err:
+                        logger.warning(f"Error updating knowledge record after chunked upload: {up_err}")
+
+        return ingest_res
+    finally:
+        def _cleanup_assembled():
+            try:
+                if os.path.exists(assembled_path):
+                    os.remove(assembled_path)
+            except Exception:
+                pass
+        background_tasks.add_task(_cleanup_assembled)
+
 
 @router.post("/text", response_model=KnowledgeTextIngestResponse, status_code=status.HTTP_202_ACCEPTED)
 @router.post("/text/", response_model=KnowledgeTextIngestResponse, status_code=status.HTTP_202_ACCEPTED)
@@ -1871,6 +2098,22 @@ async def replace_knowledge_file_endpoint(
                 detail=f"File type '{file.content_type}' not allowed for file '{file.filename}'. Allowed types: PDF, Word, Excel, PowerPoint, Text, CSV, and Images."
             )
 
+    # Validate file size against MAX_UPLOAD_SIZE_MB
+    max_bytes = settings.MAX_UPLOAD_SIZE_MB * 1024 * 1024
+    f_size = getattr(file, "size", None)
+    if f_size is None and hasattr(file, "file"):
+        try:
+            file.file.seek(0, os.SEEK_END)
+            f_size = file.file.tell()
+            file.file.seek(0)
+        except Exception:
+            f_size = None
+    if f_size and f_size > max_bytes:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail=f"Ukuran file '{file.filename}' ({f_size / (1024*1024):.1f} MB) melebihi batas maksimal {settings.MAX_UPLOAD_SIZE_MB} MB."
+        )
+
     pipeline = get_ingestion_pipeline(request)
     
     # Update DB record status back to PROCESSING and reset previous error
@@ -1901,6 +2144,113 @@ async def replace_knowledge_file_endpoint(
         "file_name": file.filename,
         "message": "File replacement initiated. Document is now re-processing in background."
     }
+
+
+@router.post("/{knowledge_id}/replace-file/complete", status_code=status.HTTP_202_ACCEPTED)
+async def complete_replace_knowledge_file_chunk(
+    knowledge_id: uuid.UUID,
+    request: Request,
+    background_tasks: BackgroundTasks,
+    upload_id: str = Form(...),
+    filename: str = Form(...),
+    total_chunks: int = Form(...),
+    prompt: Optional[str] = Form(None),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(RequireAccess("knowledge:write")),
+    llm: BaseLLMAdapter = Depends(get_llm)
+):
+    stmt = select(Knowledge).where(Knowledge.id == knowledge_id, Knowledge.deleted_at.is_(None))
+    res = await db.execute(stmt)
+    k_entry = res.scalar_one_or_none()
+    if not k_entry:
+        raise HTTPException(status_code=404, detail="Knowledge document not found.")
+
+    clean_upload_id = re.sub(r'[^a-zA-Z0-9_\-]', '', upload_id)
+    clean_filename = os.path.basename(filename)
+    chunk_dir = os.path.join("data", "temp", "chunks", clean_upload_id)
+
+    if not os.path.exists(chunk_dir):
+        raise HTTPException(status_code=400, detail=f"Upload session '{clean_upload_id}' not found.")
+
+    # 1. Verify all expected chunk slices are present
+    missing_chunks = [idx for idx in range(total_chunks) if not os.path.exists(os.path.join(chunk_dir, f"{idx}.part"))]
+    if missing_chunks:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Incomplete upload: missing chunks {missing_chunks} of {total_chunks}."
+        )
+
+    # 2. Reassemble slices
+    os.makedirs(os.path.join("data", "temp", "assembled"), exist_ok=True)
+    assembled_path = os.path.join("data", "temp", "assembled", f"{clean_upload_id}_{clean_filename}")
+
+    try:
+        with open(assembled_path, "wb") as f_out:
+            for idx in range(total_chunks):
+                part_path = os.path.join(chunk_dir, f"{idx}.part")
+                with open(part_path, "rb") as f_in:
+                    while buf := f_in.read(1024 * 1024):
+                        f_out.write(buf)
+
+        shutil.rmtree(chunk_dir, ignore_errors=True)
+
+        f_size = os.path.getsize(assembled_path)
+        logger.info(
+            f"🚀 [CHUNKED REPLACE] Successfully reassembled all {total_chunks} chunks "
+            f"for doc {knowledge_id} into '{clean_filename}' ({f_size / (1024*1024):.2f} MB)!"
+        )
+
+        max_bytes = settings.MAX_UPLOAD_SIZE_MB * 1024 * 1024
+        if f_size > max_bytes:
+            if os.path.exists(assembled_path):
+                os.remove(assembled_path)
+            raise HTTPException(
+                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                detail=f"Ukuran file '{clean_filename}' ({f_size / (1024*1024):.1f} MB) melebihi batas maksimal {settings.MAX_UPLOAD_SIZE_MB} MB."
+            )
+
+        pipeline = get_ingestion_pipeline(request)
+
+        # Update DB record status back to PROCESSING
+        k_entry.status = KnowledgeStatus.PROCESSING
+        k_entry.file_name = clean_filename
+        if k_entry.metadata_ is None:
+            k_entry.metadata_ = {}
+        k_entry.metadata_["error"] = None
+        k_entry.metadata_["status"] = "PROCESSING"
+        from sqlalchemy.orm.attributes import flag_modified
+        flag_modified(k_entry, "metadata_")
+        await db.commit()
+
+        # Wrap reassembled file into Starlette UploadFile
+        f_obj = open(assembled_path, "rb")
+        target_upload_file = UploadFile(filename=clean_filename, file=f_obj)
+
+        effective_prompt = prompt or (k_entry.metadata_.get("initial_prompt") if isinstance(k_entry.metadata_, dict) else None)
+        ingest_res = await ingest_document(
+            background_tasks=background_tasks,
+            file=[target_upload_file],
+            prompt=effective_prompt,
+            replace_existing=True,
+            pipeline=pipeline,
+            llm=llm
+        )
+
+        return {
+            "status": "success",
+            "knowledge_id": str(knowledge_id),
+            "file_name": clean_filename,
+            "message": "File replacement initiated. Document is now re-processing in background."
+        }
+    finally:
+        def _cleanup():
+            try:
+                if os.path.exists(assembled_path):
+                    os.remove(assembled_path)
+            except Exception:
+                pass
+        background_tasks.add_task(_cleanup)
+
 
 @router.put("/{knowledge_id}/status", response_model=KnowledgeResponse)
 @router.patch("/{knowledge_id}/status", response_model=KnowledgeResponse)

@@ -48,6 +48,13 @@ export function validateAndFilterFiles(files: File[]): File[] {
 			continue;
 		}
 
+		const MAX_FILE_SIZE_BYTES = 500 * 1024 * 1024; // 500 MB
+		if (file.size > MAX_FILE_SIZE_BYTES) {
+			const sizeMb = (file.size / (1024 * 1024)).toFixed(1);
+			toast.error(`File "${file.name}" (${sizeMb} MB) melebihi batas maksimal upload 500 MB.`);
+			continue;
+		}
+
 		// If pasted from clipboard without proper extension, normalize filename
 		if (isImageMime && !isSupportedExt) {
 			const ext = file.type.split("/")[1] || "png";

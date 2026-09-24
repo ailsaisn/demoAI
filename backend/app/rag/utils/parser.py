@@ -1381,17 +1381,26 @@ class DocumentParser:
                     from app.services.storage import upload_images_parallel
 
                     for page_idx, sheet_name in enumerate(sheet_names, start=1):
-                        df = pd.read_excel(excel_file, sheet_name=sheet_name)
+                        df = pd.read_excel(excel_file, sheet_name=sheet_name, header=None)
                         if df.empty:
                             continue
-                        df = df.dropna(how="all")
-                        num_rows = len(df)
 
+                        from collections import defaultdict
                         sheet_image_urls = []
-                        row_to_image = {}
+                        cell_to_images = defaultdict(list)
                         unanchored_images = []
 
-                        # 1. Extract embedded images for THIS worksheet
+                        # 0. Propagate merged cell values so multi-row headers are preserved across cells
+                        if wb and sheet_name in wb.sheetnames:
+                            ws = wb[sheet_name]
+                            for rng in list(ws.merged_cells.ranges):
+                                top_val = ws.cell(rng.min_row, rng.min_col).value
+                                for r_m in range(rng.min_row - 1, rng.max_row):
+                                    for c_m in range(rng.min_col - 1, rng.max_col):
+                                        if r_m < len(df) and c_m < df.shape[1] and (pd.isna(df.iat[r_m, c_m]) or not str(df.iat[r_m, c_m]).strip()):
+                                            df.iat[r_m, c_m] = top_val
+
+                        # 1. Extract embedded images for THIS worksheet using 2D cell coordinates
                         if wb and sheet_name in wb.sheetnames:
                             ws = wb[sheet_name]
                             ws_images = getattr(ws, '_images', [])
@@ -1408,102 +1417,226 @@ class DocumentParser:
                                     continue
 
                                 anchor = getattr(img, 'anchor', None)
-                                row = None
-                                if anchor:
-                                    if hasattr(anchor, '_from'):
-                                        row = anchor._from.row
-                                    elif hasattr(anchor, 'from'):
-                                        row = getattr(anchor, 'from').row
-                                # In openpyxl row 0 is header, so row 1 corresponds to df row 0
-                                df_row = (row - 1) if (row is not None and row >= 1) else None
+                                r, c = None, None
+                                if anchor is not None:
+                                    if hasattr(anchor, '_from') and getattr(anchor._from, 'row', None) is not None:
+                                        r = anchor._from.row
+                                        c = getattr(anchor._from, 'col', 0)
+                                    elif hasattr(anchor, 'from') and getattr(getattr(anchor, 'from'), 'row', None) is not None:
+                                        r = getattr(anchor, 'from').row
+                                        c = getattr(getattr(anchor, 'from'), 'col', 0)
+                                    elif isinstance(anchor, str):
+                                        try:
+                                            from openpyxl.utils import coordinate_to_tuple
+                                            coord_r, coord_c = coordinate_to_tuple(anchor)
+                                            r = coord_r - 1
+                                            c = coord_c - 1
+                                        except Exception:
+                                            pass
+                                    elif hasattr(anchor, 'pos') and hasattr(anchor.pos, 'y') and anchor.pos.y is not None:
+                                        # Handle openpyxl AbsoluteAnchor using EMUs (1 pt = 12700 EMUs)
+                                        try:
+                                            y_emu = anchor.pos.y
+                                            accum_emu = 0
+                                            found_r = 1
+                                            max_r = ws.max_row or 100
+                                            for r_i in range(1, max_r + 2):
+                                                r_dim = ws.row_dimensions.get(r_i)
+                                                h_pt = r_dim.height if (r_dim and r_dim.height) else 15.0
+                                                h_emu = int(h_pt * 12700)
+                                                if accum_emu + h_emu > y_emu:
+                                                    found_r = r_i
+                                                    break
+                                                accum_emu += h_emu
+                                                found_r = r_i
+                                            r = found_r - 1
+                                            c = 0
+                                        except Exception as abs_err:
+                                            logger.debug(f"Error calculating AbsoluteAnchor row: {abs_err}")
 
-                                safe_sheet_name = "".join(c if c.isalnum() else "_" for c in sheet_name)
+                                safe_sheet_name = "".join(c_ch if c_ch.isalnum() else "_" for c_ch in sheet_name)
                                 filename = f"excel_{safe_sheet_name}_img_{idx+1}.{img_ext}"
                                 upload_batch.append({
                                     "content": clean_bytes,
                                     "filename": filename,
                                     "content_type": f"image/{img_ext}"
                                 })
-                                img_meta.append(df_row)
+                                img_meta.append((r, c))
 
                             if upload_batch:
                                 results = upload_images_parallel(upload_batch)
-                                for df_r, res in zip(img_meta, results):
+                                for (cell_r, cell_c), res in zip(img_meta, results):
                                     url = res.get("image_url")
                                     if url:
                                         sheet_image_urls.append(url)
-                                        if df_r is not None and 0 <= df_r < num_rows and df_r not in row_to_image:
-                                            row_to_image[df_r] = url
+                                        if cell_r is not None and 0 <= cell_r < len(df):
+                                            c_val = cell_c if (cell_c is not None and 0 <= cell_c < df.shape[1]) else 0
+                                            # Strict header shift: Only shift if the cell text is purely a short header label
+                                            curr_cell_txt = str(df.iat[cell_r, c_val]).strip().lower()
+                                            header_keywords = [
+                                                "shampoo", "serum", "exfoliating", "nama tindakan",
+                                                "foto", "gambar", "photo", "image", "foto produk", "gambar produk", "product image",
+                                                "produk", "product", "tindakan", "treatment", "kategori", "category",
+                                                "langkah", "step", "tahap", "cleanser", "toner", "moisturizer", "sunscreen", "cream", "lotion", "gel"
+                                            ]
+                                            is_pure_header = curr_cell_txt in header_keywords or (len(curr_cell_txt) <= 25 and any(curr_cell_txt == k for k in header_keywords))
+                                            if is_pure_header and cell_r + 1 < len(df):
+                                                below_txt = str(df.iat[cell_r + 1, c_val]).strip()
+                                                if below_txt and below_txt != "nan":
+                                                    cell_r = cell_r + 1
+                                            cell_to_images[(cell_r, c_val)].append(url)
                                         else:
                                             unanchored_images.append(url)
-                                logger.info(f"Sheet '{sheet_name}': uploaded {len(sheet_image_urls)} images ({len(row_to_image)} anchored to rows).")
+                                total_anchored_cells = len(cell_to_images)
+                                total_anchored_imgs = sum(len(v) for v in cell_to_images.values())
+                                logger.info(f"Sheet '{sheet_name}': uploaded {len(sheet_image_urls)} images ({total_anchored_imgs} images anchored across {total_anchored_cells} cells, {len(unanchored_images)} unanchored).")
 
-                        # 2. Identify photo column and product name column
-                        photo_col = None
-                        for col in df.columns:
-                            col_clean = str(col).strip().lower()
-                            if any(k in col_clean for k in ["foto", "gambar", "photo", "image", "picture"]):
-                                photo_col = col
-                                break
+                        # 2. Inject anchored images directly into DataFrame cells WITHOUT raw <br> tags
+                        for (r_idx, c_idx), img_urls in cell_to_images.items():
+                            curr_val = "" if pd.isna(df.iat[r_idx, c_idx]) else str(df.iat[r_idx, c_idx]).strip()
+                            curr_val_clean = " ".join(curr_val.split())
+                            alt = curr_val_clean if curr_val_clean else f"Produk R{r_idx+1}C{c_idx+1}"
+                            img_tags = " ".join(f"![{alt}]({u})" for u in img_urls)
+                            # The MarkdownImage component in frontend already renders `alt` as the official card caption.
+                            # Using img_tags directly prevents redundant plaintext from spilling outside and floating awkwardly around the card.
+                            df.iat[r_idx, c_idx] = img_tags
 
-                        name_col = None
-                        for col in df.columns:
-                            if col == photo_col:
+                        # 3. Structural Block Detection: Separate Title/Metadata rows from Data Tables
+                        blocks = []
+                        current_table_rows = []
+
+                        for r in range(len(df)):
+                            raw_row = [("" if pd.isna(v) else str(v).strip()) for v in df.iloc[r]]
+                            non_empty = [(c, v) for c, v in enumerate(raw_row) if v]
+
+                            if not non_empty:
+                                if current_table_rows:
+                                    blocks.append({"type": "table", "rows": current_table_rows})
+                                    current_table_rows = []
                                 continue
-                            col_clean = str(col).strip().lower()
-                            if any(nk in col_clean for nk in ["nama", "product", "title", "item", "produk"]):
-                                name_col = col
-                                break
-                        if name_col is None:
-                            for col in df.columns:
-                                if col != photo_col and df[col].dtype == object:
-                                    name_col = col
-                                    break
 
-                        def get_row_name(r_i, df_obj=df, n_col=name_col):
-                            if n_col is not None:
-                                val = str(df_obj.at[df_obj.index[r_i], n_col])
-                                if val and val != "nan":
-                                    return val.strip()
-                            return f"Produk {r_i+1}"
+                            # Single non-empty cell without image tag -> Title/Heading or Meta line
+                            if len(non_empty) == 1 and "![" not in non_empty[0][1]:
+                                txt = non_empty[0][1]
+                                if current_table_rows:
+                                    blocks.append({"type": "table", "rows": current_table_rows})
+                                    current_table_rows = []
 
-                        # 3. Inject image markdown into rows
-                        unanchored_cursor = 0
-                        if photo_col is not None:
-                            new_col_vals = []
-                            for r_idx in range(num_rows):
-                                img_url = row_to_image.get(r_idx)
-                                if not img_url and unanchored_cursor < len(unanchored_images):
-                                    img_url = unanchored_images[unanchored_cursor]
-                                    unanchored_cursor += 1
-
-                                if img_url:
-                                    alt = get_row_name(r_idx)
-                                    new_col_vals.append(f"![{alt}]({img_url})")
+                                txt_lower = txt.lower()
+                                if txt_lower in ["nama tindakan"]:
+                                    # Redundant merge artifact row directly above table header
+                                    continue
+                                if any(k in txt_lower for k in ["cheatsheet", "katalog", "daftar", "panduan", "tabel"]):
+                                    blocks.append({"type": "heading", "level": 3, "text": txt})
+                                elif "updated" in txt_lower or "tanggal" in txt_lower:
+                                    blocks.append({"type": "meta", "text": f"*{txt}*"})
                                 else:
-                                    existing = str(df.at[df.index[r_idx], photo_col])
-                                    new_col_vals.append("" if existing == "nan" else existing)
-                            df[photo_col] = new_col_vals
-                        elif sheet_image_urls:
-                            # Auto-insert 'Foto Produk' column for sheets without photo column
-                            new_col_vals = []
-                            for r_idx in range(num_rows):
-                                img_url = row_to_image.get(r_idx)
-                                if not img_url and unanchored_cursor < len(unanchored_images):
-                                    img_url = unanchored_images[unanchored_cursor]
-                                    unanchored_cursor += 1
+                                    blocks.append({"type": "text", "text": txt})
+                            else:
+                                current_table_rows.append(raw_row)
 
-                                if img_url:
-                                    alt = get_row_name(r_idx)
-                                    new_col_vals.append(f"![{alt}]({img_url})")
+                        if current_table_rows:
+                            blocks.append({"type": "table", "rows": current_table_rows})
+
+                        # 4. Render Section Blocks into Clean Markdown
+                        output_parts = []
+                        for b in blocks:
+                            if b["type"] == "heading":
+                                output_parts.append(f"### {b['text']}")
+                            elif b["type"] == "meta":
+                                output_parts.append(b["text"])
+                            elif b["type"] == "text":
+                                output_parts.append(b["text"])
+                            elif b["type"] == "table":
+                                t_rows = b["rows"]
+                                if not t_rows:
+                                    continue
+
+                                # A. Check for Side-by-Side Tables (Split by contiguous active column clusters)
+                                num_total_cols = max(len(r) for r in t_rows)
+                                col_has_data = [any(r[c].strip() for r in t_rows if c < len(r)) for c in range(num_total_cols)]
+                                clusters = []
+                                curr_cluster = []
+                                for c, has_d in enumerate(col_has_data):
+                                    if has_d:
+                                        curr_cluster.append(c)
+                                    else:
+                                        if curr_cluster:
+                                            clusters.append(curr_cluster)
+                                            curr_cluster = []
+                                if curr_cluster:
+                                    clusters.append(curr_cluster)
+
+                                # Split into sub-tables if multiple clusters are found separated by empty spacer columns
+                                sub_tables = []
+                                if len(clusters) > 1:
+                                    for cl in clusters:
+                                        sub_t = []
+                                        for r in t_rows:
+                                            sub_t.append([r[c] if c < len(r) else "" for c in cl])
+                                        sub_tables.append(sub_t)
                                 else:
-                                    new_col_vals.append("")
-                            df.insert(0, "Foto Produk", new_col_vals)
-                            photo_col = "Foto Produk"
-                            logger.info(f"Auto-injected 'Foto Produk' column into sheet '{sheet_name}' ({len(sheet_image_urls)} images)")
+                                    sub_tables = [t_rows]
 
-                        md_table = _df_to_markdown_safe(df)
-                        sheet_text = f"## Sheet: {sheet_name}\n\n{md_table}"
+                                for sub_rows in sub_tables:
+                                    max_active_c = max((max(c for c, v in enumerate(r) if v) + 1 for r in sub_rows if any(r)), default=0)
+                                    if max_active_c == 0:
+                                        continue
+                                    trimmed_rows = [r[:max_active_c] for r in sub_rows if any(r[:max_active_c])]
+                                    if not trimmed_rows:
+                                        continue
+
+                                    # B. Check for Transposed Table (Row = Attributes, Col = Products)
+                                    ATTR_KEYWORDS = {
+                                        "nama", "nama produk", "produk", "product", "product name",
+                                        "harga", "price", "biaya", "tarif", "sku", "kode", "code",
+                                        "komposisi", "kandungan", "ingredients", "active ingredients",
+                                        "indikasi", "indications", "manfaat", "benefits",
+                                        "kontraindikasi", "contraindications", "cara pakai", "cara penggunaan",
+                                        "directions", "how to use", "aturan pakai", "dosis", "dosage",
+                                        "efek samping", "side effects", "kategori", "category",
+                                        "netto", "ukuran", "kemasan", "packaging"
+                                    }
+                                    col0_vals = [r[0].strip().lower() for r in trimmed_rows if r and r[0].strip()]
+                                    matches = sum(1 for v in col0_vals if any(v == k or v.startswith(k + " ") or v.endswith(" " + k) for k in ATTR_KEYWORDS))
+                                    if len(col0_vals) >= 3 and (matches / len(col0_vals) >= 0.5) and len(trimmed_rows[0]) > 1:
+                                        num_new_rows = max(len(r) for r in trimmed_rows)
+                                        transposed = []
+                                        for col_idx in range(num_new_rows):
+                                            new_r = [trimmed_rows[r_idx][col_idx] if col_idx < len(trimmed_rows[r_idx]) else "" for r_idx in range(len(trimmed_rows))]
+                                            transposed.append(new_r)
+                                        trimmed_rows = transposed
+                                        max_active_c = len(trimmed_rows[0])
+
+                                    # C. Render trimmed_rows to Markdown table
+                                    max_cols = max(len(r) for r in trimmed_rows)
+                                    header_candidate = trimmed_rows[0]
+                                    non_empty_h = sum(1 for v in header_candidate if v)
+                                    is_valid_header = non_empty_h >= 2 and all("![" not in v for v in header_candidate)
+
+                                    lines = []
+                                    if is_valid_header and len(trimmed_rows) > 1:
+                                        headers = [h if h else f"Kolom {i+1}" for i, h in enumerate(header_candidate)]
+                                        lines.append("| " + " | ".join(headers) + " |")
+                                        lines.append("| " + " | ".join(["---"] * max_cols) + " |")
+                                        body_rows = trimmed_rows[1:]
+                                    else:
+                                        headers = [f"Kolom {i+1}" for i in range(max_cols)]
+                                        lines.append("| " + " | ".join(headers) + " |")
+                                        lines.append("| " + " | ".join(["---"] * max_cols) + " |")
+                                        body_rows = trimmed_rows
+
+                                    for r_vals in body_rows:
+                                        padded = r_vals + [""] * (max_cols - len(r_vals))
+                                        lines.append("| " + " | ".join(v.replace("\n", " ").strip() for v in padded) + " |")
+
+                                    output_parts.append("\n".join(lines))
+
+                        rendered_content = "\n\n".join(output_parts)
+                        unanchored_md = ""
+                        if unanchored_images:
+                            unanchored_md = "\n".join(f"![Lampiran Gambar]({u})" for u in unanchored_images) + "\n\n"
+                        sheet_text = f"## Sheet: {sheet_name}\n\n{unanchored_md}{rendered_content}"
                         pages.append({
                             "page": page_idx,
                             "sheet_name": sheet_name,

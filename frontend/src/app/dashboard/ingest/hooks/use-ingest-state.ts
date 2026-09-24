@@ -7,6 +7,7 @@ import {
 	useUploadKnowledge,
 } from "../../knowledge/hooks/use-knowledge";
 import { useProjects } from "../../knowledge/hooks/use-projects";
+import { toast } from "sonner";
 
 export function useIngestState() {
 	const router = useRouter();
@@ -76,6 +77,14 @@ export function useIngestState() {
 
 		// 1. Files attached -> Standard Multipart Ingestion Flow
 		if (files.length > 0) {
+			const MAX_FILE_SIZE_BYTES = 500 * 1024 * 1024; // 500 MB
+			const oversizedFile = files.find((f) => f.size > MAX_FILE_SIZE_BYTES);
+			if (oversizedFile) {
+				const sizeMb = (oversizedFile.size / (1024 * 1024)).toFixed(1);
+				toast.error(`File '${oversizedFile.name}' (${sizeMb} MB) melebihi batas maksimal upload 500 MB.`);
+				return false;
+			}
+
 			const formData = new FormData();
 			if (value && value.trim()) {
 				formData.append("prompt", value.trim());

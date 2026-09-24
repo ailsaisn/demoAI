@@ -65,7 +65,7 @@ function MarkdownImage({ src, alt, onDelete, ...props }: React.ComponentProps<"i
 	return (
 		<>
 			<span
-				className="my-2 inline-flex flex-col w-64 sm:w-72 max-w-full rounded-lg border border-zinc-200/80 bg-zinc-50/60 overflow-hidden align-top shrink-0 relative group shadow-none"
+				className="my-2 flex flex-col w-64 sm:w-72 max-w-full rounded-lg border border-zinc-200/80 bg-zinc-50/60 overflow-hidden shrink-0 relative group shadow-none"
 			>
 				{/* Delete button (only shown when onDelete is provided, i.e. edit mode) */}
 				{onDelete && (

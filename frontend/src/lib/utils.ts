@@ -35,6 +35,14 @@ export function formatErrorDetail(detail: string): string {
 export function getErrorMessage(error: any, defaultMessage = "An error occurred. Please try again."): string {
 	if (!error) return defaultMessage;
 
+	if (error.response?.status === 413 || error.status === 413) {
+		const detail = error.response?.data?.detail;
+		if (typeof detail === "string") {
+			return formatErrorDetail(detail);
+		}
+		return "Ukuran file terlalu besar (melebihi batas maksimal 500 MB). Silakan perkecil ukuran file atau hubungi administrator.";
+	}
+
 	const detail = error.response?.data?.detail;
 
 	if (typeof detail === "string") {

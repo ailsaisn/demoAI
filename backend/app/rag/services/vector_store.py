@@ -81,6 +81,20 @@ class PGVectorAdapter(BaseVectorStoreAdapter):
                     ON {self.collection_name} USING hnsw (embedding vector_cosine_ops)
                     WITH (m = 16, ef_construction = 100);
                 """))
+
+                # Create GIN index on metadata JSONB if not exists
+                gin_index_name = f"idx_{self.collection_name}_metadata_gin"
+                conn.execute(text(f"""
+                    CREATE INDEX IF NOT EXISTS {gin_index_name} 
+                    ON {self.collection_name} USING gin (metadata);
+                """))
+
+                # Create B-Tree index on source_file if not exists
+                source_index_name = f"idx_{self.collection_name}_source_file"
+                conn.execute(text(f"""
+                    CREATE INDEX IF NOT EXISTS {source_index_name} 
+                    ON {self.collection_name} (source_file);
+                """))
                 conn.commit()
                 
             self.Session = sessionmaker(bind=self.engine)

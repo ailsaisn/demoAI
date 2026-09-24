@@ -827,7 +827,7 @@ async def create_chat_message(
                     try:
                         async for chunk in pipeline.generate_answer_stream(
                             query=effective_query,
-                            top_k=5,
+                            top_k=8,
                             rerank=True,
                             history=history,
                             filter_metadata=doctor_filter or None,

@@ -138,6 +138,102 @@ export const useKnowledgeBatch = (batchId: string) => {
 	});
 };
 
+// 800 KB chunks (0.78 MB) to strictly comply with corporate 3-layer restrictions (Layer 1: 1 MB limit, Layer 2 & 3: 5 MB limits)
+const CHUNK_SIZE_BYTES = 800 * 1024;
+
+async function uploadFilesWithAutoChunking(
+	data: FormData,
+	progressCb?: (percent: number) => void,
+) {
+	const files = data.getAll("file") as File[];
+	const prompt = (data.get("prompt") as string) || "";
+	const replaceExisting = data.get("replace_existing") !== "false";
+	const projectId = (data.get("project_id") as string) || undefined;
+
+	// Check if any file exceeds 4 MB threshold
+	const hasLargeFile = files.some(
+		(f) => f && typeof f.size === "number" && f.size > CHUNK_SIZE_BYTES,
+	);
+
+	// If single small file (<= 4 MB), perform fast standard upload
+	if (!hasLargeFile && files.length <= 1) {
+		const response = await api.post("/knowledge/upload", data, {
+			onUploadProgress: (progressEvent) => {
+				if (progressEvent.total && progressCb) {
+					const percent = Math.round((progressEvent.loaded * 100) / progressEvent.total);
+					progressCb(percent);
+				}
+			},
+		});
+		return response.data;
+	}
+
+	// Multi-file or large file: process file-by-file with 800 KB chunk slicing (Layer 1 safe)
+	let lastResponseData: any = null;
+	const totalFiles = files.length;
+
+	for (let fIdx = 0; fIdx < totalFiles; fIdx++) {
+		const file = files[fIdx];
+		if (!file) continue;
+
+		if (file.size > CHUNK_SIZE_BYTES) {
+			const totalChunks = Math.ceil(file.size / CHUNK_SIZE_BYTES);
+			const uploadId =
+				typeof crypto !== "undefined" && crypto.randomUUID
+					? crypto.randomUUID()
+					: `${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
+
+			for (let i = 0; i < totalChunks; i++) {
+				const start = i * CHUNK_SIZE_BYTES;
+				const end = Math.min(file.size, start + CHUNK_SIZE_BYTES);
+				const chunkBlob = file.slice(start, end);
+				const chunkForm = new FormData();
+				chunkForm.append("upload_id", uploadId);
+				chunkForm.append("chunk_index", i.toString());
+				chunkForm.append("total_chunks", totalChunks.toString());
+				chunkForm.append("filename", file.name);
+				chunkForm.append("chunk", chunkBlob, file.name);
+
+				await api.post("/knowledge/upload/chunk", chunkForm);
+
+				if (progressCb) {
+					const fileBasePercent = (fIdx / totalFiles) * 100;
+					const chunkContribution = ((i + 1) / totalChunks) * (100 / totalFiles) * 0.95;
+					progressCb(Math.min(95, Math.round(fileBasePercent + chunkContribution)));
+				}
+			}
+
+			// All slices uploaded, complete and trigger ingestion pipeline
+			const completeForm = new FormData();
+			completeForm.append("upload_id", uploadId);
+			completeForm.append("filename", file.name);
+			completeForm.append("total_chunks", totalChunks.toString());
+			if (prompt) completeForm.append("prompt", prompt);
+			if (projectId) completeForm.append("project_id", projectId);
+			completeForm.append("replace_existing", replaceExisting ? "true" : "false");
+
+			const compRes = await api.post("/knowledge/upload/complete", completeForm);
+			lastResponseData = compRes.data;
+		} else {
+			// Single small file slice <= 4 MB
+			const singleForm = new FormData();
+			singleForm.append("file", file);
+			if (prompt) singleForm.append("prompt", prompt);
+			if (projectId) singleForm.append("project_id", projectId);
+			singleForm.append("replace_existing", replaceExisting ? "true" : "false");
+
+			const resp = await api.post("/knowledge/upload", singleForm);
+			lastResponseData = resp.data;
+		}
+
+		if (progressCb) {
+			progressCb(Math.round(((fIdx + 1) / totalFiles) * 100));
+		}
+	}
+
+	return lastResponseData;
+}
+
 export const useUploadKnowledge = () => {
 	const queryClient = useQueryClient();
 
@@ -153,15 +249,7 @@ export const useUploadKnowledge = () => {
 			const data = params instanceof FormData ? params : params.formData;
 			const progressCb = params instanceof FormData ? undefined : params.onProgress;
 
-			const response = await api.post("/knowledge/upload", data, {
-				onUploadProgress: (progressEvent) => {
-					if (progressEvent.total && progressCb) {
-						const percent = Math.round((progressEvent.loaded * 100) / progressEvent.total);
-						progressCb(percent);
-					}
-				},
-			});
-			return response.data;
+			return await uploadFilesWithAutoChunking(data, progressCb);
 		},
 		onSuccess: () => {
 			toast.success("Files uploaded successfully!");
@@ -186,6 +274,47 @@ export const useReplaceKnowledgeFile = () => {
 			formData: FormData;
 			onProgress?: (percent: number) => void;
 		}) => {
+			const file = formData.get("file") as File | null;
+			const prompt = (formData.get("prompt") as string) || "";
+
+			// If file exceeds 800 KB, slice and upload via chunked pipeline (Layer 1 safe)
+			if (file && typeof file.size === "number" && file.size > CHUNK_SIZE_BYTES) {
+				const totalChunks = Math.ceil(file.size / CHUNK_SIZE_BYTES);
+				const uploadId =
+					typeof crypto !== "undefined" && crypto.randomUUID
+						? crypto.randomUUID()
+						: `${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
+
+				for (let i = 0; i < totalChunks; i++) {
+					const start = i * CHUNK_SIZE_BYTES;
+					const end = Math.min(file.size, start + CHUNK_SIZE_BYTES);
+					const chunkBlob = file.slice(start, end);
+					const chunkForm = new FormData();
+					chunkForm.append("upload_id", uploadId);
+					chunkForm.append("chunk_index", i.toString());
+					chunkForm.append("total_chunks", totalChunks.toString());
+					chunkForm.append("filename", file.name);
+					chunkForm.append("chunk", chunkBlob, file.name);
+
+					await api.post("/knowledge/upload/chunk", chunkForm);
+
+					if (onProgress) {
+						const percent = Math.min(95, Math.round(((i + 1) / (totalChunks + 0.5)) * 100));
+						onProgress(percent);
+					}
+				}
+
+				const completeForm = new FormData();
+				completeForm.append("upload_id", uploadId);
+				completeForm.append("filename", file.name);
+				completeForm.append("total_chunks", totalChunks.toString());
+				if (prompt) completeForm.append("prompt", prompt);
+
+				const compRes = await api.post(`/knowledge/${knowledgeId}/replace-file/complete`, completeForm);
+				if (onProgress) onProgress(100);
+				return compRes.data;
+			}
+
 			const response = await api.post(`/knowledge/${knowledgeId}/replace-file`, formData, {
 				onUploadProgress: (progressEvent) => {
 					if (progressEvent.total && onProgress) {

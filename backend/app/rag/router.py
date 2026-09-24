@@ -2984,15 +2984,19 @@ async def ingest_document(
                             existing_doc = None
                             if custom_uuid:
                                 existing_doc = await session.get(Knowledge, custom_uuid)
-                            if not existing_doc:
+                                if existing_doc and existing_doc.deleted_at is not None:
+                                    existing_doc = None
+                            if not existing_doc and (dup_status == "PENDING" and replace_existing):
                                 res = await session.execute(
-                                    select(Knowledge).where(Knowledge.file_name == target_file.filename).order_by(Knowledge.created_at.desc())
+                                    select(Knowledge).where(
+                                        Knowledge.file_name == target_file.filename,
+                                        Knowledge.deleted_at.is_(None)
+                                    ).order_by(Knowledge.created_at.desc())
                                 )
                                 existing_doc = res.scalars().first()
 
                             if existing_doc:
                                 knowledge = existing_doc
-                                knowledge.deleted_at = None
                                 knowledge.status = KnowledgeStatus.PROCESSING
                                 knowledge.ai_summary = "Processing..."
                                 knowledge.original_path = file_path
@@ -3349,10 +3353,15 @@ async def get_pending_details(knowledge_id: str = Path(..., description="Pending
                     k_doc = await session.get(Knowledge, custom_uuid)
                 else:
                     from sqlalchemy import select
-                    res = await session.execute(select(Knowledge).where(Knowledge.file_name == knowledge_id).order_by(Knowledge.created_at.desc()))
+                    res = await session.execute(
+                        select(Knowledge).where(
+                            Knowledge.file_name == knowledge_id,
+                            Knowledge.deleted_at.is_(None)
+                        ).order_by(Knowledge.created_at.desc())
+                    )
                     k_doc = res.scalars().first()
                     
-                if k_doc:
+                if k_doc and k_doc.deleted_at is None:
                     return {
                         "knowledge_id": str(k_doc.id),
                         "file_name": k_doc.file_name,

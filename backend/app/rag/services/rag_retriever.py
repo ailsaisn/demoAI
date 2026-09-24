@@ -11,8 +11,8 @@ from rank_bm25 import BM25Okapi
 from app.rag.services.interfaces import BaseVectorStoreAdapter
 from app.rag.config import settings
 
-# Shared persistent worker pool for parallel hybrid dense + sparse retrieval
-_RETRIEVAL_EXECUTOR = concurrent.futures.ThreadPoolExecutor(max_workers=8)
+# Shared persistent worker pool for parallel hybrid dense + sparse retrieval (sized for 1.5 vCPU)
+_RETRIEVAL_EXECUTOR = concurrent.futures.ThreadPoolExecutor(max_workers=4)
 
 
 # --- Temporal Filtering Helpers ---
@@ -433,8 +433,8 @@ class Reranker:
             return hits[:top_n]
 
         try:
-            # Evaluate top 15 candidates with generous text snippet (1200 chars) so pricing, SKU, and instructions are preserved
-            target_hits = hits[:15]
+            # Evaluate top 8 candidates with 600 chars snippet for fast CPU forward pass (< 0.7s on 1.5 vCPU)
+            target_hits = hits[:8]
             pairs = []
             for hit in target_hits:
                 meta = hit.get("metadata", {})
@@ -447,12 +447,16 @@ class Reranker:
                     product_name = product_name.replace("-", " ").replace("_", " ").strip()
                 
                 section = meta.get("section", "General")
-                text = hit.get("text", "")[:1200]
+                text = hit.get("text", "")[:600]
                 
                 enriched_text = f"Product: {product_name} | Section: {section} | Content: {text}"
                 pairs.append([query, enriched_text])
             
             import torch
+            try:
+                torch.set_num_threads(1)
+            except Exception:
+                pass
             with torch.no_grad():
                 scores = self.model.predict(pairs, batch_size=8, show_progress_bar=False)
             
@@ -804,13 +808,12 @@ class HybridRetriever:
 
         candidate_k = top_k * 2
 
-        import concurrent.futures
-        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
-            future_dense = executor.submit(self.vector_store.search, expanded_query, candidate_k, filter_metadata) if self.vector_store else None
-            future_sparse = executor.submit(self.bm25_index.search, expanded_query, candidate_k, filter_metadata, include_expired) if self.bm25_index else None
-            
-            dense_hits = future_dense.result() if future_dense else []
-            sparse_hits = future_sparse.result() if future_sparse else []
+        # Use global persistent singleton executor to avoid per-query thread churn
+        future_dense = _RETRIEVAL_EXECUTOR.submit(self.vector_store.search, expanded_query, candidate_k, filter_metadata) if self.vector_store else None
+        future_sparse = _RETRIEVAL_EXECUTOR.submit(self.bm25_index.search, expanded_query, candidate_k, filter_metadata, include_expired) if self.bm25_index else None
+        
+        dense_hits = future_dense.result() if future_dense else []
+        sparse_hits = future_sparse.result() if future_sparse else []
 
         if self.vector_store:
             logger.debug(f"Dense retrieval returned {len(dense_hits)} candidates.")
@@ -983,14 +986,18 @@ class HybridRetriever:
                 active_hits = matching_active
 
         # Fast-Path / Exact Match Reranker Bypass
-        # If dense and sparse agree on top chunk with high confidence,
-        # we can bypass the heavy PyTorch Cross-Encoder, saving 1.5-2.5s CPU latency.
+        # Fast-Path / Exact Match Reranker Bypass
+        # If active_hits <= 2 or dense/sparse agree on top chunk with high confidence (>= 0.70),
+        # we can bypass the heavy PyTorch Cross-Encoder, saving 2-7s CPU latency.
         skip_heavy_reranker = False
-        if dense_hits and sparse_hits:
+        if len(active_hits) <= 2:
+            skip_heavy_reranker = True
+            logger.info(f"⚡ [Fast-Path Bypass] Only {len(active_hits)} chunk(s) matched. Skipping CPU cross-encoder.")
+        elif dense_hits and sparse_hits:
             top_dense_src = dense_hits[0].get("metadata", {}).get("source_file") or dense_hits[0].get("metadata", {}).get("knowledge_id")
             top_sparse_src = sparse_hits[0].get("metadata", {}).get("source_file") or sparse_hits[0].get("metadata", {}).get("knowledge_id")
             top_dense_score = float(dense_hits[0].get("score", 0.0))
-            if top_dense_src and top_dense_src == top_sparse_src and top_dense_score >= 0.80:
+            if top_dense_src and top_dense_src == top_sparse_src and top_dense_score >= 0.70:
                 skip_heavy_reranker = True
                 logger.info(f"⚡ [Fast-Path Bypass] Dense & Sparse top match agreed on '{top_dense_src}' (score: {top_dense_score:.3f}). Skipping CPU cross-encoder.")
 
@@ -998,9 +1005,10 @@ class HybridRetriever:
         if rerank and self.reranker and active_hits:
             if skip_heavy_reranker:
                 all_reranked = []
+                default_conf = float(dense_hits[0].get("score", 0.85)) if dense_hits and isinstance(dense_hits[0], dict) else 0.85
                 for h in active_hits:
                     hc = h.copy()
-                    hc["rerank_score"] = float(hc.get("rrf_score", hc.get("score", 0.85)))
+                    hc["rerank_score"] = max(default_conf, 0.85)
                     all_reranked.append(hc)
             else:
                 all_reranked = self.reranker.rerank(query, active_hits, top_n=len(active_hits))

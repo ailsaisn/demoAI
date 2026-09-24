@@ -74,6 +74,13 @@ async def lifespan(app: FastAPI):
         app.state.llm_adapter = llm_adapter
         app.state.generation_pipeline = generation_pipeline
 
+        if reranker:
+            try:
+                reranker._ensure_loaded()
+                logger.info("⚡ Cross-Encoder Reranker model pre-warmed successfully.")
+            except Exception as rw_e:
+                logger.warning(f"Reranker pre-warm note: {rw_e}")
+
         logger.info("RAG components initialized successfully!")
     except Exception as e:
         logger.error(f"Failed to initialize RAG lifespan: {e}")

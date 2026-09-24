@@ -552,7 +552,13 @@ class CustomChunker:
                 # 1. Detect Markdown Table Row
                 is_table_row = line_strip.startswith("|") and line_strip.endswith("|")
                 if is_table_row:
-                    flush_entity_block()
+                    if current_entity_lines:
+                        hdr_text = "\n".join(current_entity_lines).strip()
+                        if len(hdr_text) <= 250:
+                            current_table_lines.extend(current_entity_lines)
+                            current_entity_lines = []
+                        else:
+                            flush_entity_block()
                     current_table_lines.append(line_strip)
                     continue
                 else:
