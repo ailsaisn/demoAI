@@ -1545,6 +1545,17 @@ async def knowledge_chat(
         pipeline=pipeline
     )
 
+# Explicitly register office and document MIME types to prevent Debian/Alpine slim OS container mismatches
+mimetypes.add_type("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", ".xlsx")
+mimetypes.add_type("application/vnd.ms-excel", ".xls")
+mimetypes.add_type("application/vnd.openxmlformats-officedocument.wordprocessingml.document", ".docx")
+mimetypes.add_type("application/msword", ".doc")
+mimetypes.add_type("application/vnd.openxmlformats-officedocument.presentationml.presentation", ".pptx")
+mimetypes.add_type("application/vnd.ms-powerpoint", ".ppt")
+mimetypes.add_type("application/pdf", ".pdf")
+mimetypes.add_type("text/csv", ".csv")
+mimetypes.add_type("text/plain", ".txt")
+
 ALLOWED_MIME_TYPES = {
     "application/pdf",
     "application/msword",
@@ -1560,6 +1571,35 @@ ALLOWED_MIME_TYPES = {
     "image/png",
     "image/webp"
 }
+
+ALLOWED_EXTENSIONS = {
+    ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    ".xls": "application/vnd.ms-excel",
+    ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    ".doc": "application/msword",
+    ".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    ".ppt": "application/vnd.ms-powerpoint",
+    ".pdf": "application/pdf",
+    ".csv": "text/csv",
+    ".txt": "text/plain",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".png": "image/png",
+    ".webp": "image/webp"
+}
+
+def is_allowed_file_type(raw_ctype: str, filename: str) -> bool:
+    """Robust, OS-independent validation of file MIME type and extension."""
+    clean_ctype = (raw_ctype or "").lower().strip()
+    if clean_ctype in ALLOWED_MIME_TYPES:
+        return True
+    ext = os.path.splitext(filename)[1].lower()
+    if ext in ALLOWED_EXTENSIONS:
+        return True
+    guessed_type, _ = mimetypes.guess_type(filename)
+    if guessed_type and guessed_type.lower().strip() in ALLOWED_MIME_TYPES:
+        return True
+    return False
 
 @router.post("/upload", status_code=status.HTTP_202_ACCEPTED)
 async def upload_knowledge_file(
@@ -1577,13 +1617,11 @@ async def upload_knowledge_file(
     max_bytes = settings.MAX_UPLOAD_SIZE_MB * 1024 * 1024
     for target_file in upload_list:
         raw_ctype = (target_file.content_type or "").lower().strip()
-        if raw_ctype not in ALLOWED_MIME_TYPES:
-            guessed_type, _ = mimetypes.guess_type(target_file.filename or "")
-            if not guessed_type or guessed_type.lower().strip() not in ALLOWED_MIME_TYPES:
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"File type '{target_file.content_type}' not allowed for file '{target_file.filename}'. Allowed types: PDF, Word, Excel, PowerPoint, Text, CSV, and Images."
-                )
+        if not is_allowed_file_type(raw_ctype, target_file.filename or ""):
+            raise HTTPException(
+                status_code=400,
+                detail=f"File type '{target_file.content_type}' not allowed for file '{target_file.filename}'. Allowed types: PDF, Word, Excel, PowerPoint, Text, CSV, and Images."
+            )
 
         # Validate file size against MAX_UPLOAD_SIZE_MB
         f_size = getattr(target_file, "size", None)
@@ -1702,13 +1740,11 @@ async def upload_knowledge_chunk(
 
     # Validate file type using filename and chunk
     raw_ctype = (chunk.content_type or "").lower().strip()
-    if raw_ctype not in ALLOWED_MIME_TYPES:
-        guessed_type, _ = mimetypes.guess_type(clean_filename)
-        if not guessed_type or guessed_type.lower().strip() not in ALLOWED_MIME_TYPES:
-            raise HTTPException(
-                status_code=400,
-                detail=f"File type '{clean_filename}' not allowed. Allowed types: PDF, Word, Excel, PowerPoint, Text, CSV, and Images."
-            )
+    if not is_allowed_file_type(raw_ctype, clean_filename):
+        raise HTTPException(
+            status_code=400,
+            detail=f"File type '{clean_filename}' not allowed. Allowed types: PDF, Word, Excel, PowerPoint, Text, CSV, and Images."
+        )
 
     chunk_dir = os.path.join("data", "temp", "chunks", clean_upload_id)
     os.makedirs(chunk_dir, exist_ok=True)
@@ -2003,13 +2039,11 @@ async def replace_knowledge_file_endpoint(
         raise HTTPException(status_code=404, detail="Knowledge document not found.")
 
     raw_ctype = (file.content_type or "").lower().strip()
-    if raw_ctype not in ALLOWED_MIME_TYPES:
-        guessed_type, _ = mimetypes.guess_type(file.filename or "")
-        if not guessed_type or guessed_type.lower().strip() not in ALLOWED_MIME_TYPES:
-            raise HTTPException(
-                status_code=400,
-                detail=f"File type '{file.content_type}' not allowed for file '{file.filename}'. Allowed types: PDF, Word, Excel, PowerPoint, Text, CSV, and Images."
-            )
+    if not is_allowed_file_type(raw_ctype, file.filename or ""):
+        raise HTTPException(
+            status_code=400,
+            detail=f"File type '{file.content_type}' not allowed for file '{file.filename}'. Allowed types: PDF, Word, Excel, PowerPoint, Text, CSV, and Images."
+        )
 
     # Validate file size against MAX_UPLOAD_SIZE_MB
     max_bytes = settings.MAX_UPLOAD_SIZE_MB * 1024 * 1024

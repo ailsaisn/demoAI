@@ -689,21 +689,7 @@ async def list_chat_messages(
 
 from fastapi import Form, UploadFile, File
 import json
-
-ALLOWED_MIME_TYPES = {
-    "application/pdf",
-    "application/msword",
-    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-    "application/vnd.ms-excel",
-    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    "application/vnd.ms-powerpoint",
-    "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-    "text/plain",
-    "text/csv",
-    "image/jpeg",
-    "image/png",
-    "image/webp"
-}
+from app.api.routers.knowledge import is_allowed_file_type, ALLOWED_MIME_TYPES
 
 @router.post("/{session_id}/messages", status_code=status.HTTP_201_CREATED)
 async def create_chat_message(
@@ -763,7 +749,7 @@ async def create_chat_message(
         from app.rag.services.attachment_parser import AttachmentParser
         parser = AttachmentParser()
         for file in files:
-            if file.content_type not in ALLOWED_MIME_TYPES:
+            if not is_allowed_file_type(file.content_type, file.filename):
                 raise HTTPException(status_code=400, detail=f"File type {file.content_type} not allowed for file {file.filename}")
             try:
                 extracted_text, meta = await parser.extract_from_upload(file)
@@ -1040,7 +1026,7 @@ async def stream_chat_message(
         from app.rag.services.attachment_parser import AttachmentParser
         parser = AttachmentParser()
         for file in files:
-            if file.content_type not in ALLOWED_MIME_TYPES:
+            if not is_allowed_file_type(file.content_type, file.filename):
                 raise HTTPException(status_code=400, detail=f"File type {file.content_type} not allowed for file {file.filename}")
             try:
                 extracted_text, meta = await parser.extract_from_upload(file)

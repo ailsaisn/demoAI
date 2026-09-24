@@ -186,7 +186,7 @@ async function uploadFilesWithAutoChunking(
 			for (let i = 0; i < totalChunks; i++) {
 				const start = i * CHUNK_SIZE_BYTES;
 				const end = Math.min(file.size, start + CHUNK_SIZE_BYTES);
-				const chunkBlob = file.slice(start, end);
+				const chunkBlob = file.slice(start, end, file.type || "application/octet-stream");
 				const chunkForm = new FormData();
 				chunkForm.append("upload_id", uploadId);
 				chunkForm.append("chunk_index", i.toString());

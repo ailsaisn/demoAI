@@ -177,7 +177,7 @@ _INTENT_PATTERNS = [
     (
         QueryIntent.HOW_TO_USE,
         [
-            r"\bcara pakain?ya?\b", r"\bcara pengunaan\b", r"\baturan pakai\b",
+            r"\bcara pakai(?:nya)?\b", r"\bcara peng+unaan(?:nya)?\b", r"\baturan pakai\b",
             r"\bdosis\b", r"\bhow to use\b", r"\bdipakai kapan\b", r"\burutan pakai\b",
             r"\bcara menggunakannya\b", r"\bcara mengoleskan\b",
             r"\b(tahapan|tahapan treatment|tahapan tindakan|prosedur|prosedur tindakan|prosedur treatment|langkah[- ]langkah|protokol|step[- ]by[- ]step|alur tindakan|alur treatment)\b"

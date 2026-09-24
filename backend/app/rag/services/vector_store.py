@@ -117,23 +117,32 @@ class PGVectorAdapter(BaseVectorStoreAdapter):
         texts_to_embed = []
         for chunk in chunks:
             metadata = chunk.get("metadata", {})
-            source_file = metadata.get("source_file", "unknown")
-            
-            product_name = metadata.get("product_name") or metadata.get("title") or source_file
-            for ext in [".pdf", ".docx", ".doc", ".txt", ".xlsx", ".csv", ".jpg", ".jpeg", ".png", ".webp", "_parsed.json"]:
-                product_name = product_name.replace(ext, "")
-            product_name = product_name.replace("dumy-", "").replace("dummy-", "").replace("Dummy_", "").replace("dummy_", "")
-            product_name = product_name.replace("-", " ").replace("_", " ")
-            product_name = product_name.strip()
-            
-            section = metadata.get("section", "General")
-            sku = metadata.get("sku") or metadata.get("product_id") or metadata.get("item_code")
-            if not sku and isinstance(metadata.get("extracted_information"), dict):
-                ext_info = metadata["extracted_information"]
-                sku = ext_info.get("sku") or ext_info.get("product_id") or ext_info.get("item_code")
-            sku_header = f" | SKU: {sku}" if sku else ""
-            enriched_text = f"Product: {product_name}{sku_header} | Section: {section} | Content: {chunk['text']}"
-            texts_to_embed.append(enriched_text)
+            retrieval_text = metadata.get("retrieval_text")
+            if not retrieval_text:
+                source_file = metadata.get("source_file", "unknown")
+                product_name = metadata.get("product_name")
+                treatment_name = metadata.get("treatment_name")
+                form_factor = metadata.get("form_factor")
+                section = metadata.get("section", "General")
+                sku = metadata.get("sku") or metadata.get("product_id") or metadata.get("item_code")
+                if not sku and isinstance(metadata.get("extracted_information"), dict):
+                    ext_info = metadata["extracted_information"]
+                    sku = ext_info.get("sku") or ext_info.get("product_id") or ext_info.get("item_code")
+
+                parts = []
+                if treatment_name:
+                    parts.append(f"Treatment: {treatment_name}")
+                if product_name:
+                    parts.append(f"Product: {product_name}")
+                if form_factor:
+                    parts.append(f"Form Factor: {form_factor}")
+                if sku:
+                    parts.append(f"SKU: {sku}")
+                if section and section.lower() not in ("general", "root"):
+                    parts.append(f"Section: {section}")
+                parts.append(f"Content: {chunk.get('text', '')}")
+                retrieval_text = " | ".join(parts)
+            texts_to_embed.append(retrieval_text)
             
         embeddings = self.embeddings.embed_documents(texts_to_embed)
         
@@ -142,9 +151,12 @@ class PGVectorAdapter(BaseVectorStoreAdapter):
             for i, (chunk, vector) in enumerate(zip(chunks, embeddings)):
                 metadata = chunk.get("metadata", {})
                 source_file = metadata.get("source_file", "unknown")
-                chunk_index = metadata.get("chunk_index", i)
-                
-                unique_id = f"{source_file}_{chunk_index}_{i}"
+                chunk_id = metadata.get("chunk_id")
+                if chunk_id:
+                    unique_id = str(chunk_id)
+                else:
+                    chunk_index = metadata.get("chunk_index", i)
+                    unique_id = f"{source_file}_{chunk_index}_{i}"
                 
                 existing = session.query(DocumentChunk).filter_by(id=unique_id).first()
                 if existing:
@@ -177,7 +189,18 @@ class PGVectorAdapter(BaseVectorStoreAdapter):
                 if filter_metadata:
                     from sqlalchemy import not_, or_, func
                     for k, v in filter_metadata.items():
-                        if k == "excluded_categories" and isinstance(v, list):
+                        if k in ("clinic_id", "user_clinic_id") and v:
+                            user_clinic = str(v).strip()
+                            scope_clause = or_(
+                                DocumentChunk.metadata_["knowledge_scope"].astext.ilike("GLOBAL"),
+                                DocumentChunk.metadata_["knowledge_scope"].astext.ilike("TENANT"),
+                                DocumentChunk.metadata_["clinic_id"].astext.ilike(f"%{user_clinic}%"),
+                                DocumentChunk.metadata_["clinics"].astext.ilike(f"%{user_clinic}%"),
+                                DocumentChunk.metadata_["clinics"].astext.ilike("%all%"),
+                                DocumentChunk.metadata_["clinic_id"].is_(None)
+                            )
+                            q = q.filter(scope_clause)
+                        elif k == "excluded_categories" and isinstance(v, list):
                             for item in v:
                                 if item:
                                     # Native JSONB array containment exclusion (coalesce handles missing/null categories key safely)
