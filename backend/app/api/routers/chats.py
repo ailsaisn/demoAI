@@ -965,7 +965,15 @@ async def create_chat_message(
                 session.add(ai_msg)
                 await session.commit()
                 
-    return StreamingResponse(sse_generator(), media_type="text/event-stream")
+    return StreamingResponse(
+        sse_generator(),
+        media_type="text/event-stream",
+        headers={
+            "X-Accel-Buffering": "no",
+            "Cache-Control": "no-cache, no-transform",
+            "Connection": "keep-alive"
+        }
+    )
 
 @router.post("/{session_id}/messages/stream")
 async def stream_chat_message(
@@ -1224,4 +1232,11 @@ async def stream_chat_message(
                 session.add(ai_msg)
                 await session.commit()
                 
-    return EventSourceResponse(sse_generator())
+    return EventSourceResponse(
+        sse_generator(),
+        headers={
+            "X-Accel-Buffering": "no",
+            "Cache-Control": "no-cache, no-transform",
+            "Connection": "keep-alive"
+        }
+    )
