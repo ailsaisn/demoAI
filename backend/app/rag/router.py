@@ -6264,7 +6264,14 @@ async def _resolve_query_general_prompt(db_session) -> str:
         result = await db_session.execute(stmt)
         db_prompt = result.scalar_one_or_none()
         if db_prompt and db_prompt.strip():
-            if "GAMBAR PRODUK & TREATMENT RESMI" not in db_prompt or "PENYAJIAN JURNAL ILMIAH & KATALOG TABEL" not in db_prompt:
+            needs_sync = (
+                "GAMBAR PRODUK & TREATMENT RESMI" not in db_prompt
+                or "PENYAJIAN JURNAL ILMIAH & KATALOG TABEL" not in db_prompt
+                or "BATASAN AKSES ROLE DOKTER" in db_prompt
+                or "Currently, we are unable to provide this information." in db_prompt
+                or "KONTRAINDIKASI, KONDISI KHUSUS" not in db_prompt
+            )
+            if needs_sync:
                 try:
                     stmt_update = select(AppConfig).where(AppConfig.key == "AI_PROMPT_QUERY_GENERAL")
                     res_cfg = await db_session.execute(stmt_update)
@@ -6272,7 +6279,7 @@ async def _resolve_query_general_prompt(db_session) -> str:
                     if cfg_obj:
                         cfg_obj.value = DEFAULT_QUERY_GENERAL_PROMPT
                         await db_session.commit()
-                        logger.info("[QUERY-GENERAL] Auto-synchronized AI_PROMPT_QUERY_GENERAL in AppConfig DB with natural Q&A persona and scientific journal/catalog guidance.")
+                        logger.info("[QUERY-GENERAL] Auto-synchronized AI_PROMPT_QUERY_GENERAL in AppConfig DB with natural Q&A persona and clean Admin document guidance.")
                 except Exception as sync_err:
                     logger.warning(f"[QUERY-GENERAL] Could not auto-sync DB prompt: {sync_err}")
                 return DEFAULT_QUERY_GENERAL_PROMPT
