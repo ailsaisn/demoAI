@@ -1753,6 +1753,45 @@ def resolve_approved_file(knowledge_id: str) -> Optional[str]:
 
 
 
+def is_knowledge_record_active(k_id: Optional[str], file_name: Optional[str]) -> bool:
+    """Helper to check whether a document is still actively published/pending in DB (deleted_at IS NULL)."""
+    try:
+        from app.core.database import engine
+        from sqlalchemy import text
+        import uuid as _uuid
+        with engine.connect() as conn:
+            if k_id:
+                try:
+                    kuuid = str(_uuid.UUID(k_id))
+                    row = conn.execute(
+                        text("SELECT id FROM knowledge WHERE id = :kid AND deleted_at IS NULL"),
+                        {"kid": kuuid}
+                    ).first()
+                    if row:
+                        return True
+                    # If we checked specific valid UUID and found it deleted/missing:
+                    # check if any other active record with this filename exists
+                    if file_name:
+                        row_f = conn.execute(
+                            text("SELECT id FROM knowledge WHERE file_name = :fname AND deleted_at IS NULL"),
+                            {"fname": file_name}
+                        ).first()
+                        return bool(row_f)
+                    return False
+                except ValueError:
+                    pass
+            if file_name:
+                row = conn.execute(
+                    text("SELECT id FROM knowledge WHERE file_name = :fname AND deleted_at IS NULL"),
+                    {"fname": file_name}
+                ).first()
+                return bool(row)
+    except Exception:
+        # If DB check fails or table is unavailable, fallback to True for safety
+        return True
+    return False
+
+
 def detect_duplicate_lifecycle(file_hash: str, file_name: str) -> Dict[str, Any]:
     """
     Evaluates the duplicate status of an uploaded file across the entire Knowledge Base:
@@ -1790,11 +1829,21 @@ def detect_duplicate_lifecycle(file_hash: str, file_name: str) -> Dict[str, Any]
                     is_name_match = bool(ex_name and ex_name.strip().lower() == clean_name)
 
                     if is_hash_match or is_name_match:
+                        # Verify that this published record is still active in the database
+                        doc_kid = k_id or f[:-5]
+                        if not is_knowledge_record_active(doc_kid, ex_name or file_name):
+                            # Orphaned file from a soft-deleted knowledge document; remove and ignore
+                            try:
+                                os.remove(full_path)
+                            except Exception:
+                                pass
+                            continue
+
                         match_reason = "SHA-256 Checksum Match" if is_hash_match else "Filename Match"
                         return {
                             "status": "PUBLISHED",
                             "existing_file": ex_name or f,
-                            "knowledge_id": k_id or f[:-5],
+                            "knowledge_id": doc_kid,
                             "match_reason": match_reason
                         }
                 except Exception:
@@ -1828,11 +1877,20 @@ def detect_duplicate_lifecycle(file_hash: str, file_name: str) -> Dict[str, Any]
                     is_name_match = bool(ex_name and ex_name.strip().lower() == clean_name)
 
                     if is_hash_match or is_name_match:
+                        doc_kid = k_id or f[:-5]
+                        if not is_knowledge_record_active(doc_kid, ex_name or file_name):
+                            # Orphaned staging file from a soft-deleted knowledge document; remove and ignore
+                            try:
+                                os.remove(full_path)
+                            except Exception:
+                                pass
+                            continue
+
                         match_reason = "SHA-256 Checksum Match" if is_hash_match else "Filename Match"
                         return {
                             "status": "PENDING",
                             "existing_file": ex_name or f,
-                            "knowledge_id": k_id or f[:-5],
+                            "knowledge_id": doc_kid,
                             "match_reason": match_reason
                         }
                 except Exception:
@@ -2984,9 +3042,14 @@ async def ingest_document(
                             existing_doc = None
                             if custom_uuid:
                                 existing_doc = await session.get(Knowledge, custom_uuid)
-                            if not existing_doc:
+                                if existing_doc and existing_doc.deleted_at is not None:
+                                    existing_doc = None
+                            if not existing_doc and (dup_status == "PENDING" and replace_existing):
                                 res = await session.execute(
-                                    select(Knowledge).where(Knowledge.file_name == target_file.filename).order_by(Knowledge.created_at.desc())
+                                    select(Knowledge).where(
+                                        Knowledge.file_name == target_file.filename,
+                                        Knowledge.deleted_at.is_(None)
+                                    ).order_by(Knowledge.created_at.desc())
                                 )
                                 existing_doc = res.scalars().first()
 
@@ -3013,7 +3076,7 @@ async def ingest_document(
                                     "file_hash": file_hash
                                 }
                                 knowledge = Knowledge(
-                                    id=custom_uuid if custom_uuid else _uuid.uuid4(),
+                                    id=_uuid.uuid4(),
                                     type=k_type,
                                     title=target_file.filename,
                                     file_name=target_file.filename,
