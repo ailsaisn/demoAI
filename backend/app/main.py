@@ -244,10 +244,13 @@ async def startup_preload_models():
     def _preload():
         try:
             from app.rag.services.factory import AdapterFactory
-            reranker = AdapterFactory.get_reranker()
-            reranker._ensure_loaded()
+            enable_reranker = os.getenv("ENABLE_RERANKER", "false").lower() in ("true", "1", "yes")
+            if enable_reranker:
+                reranker = AdapterFactory.get_reranker()
+                reranker._ensure_loaded()
+                logger.info("Cross-Encoder Reranker model pre-warmed successfully on server startup.")
             AdapterFactory.get_bm25_index()
-            logger.info("AI RAG models pre-warmed successfully on server startup.")
+            logger.info("AI RAG BM25 index pre-warmed successfully on server startup.")
         except Exception as e:
             logger.warning(f"Background model preloading skipped: {e}")
 

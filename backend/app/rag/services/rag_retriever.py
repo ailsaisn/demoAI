@@ -1002,13 +1002,13 @@ class HybridRetriever:
                 logger.info(f"⚡ [Fast-Path Bypass] Dense & Sparse top match agreed on '{top_dense_src}' (score: {top_dense_score:.3f}). Skipping CPU cross-encoder.")
 
         final_hits = active_hits
-        if rerank and self.reranker and active_hits:
-            if skip_heavy_reranker:
+        if active_hits:
+            if not self.reranker or not rerank or skip_heavy_reranker:
                 all_reranked = []
                 default_conf = float(dense_hits[0].get("score", 0.85)) if dense_hits and isinstance(dense_hits[0], dict) else 0.85
                 for h in active_hits:
                     hc = h.copy()
-                    hc["rerank_score"] = max(default_conf, 0.85)
+                    hc["rerank_score"] = float(hc.get("rrf_score", hc.get("score", default_conf)))
                     all_reranked.append(hc)
             else:
                 all_reranked = self.reranker.rerank(query, active_hits, top_n=len(active_hits))

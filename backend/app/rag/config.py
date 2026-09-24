@@ -34,6 +34,7 @@ class Settings(BaseSettings):
     embedding_model_name: str = "text-embedding-3-small"
     
     # Reranker Settings
+    enable_reranker: bool = False
     reranker_model_name: str = "BAAI/bge-reranker-base"
     rerank_confidence_threshold: float = 0.1
     

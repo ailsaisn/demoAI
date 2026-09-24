@@ -57,6 +57,7 @@ services:
       - POSTGRES_PORT=5432
       - ENV=prod
       - WORKERS=1
+      - ENABLE_RERANKER=false
       - RATE_LIMIT_PER_MINUTE=1000
     depends_on:
       db:
