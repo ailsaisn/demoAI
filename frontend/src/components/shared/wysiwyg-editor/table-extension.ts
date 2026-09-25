@@ -57,7 +57,25 @@ export const CustomTable = BaseTable.extend({
 					state.inTable = false;
 				},
 				parse: {
-					// handled by markdown-it
+					/**
+					 * Wrap all inline content inside <td> and <th> cells in <p> tags
+					 * so ProseMirror's tableCell/tableHeader schema (which requires block+ content)
+					 * accepts the contents without dropping inline elements like <img>.
+					 */
+					updateDOM(element: HTMLElement) {
+						element.querySelectorAll("td, th").forEach((cell) => {
+							const hasBlock = Array.from(cell.children).some((child) =>
+								/^(P|UL|OL|PRE|DIV|BLOCKQUOTE|TABLE)$/i.test(child.tagName),
+							);
+							if (!hasBlock && cell.childNodes.length > 0) {
+								const p = element.ownerDocument.createElement("p");
+								while (cell.firstChild) {
+									p.appendChild(cell.firstChild);
+								}
+								cell.appendChild(p);
+							}
+						});
+					},
 				},
 			},
 		};

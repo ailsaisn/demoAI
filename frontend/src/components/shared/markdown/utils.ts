@@ -206,7 +206,90 @@ export function stripInternalMetadata(text?: string | null): string {
 	// Normalize unicode bullet symbols (•, ●, ◦) to standard markdown list syntax
 	cleaned = cleaned.replace(/^[ \t]*[•●◦][ \t]*/gm, "- ");
 
+	// Normalize ordered list numbering across images and visual breaks
+	cleaned = normalizeOrderedListNumbering(cleaned);
+
 	return cleaned.trim();
+}
+
+/**
+ * Normalizes ordered list numbering across visual breaks (such as standalone images,
+ * blank lines, or sub-bullets) so that lists maintain a continuous, monotonic numbering
+ * sequence (1, 2, 3, ...) instead of resetting back to 1.
+ * Also indents standalone markdown images that directly follow an ordered list item
+ * so CommonMark keeps them within the parent list item (preventing AST fragmentation).
+ */
+export function normalizeOrderedListNumbering(markdown: string): string {
+	if (!markdown) return "";
+
+	const lines = markdown.split("\n");
+	const result: string[] = [];
+	let currentExpectedNumber = 0;
+	let inList = false;
+
+	for (let i = 0; i < lines.length; i++) {
+		const line = lines[i];
+		const match = line.match(/^(\s{0,2})(\d+)\.\s+(.*)$/);
+
+		if (match) {
+			const indent = match[1];
+			const rest = match[3];
+
+			if (!inList) {
+				inList = true;
+				currentExpectedNumber = 1;
+			} else {
+				currentExpectedNumber++;
+			}
+
+			result.push(`${indent}${currentExpectedNumber}. ${rest}`);
+			continue;
+		}
+
+		// Reset list tracking upon encountering structural section dividers or headings
+		const isHeading = /^\s*#{1,6}\s+/.test(line);
+		const isHorizontalRule = /^\s*(?:---|\*\*\*|___)\s*$/.test(line);
+		const isTable = /^\s*\|/.test(line);
+
+		if (isHeading || isHorizontalRule || isTable) {
+			inList = false;
+			currentExpectedNumber = 0;
+			result.push(line);
+			continue;
+		}
+
+		// If we are inside an active ordered list and encounter a standalone image:
+		// Indent the image by 3 spaces so CommonMark treats it as part of the current list item
+		const imageMatch = line.match(/^(\s*)!\[([^\]]*)\]\(([^)]+)\)\s*$/);
+		if (inList && imageMatch && imageMatch[1].length < 3) {
+			result.push(`   ${imageMatch[0].trim()}`);
+			continue;
+		}
+
+		// Check if a line is a blank line, sub-bullet, or indented block (which does not break the list)
+		const isBlank = line.trim() === "";
+		const isBulletOrIndented = /^\s*(?:[-*•]|\s{2,})/.test(line);
+
+		if (!isBlank && !isBulletOrIndented) {
+			let hasSubsequentListItem = false;
+			for (let j = i + 1; j < Math.min(i + 5, lines.length); j++) {
+				if (/^\s{0,2}\d+\.\s+/.test(lines[j])) {
+					hasSubsequentListItem = true;
+					break;
+				}
+				if (/^\s*#{1,6}\s+/.test(lines[j])) break;
+			}
+
+			if (!hasSubsequentListItem) {
+				inList = false;
+				currentExpectedNumber = 0;
+			}
+		}
+
+		result.push(line);
+	}
+
+	return result.join("\n");
 }
 
 export function cleanDeletedItemFromMarkdown(text?: string | null, targetItem?: string | null): string {

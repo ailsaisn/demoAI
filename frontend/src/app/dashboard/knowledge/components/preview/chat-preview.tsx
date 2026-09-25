@@ -404,6 +404,7 @@ export function ChatPreview({
 
 		updated = updated.replace(/\n{3,}/g, "\n\n").trim();
 		handleSummaryChange(updated);
+		setBackupManualSummary(updated);
 		setManualEditRevision((r) => r + 1);
 	};
 
@@ -1622,7 +1623,7 @@ export function ChatPreview({
 			return (
 				<div className="flex flex-col w-full my-2 gap-2">
 					{(() => {
-						const text = localSummary || displayContent || "";
+						const text = backupManualSummary || localSummary || displayContent || "";
 						const matches = Array.from(text.matchAll(/!\[([^\]]*)\]\s*\n*\s*\(([^)]+)\)/g));
 						const seen = new Set<string>();
 						const docImages: { alt: string; url: string }[] = [];

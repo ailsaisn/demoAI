@@ -197,8 +197,7 @@ export const EditorImage = Node.create({
 			"img",
 			mergeAttributes(HTMLAttributes, {
 				src: resolved,
-				class:
-					"editor-image inline-block max-h-24 max-w-48 rounded border border-zinc-200 bg-white object-contain p-1 shadow-2xs align-middle",
+				class: "editor-image inline-block max-h-24 max-w-48 rounded border border-zinc-200 bg-white object-contain p-1 shadow-2xs align-middle",
 			}),
 		];
 	},
@@ -224,7 +223,20 @@ export const EditorImage = Node.create({
 					state.write(`![${alt}](${src}${title})`);
 				},
 				parse: {
-					// handled by markdown-it
+					/**
+					 * Ensure <img> inside <td>/<th> is wrapped in <p> so ProseMirror's
+					 * tableCell (content: block+) can accept it during DOM parsing.
+					 * markdown-it renders `![alt](url)` inside table cells as bare <img>
+					 * without a <p> wrapper, which causes ProseMirror to silently drop
+					 * the inline image node.
+					 */
+					updateDOM(element: HTMLElement) {
+						element.querySelectorAll("td > img, th > img").forEach((img) => {
+							const p = element.ownerDocument.createElement("p");
+							img.parentNode?.insertBefore(p, img);
+							p.appendChild(img);
+						});
+					},
 				},
 			},
 		};

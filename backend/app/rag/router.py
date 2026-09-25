@@ -6270,6 +6270,7 @@ async def _resolve_query_general_prompt(db_session) -> str:
                 or "BATASAN AKSES ROLE DOKTER" in db_prompt
                 or "Currently, we are unable to provide this information." in db_prompt
                 or "KONTRAINDIKASI, KONDISI KHUSUS" not in db_prompt
+                or "KONSISTENSI PENOMORAN DAFTAR" not in db_prompt
             )
             if needs_sync:
                 try:

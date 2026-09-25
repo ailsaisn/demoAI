@@ -13,7 +13,7 @@ import { TableHeader } from "@tiptap/extension-table-header";
 import { TableRow } from "@tiptap/extension-table-row";
 import { EditorContent, useEditor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
-import React, { useCallback, useEffect } from "react";
+import React, { useCallback, useEffect, useRef } from "react";
 import { Markdown } from "tiptap-markdown";
 import { EditorToolbar } from "./editor-toolbar";
 import { EditorImage } from "./image-extension";
@@ -35,6 +35,11 @@ export function WysiwygEditor({
 	onChange,
 	isSaving = false,
 }: WysiwygEditorProps) {
+	// Guard: skip the first onUpdate call which fires on mount/content-set
+	// to prevent serialized content (which may lose images) from overwriting
+	// the parent's localSummary before the user has actually edited anything.
+	const isFirstUpdate = useRef(true);
+
 	const editor = useEditor({
 		immediatelyRender: false,
 		extensions: [
@@ -56,8 +61,7 @@ export function WysiwygEditor({
 			}),
 			TableHeader.configure({
 				HTMLAttributes: {
-					class:
-						"bg-zinc-100 font-semibold text-left p-2.5 border border-zinc-200 text-xs text-zinc-900",
+					class: "bg-zinc-100 font-semibold text-left p-2.5 border border-zinc-200 text-xs text-zinc-900",
 				},
 			}),
 			TableCell.configure({
@@ -88,6 +92,14 @@ export function WysiwygEditor({
 			},
 		},
 		onUpdate: ({ editor: ed }) => {
+			// Skip the initial onUpdate that fires when content is first set.
+			// This prevents the serialized markdown (which may drop images from
+			// table cells) from overwriting the parent's localSummary before
+			// the user has actually made any edits.
+			if (isFirstUpdate.current) {
+				isFirstUpdate.current = false;
+				return;
+			}
 			const storage = ed.storage as unknown as Record<string, { getMarkdown?: () => string }>;
 			const md = storage.markdown?.getMarkdown?.() || "";
 			if (onChange) {

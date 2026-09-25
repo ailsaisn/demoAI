@@ -182,18 +182,27 @@ export const defaultMarkdownComponents: Components = {
 		}
 		return <p className="my-1 text-sm text-zinc-900 leading-normal font-normal">{children}</p>;
 	},
-	ol: ({ children }) => (
-		<ol className="list-decimal pl-5 my-1 space-y-0.5 text-sm text-zinc-900 leading-normal font-normal marker:text-zinc-600">
+	ol: ({ children, start, node: _node, ...props }: React.ComponentProps<"ol"> & { node?: unknown }) => (
+		<ol
+			start={start}
+			className="list-decimal pl-5 my-1 space-y-0.5 text-sm text-zinc-900 leading-normal font-normal marker:text-zinc-600"
+			{...props}
+		>
 			{children}
 		</ol>
 	),
-	ul: ({ children }) => (
-		<ul className="list-disc pl-5 my-1 space-y-0.5 text-sm text-zinc-900 leading-normal font-normal marker:text-zinc-500">
+	ul: ({ children, node: _node, ...props }: React.ComponentProps<"ul"> & { node?: unknown }) => (
+		<ul
+			className="list-disc pl-5 my-1 space-y-0.5 text-sm text-zinc-900 leading-normal font-normal marker:text-zinc-500"
+			{...props}
+		>
 			{children}
 		</ul>
 	),
-	li: ({ children }) => (
-		<li className="text-sm leading-normal text-zinc-900 font-normal">{children}</li>
+	li: ({ children, node: _node, ...props }: React.ComponentProps<"li"> & { node?: unknown }) => (
+		<li className="text-sm leading-normal text-zinc-900 font-normal" {...props}>
+			{children}
+		</li>
 	),
 	h1: ({ children }) => (
 		<h1 className="text-base font-semibold text-zinc-950 first:mt-1 mt-4 mb-2 tracking-tight">
