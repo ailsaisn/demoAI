@@ -478,6 +478,7 @@ export function ChatPreview({
 
 		if (updated !== currentContent) {
 			handleSummaryChange(updated);
+			setBackupManualSummary(updated);
 			setManualEditRevision((r) => r + 1);
 			setEditingImage(null);
 			toast.success("Label gambar berhasil diperbarui");

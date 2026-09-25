@@ -8,7 +8,6 @@ import {
 	RiLoader4Line,
 } from "@remixicon/react";
 import { Placeholder } from "@tiptap/extension-placeholder";
-import { Table } from "@tiptap/extension-table";
 import { TableCell } from "@tiptap/extension-table-cell";
 import { TableHeader } from "@tiptap/extension-table-header";
 import { TableRow } from "@tiptap/extension-table-row";
@@ -17,6 +16,8 @@ import StarterKit from "@tiptap/starter-kit";
 import React, { useCallback, useEffect } from "react";
 import { Markdown } from "tiptap-markdown";
 import { EditorToolbar } from "./editor-toolbar";
+import { EditorImage } from "./image-extension";
+import { CustomTable } from "./table-extension";
 
 interface WysiwygEditorProps {
 	initialContent: string;
@@ -42,7 +43,7 @@ export function WysiwygEditor({
 					levels: [1, 2, 3],
 				},
 			}),
-			Table.configure({
+			CustomTable.configure({
 				resizable: true,
 				HTMLAttributes: {
 					class: "border-collapse table-auto w-full my-3 border border-zinc-200",
@@ -61,9 +62,10 @@ export function WysiwygEditor({
 			}),
 			TableCell.configure({
 				HTMLAttributes: {
-					class: "p-2.5 border border-zinc-200 text-xs text-zinc-800",
+					class: "p-2.5 border border-zinc-200 text-xs text-zinc-800 align-top",
 				},
 			}),
+			EditorImage,
 			Placeholder.configure({
 				placeholder: "Type your formatted knowledge content here...",
 			}),
