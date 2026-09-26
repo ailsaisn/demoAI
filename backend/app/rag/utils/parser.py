@@ -1328,6 +1328,16 @@ class DocumentParser:
         # Strip bureaucratic signature blocks and approval sheets from SOPs, protocols, and letters
         pages = _strip_signature_and_approval_blocks(pages)
 
+        # Validate that genuine knowledge text was extracted (strip markdown image tags, URLs, HTML tags)
+        from app.rag.utils.pdf_analyzer import clean_extracted_text
+        total_pure_chars = sum(len(clean_extracted_text(p.get("text", ""))) for p in pages)
+        if total_pure_chars < 50:
+            logger.info(
+                f"⚠️ [PDF-ROUTER] Fast path extracted only {total_pure_chars} pure characters from {file_path}. "
+                f"Document requires deep PDF classification & specialized extraction."
+            )
+            return None
+
         return ParseResult(pages=pages, method="fast")
 
     # -------------------------------------------------------------------------
@@ -2196,9 +2206,35 @@ class DocumentParser:
                 result = self._parse_pdf_fast(file_path)
 
                 if result is None:
-                    # Scanned PDF detected → Docling OCR fallback
-                    logger.info(f"🔬 Docling OCR fallback for scanned PDF: {file_path}")
-                    result = self._parse_with_docling(file_path)
+                    # PDF has insufficient selectable digital text -> analyze complexity
+                    logger.info(f"🔍 Analyzing PDF complexity for non-digital PDF: {file_path}")
+                    try:
+                        import fitz
+                        from app.rag.utils.pdf_analyzer import analyze_pdf_complexity, PDFDocumentType
+                        from app.rag.utils.flattened_parser import FlattenedDesignParser
+                        from app.rag.canonical import PDFContext
+
+                        pdf_doc = fitz.open(file_path)
+                        analysis = analyze_pdf_complexity(pdf_doc, file_path)
+                        pdf_doc.close()
+
+                        # Catalogs, brochures, PowerPoint/Canva prints, or scanned images -> RapidOCR
+                        if analysis.pdf_type in (PDFDocumentType.FLATTENED_DESIGN, PDFDocumentType.SCANNED_IMAGE, PDFDocumentType.HYBRID):
+                            logger.info(f"🎨 Routing {analysis.pdf_type.value} to FlattenedDesignParser (RapidOCR)...")
+                            flat_parser = FlattenedDesignParser()
+                            ctx = PDFContext.FLATTENED_DESIGN if analysis.pdf_type == PDFDocumentType.FLATTENED_DESIGN else PDFContext.SCANNED
+                            parsed_pages = flat_parser.parse_pdf(file_path, pdf_context=ctx)
+                            if parsed_pages and any(p.get("text") for p in parsed_pages):
+                                result = ParseResult(pages=parsed_pages, method="fast")
+                            else:
+                                logger.warning(f"FlattenedDesignParser returned empty text for {file_path}, falling back to Docling...")
+                                result = self._parse_with_docling(file_path)
+                        else:
+                            logger.info(f"🔬 Docling OCR fallback for {analysis.pdf_type.value}: {file_path}")
+                            result = self._parse_with_docling(file_path)
+                    except Exception as route_err:
+                        logger.warning(f"Specialized PDF routing failed: {route_err}, falling back to Docling...")
+                        result = self._parse_with_docling(file_path)
             elif ext in [".png", ".jpg", ".jpeg", ".webp"]:
                 logger.info(f"🖼️ Standalone image extraction & MinIO upload: {file_path}")
                 result = self._parse_standalone_image(file_path, fast_mode=fast_mode)

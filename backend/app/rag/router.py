@@ -1792,14 +1792,28 @@ def is_knowledge_record_active(k_id: Optional[str], file_name: Optional[str]) ->
     return False
 
 
+ACTIVE_PROCESSING_HASHES: Dict[str, Dict[str, Any]] = {}
+
+
 def detect_duplicate_lifecycle(file_hash: str, file_name: str) -> Dict[str, Any]:
     """
     Evaluates the duplicate status of an uploaded file across the entire Knowledge Base:
+    - State 0: PROCESSING (currently being processed in background pipeline) -> ALREADY IN QUEUE
     - State 1: PUBLISHED (in data/output or KnowledgeStatus.APPROVED) -> BLOCK
     - State 2: PENDING (in data/pending or KnowledgeStatus.PENDING/ON_REVIEW) -> ASK ADMIN (Keep/Replace)
     - State 3: NEW -> Ingest
     """
     clean_name = file_name.strip().lower()
+
+    # 0. Check IN-FLIGHT PROCESSING (in active background pipeline)
+    if file_hash and file_hash in ACTIVE_PROCESSING_HASHES:
+        active_info = ACTIVE_PROCESSING_HASHES[file_hash]
+        return {
+            "status": "PROCESSING",
+            "existing_file": active_info.get("file_name", file_name),
+            "knowledge_id": active_info.get("knowledge_id"),
+            "match_reason": "Active In-Flight Ingestion Task"
+        }
 
     # 1. Check PUBLISHED / APPROVED (data/output)
     approved_dir = "data/output"
@@ -1942,6 +1956,8 @@ async def process_ingestion_background(
 ):
     if is_ingestion_cancelled(knowledge_id):
         logger.info(f"🛑 [INGESTION ABORTED] Knowledge ID '{knowledge_id}' ({file_name}) was cancelled before processing started.")
+        if file_hash:
+            ACTIVE_PROCESSING_HASHES.pop(file_hash, None)
         if os.path.exists(file_path):
             try:
                 os.remove(file_path)
@@ -2679,6 +2695,8 @@ Return ONLY valid JSON (no surrounding markdown code blocks):
             logger.warning(f"Could not update Knowledge DB record on failure: {db_err}")
     finally:
         CANCELLED_INGESTION_IDS.discard(str(knowledge_id).lower())
+        if file_hash:
+            ACTIVE_PROCESSING_HASHES.pop(file_hash, None)
 
 async def trigger_batch_summary_after_all_done(batch_id: str, expected_count: int, llm: BaseLLMAdapter, user_prompt: Optional[str] = None, timeout_sec: int = 180):
     """
@@ -2945,7 +2963,9 @@ async def ingest_document(
                     k_type = KnowledgeType.GENERAL
 
                     os.makedirs("data/temp", exist_ok=True)
-                    file_path = f"data/temp/{target_file.filename}"
+                    unique_prefix = _uuid.uuid4().hex[:12]
+                    clean_orig_name = os.path.basename(target_file.filename)
+                    file_path = f"data/temp/{unique_prefix}_{clean_orig_name}"
                     hasher = hashlib.sha256()
 
                     # Stream upload chunk-by-chunk directly to disk to prevent RAM spikes (safe for >100MB files)
@@ -2958,10 +2978,37 @@ async def ingest_document(
                     file_size = os.path.getsize(file_path)
 
                     # -------------------------------------------------------------
-                    # 3-WAY DUPLICATE DETECTION LIFECYCLE
+                    # 4-WAY DUPLICATE DETECTION LIFECYCLE (PROCESSING / PUBLISHED / PENDING / NEW)
                     # -------------------------------------------------------------
                     dup_info = detect_duplicate_lifecycle(file_hash, target_file.filename)
                     dup_status = dup_info.get("status", "NEW")
+
+                    # 0. STATE: PROCESSING -> PREVENT REDUNDANT CONCURRENT INGESTION
+                    if dup_status == "PROCESSING":
+                        if os.path.exists(file_path):
+                            try:
+                                os.remove(file_path)
+                            except Exception:
+                                pass
+                        proc_msg = (
+                            f"Dokumen '{target_file.filename}' saat ini sedang dianalisis dan diekstrak di antrean server "
+                            f"(Knowledge ID: {dup_info.get('knowledge_id')}). Mohon tunggu proses selesai."
+                        )
+                        logger.warning(f"⏳ {file_label} {proc_msg}")
+                        if total == 1:
+                            raise HTTPException(
+                                status_code=409,
+                                detail=proc_msg
+                            )
+                        return {
+                            "file_name": target_file.filename,
+                            "existing_knowledge_id": dup_info.get("knowledge_id"),
+                            "batch_id": batch_id,
+                            "status": "PROCESSING",
+                            "action": "QUEUED_ALREADY",
+                            "duplicate_status": "PROCESSING",
+                            "detail": proc_msg
+                        }
 
                     # 1. STATE: PUBLISHED -> BLOCK
                     if dup_status == "PUBLISHED":
@@ -3112,6 +3159,15 @@ async def ingest_document(
                             logger.info(f"📄 {file_label} [ID: {k_id}] Original document uploaded to MinIO: {original_s3_key}")
                     except Exception as minio_err:
                         logger.warning(f"{file_label} MinIO upload note: {minio_err}")
+
+                    # Register active in-flight processing hash
+                    if file_hash:
+                        import time as _time
+                        ACTIVE_PROCESSING_HASHES[file_hash] = {
+                            "knowledge_id": k_id,
+                            "file_name": target_file.filename,
+                            "started_at": _time.time()
+                        }
 
                     # Spawn concurrent background ingestion task (governed by _ingestion_semaphore)
                     uncancel_ingestion_job(k_id)

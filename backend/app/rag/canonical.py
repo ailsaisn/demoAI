@@ -271,6 +271,26 @@ class ClinicalStage(str, Enum):
     AFTER = "after"
 
 
+class ImageOrigin(str, Enum):
+    EMBEDDED_ASSET = "embedded_asset"  # Extracted directly from PDF XObject stream
+    PAGE_RENDER = "page_render"        # Cropped from rendered page canvas
+
+
+class PDFContext(str, Enum):
+    DIGITAL = "digital"
+    FLATTENED_DESIGN = "flattened_design"
+    SCANNED = "scanned"
+    SPREADSHEET = "spreadsheet"
+    DOCUMENT = "document"
+
+
+class ImageSemanticRole(str, Enum):
+    PRODUCT_REFERENCE = "product_reference"
+    TREATMENT_EVIDENCE = "treatment_evidence"
+    SCIENTIFIC_EVIDENCE = "scientific_evidence"
+    DOCUMENT_DECORATION = "document_decoration"
+
+
 # Canonical Form Factor Taxonomy (Single Source of Truth across Parser, Retrieval, and Generator)
 FORM_FACTOR_TAXONOMY: Dict[str, str] = {
     "serum": "serum",
@@ -379,6 +399,11 @@ class ImageProvenance:
     confidence: float = 0.0
     classification_reason: Optional[str] = None
 
+    image_origin: ImageOrigin = ImageOrigin.EMBEDDED_ASSET
+    extraction_source: str = "embedded_image"
+    pdf_context: PDFContext = PDFContext.DIGITAL
+    semantic_role: ImageSemanticRole = ImageSemanticRole.PRODUCT_REFERENCE
+
     def should_display(self) -> bool:
         """Only INCLUDE is permitted to display. REVIEW and EXCLUDE are strictly suppressed."""
         return self.display_policy == ImageDisplayPolicy.INCLUDE
@@ -399,6 +424,10 @@ class ImageProvenance:
             "image_type": self.image_type.value if isinstance(self.image_type, ImageType) else str(self.image_type),
             "image_relevance": self.image_relevance.value if isinstance(self.image_relevance, ImageRelevance) else str(self.image_relevance),
             "display_policy": self.display_policy.value if isinstance(self.display_policy, ImageDisplayPolicy) else str(self.display_policy),
+            "image_origin": self.image_origin.value if isinstance(self.image_origin, ImageOrigin) else str(self.image_origin),
+            "extraction_source": self.extraction_source,
+            "pdf_context": self.pdf_context.value if isinstance(self.pdf_context, PDFContext) else str(self.pdf_context),
+            "semantic_role": self.semantic_role.value if isinstance(self.semantic_role, ImageSemanticRole) else str(self.semantic_role),
             "clinical_stage": self.clinical_stage.value if isinstance(self.clinical_stage, ClinicalStage) else (str(self.clinical_stage) if self.clinical_stage else None),
             "form_factor": self.form_factor,
             "linked_product": self.linked_product,
@@ -425,6 +454,15 @@ class ImageProvenance:
         raw_pol = d.get("display_policy", ImageDisplayPolicy.EXCLUDE.value)
         disp_pol = ImageDisplayPolicy(raw_pol) if raw_pol in ImageDisplayPolicy._value2member_map_ else ImageDisplayPolicy.EXCLUDE
 
+        raw_origin = d.get("image_origin", ImageOrigin.EMBEDDED_ASSET.value)
+        img_origin = ImageOrigin(raw_origin) if raw_origin in ImageOrigin._value2member_map_ else ImageOrigin.EMBEDDED_ASSET
+
+        raw_context = d.get("pdf_context", PDFContext.DIGITAL.value)
+        pdf_ctx = PDFContext(raw_context) if raw_context in PDFContext._value2member_map_ else PDFContext.DIGITAL
+
+        raw_role = d.get("semantic_role", ImageSemanticRole.PRODUCT_REFERENCE.value)
+        sem_role = ImageSemanticRole(raw_role) if raw_role in ImageSemanticRole._value2member_map_ else ImageSemanticRole.PRODUCT_REFERENCE
+
         raw_stage = d.get("clinical_stage")
         stage = ClinicalStage(raw_stage) if raw_stage in ClinicalStage._value2member_map_ else None
 
@@ -443,6 +481,10 @@ class ImageProvenance:
             image_type=img_type,
             image_relevance=img_rel,
             display_policy=disp_pol,
+            image_origin=img_origin,
+            extraction_source=d.get("extraction_source", "embedded_image"),
+            pdf_context=pdf_ctx,
+            semantic_role=sem_role,
             clinical_stage=stage,
             form_factor=d.get("form_factor"),
             linked_product=d.get("linked_product"),
