@@ -1,8 +1,8 @@
-# Dokumentasi Perbaikan - Arya Noble Skin Clinic Chatbot
+# Dokumentasi Perbaikan - Skin Clinic Chatbot
 
 **Tanggal**: 8 September 2026  
 **Auditor**: herjatiaji  
-**Sistem**: Arya Noble AI Chatbot (Backend FastAPI + RAG Pipeline)
+**Sistem**: Skin Clinic AI Chatbot (Backend FastAPI + RAG Pipeline)
 
 ---
 
@@ -134,7 +134,7 @@ python -m unittest backend/tests/test_knowledge_database.py -v
 Karena repositori lokal sudah memiliki commit terakhir, Anda dapat menghubungkannya ke repositori GitHub baru dengan perintah:
 ```powershell
 # 1. Tambahkan remote url repository baru Anda di GitHub:
-git remote add origin https://github.com/<USERNAME>/arya-noble-skin-clinic-chatbot.git
+git remote add origin https://github.com/<USERNAME>/skin-clinic-chatbot.git
 
 # 2. Rename branch utama ke main (jika belum):
 git branch -M main

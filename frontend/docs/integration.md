@@ -1,6 +1,6 @@
 # Frontend & Backend Integration Guide
 
-This document outlines the strict standards for integrating the Next.js frontend with the FastAPI backend in the Arya Noble project. Following these rules ensures complete type safety, predictable cache invalidation, and a scalable architecture.
+This document outlines the strict standards for integrating the Next.js frontend with the FastAPI backend in the Skin Clinic project. Following these rules ensures complete type safety, predictable cache invalidation, and a scalable architecture.
 
 ## 1. Feature-Based Architecture
 

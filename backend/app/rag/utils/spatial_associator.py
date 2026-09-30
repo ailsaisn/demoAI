@@ -23,7 +23,7 @@ PRODUCT_SEMANTIC_KEYWORDS = {
 
 LOGO_KEYWORDS = {
     "aesthetic clinic", "clinic by", "hospital", "brand", "pt", "copyright",
-    "naturally speaking", "dermies max", "erha", "arya noble"
+    "naturally speaking"
 }
 
 

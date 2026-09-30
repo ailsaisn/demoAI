@@ -1,4 +1,4 @@
-"""Query Intent Detection Module for ERHA RAG Chatbot.
+"""Query Intent Detection Module for Clinical RAG Chatbot.
 
 Classifies user queries into granular intent categories to determine
 strict response length limits and tailored response constraints.
@@ -74,9 +74,9 @@ def get_contextual_greeting_response(query: str = "", doctor_name: Optional[str]
         salutation = "Hai"
 
     if any(k in q_lower for k in ["siapa", "kamu siapa", "anda siapa", "bot apa", "siapakah kamu"]):
-        return f"{salutation}, {doc_title}! Saya ERHA Medical Assistant, asisten klinis yang siap membantu Dokter mencari informasi SOP tindakan medis, indikasi, dan panduan produk ERHA."
+        return f"{salutation}, {doc_title}! Saya Clinical Medical Assistant, asisten klinis yang siap membantu Dokter mencari informasi SOP tindakan medis, indikasi, dan panduan produk klinik."
 
-    return f"{salutation}, {doc_title}! Saya ERHA Medical Assistant. Ada yang bisa saya bantu terkait protokol tindakan medis atau produk ERHA hari ini?"
+    return f"{salutation}, {doc_title}! Saya Clinical Medical Assistant. Ada yang bisa saya bantu terkait protokol tindakan medis atau produk klinik hari ini?"
 
 
 # Backward compatibility alias
@@ -121,7 +121,7 @@ _INTENT_PATTERNS = [
             r"^\s*assalamu['a]?laikum(\s+wr\s+wb|\s+warahmatullahi\s+wabarakatuh)?\s*[\.\,\!\?]*\s*$",
             r"^\s*(tes|test|ping)\s*[\.\,\!\?]*\s*$",
             r"^\s*(halo|hallo|hai|hi|hello)\s+(ada\s+orang|apakah\s+ada\s+orang|bisa\s+bantu|apa\s+kabar)\s*[\.\,\!\?]*\s*$",
-            r"^\s*(halo|hallo|hai|hi|hello)\s+(admin|cs|asisten|bot|erha)\s*[\.\,\!\?]*\s*$",
+            r"^\s*(halo|hallo|hai|hi|hello)\s+(admin|cs|asisten|bot|klinik)\s*[\.\,\!\?]*\s*$",
             r"^\s*(kamu|anda|siapa\s+kamu|siapa\s+anda|kamu\s+siapa|anda\s+siapa|kamu\s+bot\s+apa|siapa\s+kamu\?|kamu\s+siapa\?)\s*[\.\,\!\?]*\s*$",
         ]
     ),
@@ -315,14 +315,14 @@ class QueryIntentDetector:
         if intent == QueryIntent.GREETING:
             return {
                 "max_sentences": 2,
-                "length_instruction": "Acknowledge the greeting warmly and politely in Indonesian, adjusted to the current time of day (Selamat pagi/siang/sore/malam). Offer assistance with ERHA products or treatments.",
+                "length_instruction": "Acknowledge the greeting warmly and politely in Indonesian, adjusted to the current time of day (Selamat pagi/siang/sore/malam). Offer assistance with clinical products or treatments.",
                 "missing_fallback": get_time_greeting_response()
             }
         elif intent == QueryIntent.CLOSING:
             return {
                 "max_sentences": 1,
                 "length_instruction": "Respond with a polite, brief acknowledgment/closing in Indonesian ('Sama-sama, Dok!' or 'Baik, Dok. Siap membantu jika ada pertanyaan lain.').",
-                "missing_fallback": "Sama-sama, Dokter! Siap membantu kembali jika ada pertanyaan seputar protokol tindakan atau produk ERHA."
+                "missing_fallback": "Sama-sama, Dokter! Siap membantu kembali jika ada pertanyaan seputar protokol tindakan atau produk klinik."
             }
         elif intent == QueryIntent.PRODUCT_NAME:
             return {

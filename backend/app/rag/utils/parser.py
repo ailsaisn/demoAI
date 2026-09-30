@@ -1982,7 +1982,7 @@ class DocumentParser:
 
                     client = OpenAI(**client_kwargs)
                     prompt_text = (
-                        "You are an expert product recognition system for PT Arya Noble (ERHA) Knowledge Base.\n\n"
+                        "You are an expert product recognition system for Clinical Knowledge Base.\n\n"
                         "Your task is to identify the EXACT PRODUCT NAME shown on the product packaging or image.\n\n"
                         "## STRICT RULES (MANDATORY):\n"
                         "1. **IDENTIFY PRODUCT NAME ONLY**: Recognize and extract ONLY the official Product Name printed on the packaging (e.g., 'Exfoliating Cleansing Scrub', 'Acne Act Acne Spot Gel').\n"
@@ -1996,7 +1996,7 @@ class DocumentParser:
                         '  "image_role": "PRODUCT_PACKAGING",\n'
                         '  "caption": "Foto produk Exact Visible Product Name",\n'
                         '  "document_type": "PRODUCT",\n'
-                        '  "summary_markdown": "# Exact Visible Product Name\\n\\n![Exact Visible Product Name](IMAGE_URL_PLACEHOLDER)\\n\\nDokumen visual produk resmi ERHA: Exact Visible Product Name."\n'
+                        '  "summary_markdown": "# Exact Visible Product Name\\n\\n![Exact Visible Product Name](IMAGE_URL_PLACEHOLDER)\\n\\nDokumen visual produk: Exact Visible Product Name."\n'
                         "}"
                     )
 
@@ -2042,7 +2042,7 @@ class DocumentParser:
 
                             img_title = data.get("title") or data.get("product_name") or os.path.splitext(file_name)[0]
                             p_name = data.get("product_name") or img_title
-                            brand = data.get("brand") or "PT Arya Noble"
+                            brand = data.get("brand") or "Skin Clinic"
                             active_ing = []
                             clean_sku = None
 

@@ -2,30 +2,30 @@ import datetime
 from typing import List, Dict, Any, Optional
 from loguru import logger
 
-DEFAULT_ERHA_BENCHMARK_DATASET = [
+DEFAULT_CLINICAL_BENCHMARK_DATASET = [
     {
-        "query": "Apa saja kandungan aktif, persentase, dan keunggulan ERHA Acneact Low pH Gentle Acne Facial Wash?",
-        "expected_file": "ERHA Acneact Low pH Gentle Acne Facial Wash",
+        "query": "Apa saja kandungan aktif, persentase, dan keunggulan Acneact Low pH Gentle Acne Facial Wash?",
+        "expected_file": "Acneact Low pH Gentle Acne Facial Wash",
         "expected_answer": "Salicylic Acid (0.5%), Niacinamide (2%), Panthenol (Vitamin B5), Centella Asiatica Extract, Glycerin. Membersihkan minyak & sisa makeup tanpa merusak skin barrier."
     },
     {
-        "query": "Berapa persentase Niacinamide dan Salicylic Acid pada ERHA Acneact Anti Acne Serum serta apa saja kegunaannya?",
-        "expected_file": "ERHA Acneact Anti Acne Serum",
+        "query": "Berapa persentase Niacinamide dan Salicylic Acid pada Acneact Anti Acne Serum serta apa saja kegunaannya?",
+        "expected_file": "Acneact Anti Acne Serum",
         "expected_answer": "Niacinamide (5%), Salicylic Acid (1%), Zinc PCA, Madecassoside, Hyaluronic Acid. Mengurangi jerawat aktif, komedo, dan mengontrol minyak berlebih."
     },
     {
-        "query": "Apa saja bahan aktif, manfaat, dan petunjuk penggunaan ERHA Acneact BHA & Sulfur Acne Spot Gel?",
-        "expected_file": "ERHA Acneact BHA & Sulfur Acne Spot Gel",
+        "query": "Apa saja bahan aktif, manfaat, dan petunjuk penggunaan Acneact BHA & Sulfur Acne Spot Gel?",
+        "expected_file": "Acneact BHA & Sulfur Acne Spot Gel",
         "expected_answer": "Sulfur (3%), Salicylic Acid (2%), Tea Tree Leaf Oil, Centella Asiatica Extract, Allantoin. Mengurangi ukuran jerawat dan mengeringkan jerawat. Oleskan tipis 2-3 kali sehari."
     },
     {
-        "query": "Kandungan apa yang digunakan ERHA Acneact Post Acne Spot Serum untuk mengatasi PIH (hiperpigmentasi bekas jerawat)?",
-        "expected_file": "ERHA Acneact Post Acne Spot Serum",
+        "query": "Kandungan apa yang digunakan Acneact Post Acne Spot Serum untuk mengatasi PIH (hiperpigmentasi bekas jerawat)?",
+        "expected_file": "Acneact Post Acne Spot Serum",
         "expected_answer": "Tranexamic Acid (3%), Niacinamide (5%), Alpha Arbutin (2%), Licorice Root Extract, Hyaluronic Acid. Membantu memudarkan bekas jerawat dan mencerahkan kulit."
     },
     {
-        "query": "Berapa nilai SPF dan bagaimana aturan pakai ERHA Acneact Acne Protection & Oil Control Sunscreen SPF45 PA+++?",
-        "expected_file": "ERHA Acneact Acne Protection & Oil Control Sunscreen SPF45 PA+++",
+        "query": "Berapa nilai SPF dan bagaimana aturan pakai Acneact Acne Protection & Oil Control Sunscreen SPF45 PA+++?",
+        "expected_file": "Acneact Acne Protection & Oil Control Sunscreen SPF45 PA+++",
         "expected_answer": "SPF45 PA+++. Gunakan sebanyak dua ruas jari pada pagi hari dan reapply setiap 2-3 jam saat berada di luar ruangan."
     }
 ]
@@ -281,7 +281,7 @@ class RAGEvaluator:
         2. Generation metrics (Faithfulness, Answer Relevance)
         3. Composite Overall RAG Quality Score (0 - 100%)
         """
-        eval_dataset = dataset if dataset and len(dataset) > 0 else DEFAULT_ERHA_BENCHMARK_DATASET
+        eval_dataset = dataset if dataset and len(dataset) > 0 else DEFAULT_CLINICAL_BENCHMARK_DATASET
         total_queries = len(eval_dataset)
         
         faithfulness_scores = []

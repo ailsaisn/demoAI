@@ -52,7 +52,7 @@ export default function DoctorChatPage() {
 					</h1>
 					<p className="text-[13px] text-zinc-500 max-w-lg leading-relaxed mx-auto">
 						Tell me about the patient&apos;s concerns and background, and I&apos;ll suggest the best
-						treatment or product for them at ERHA Medical.
+						treatment or product for them at Clinical Medical.
 					</p>
 				</div>
 			</div>

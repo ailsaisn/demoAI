@@ -36,7 +36,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
 			} finally {
 				if (typeof window !== "undefined") {
 					try {
-						localStorage.removeItem("arya_noble_last_active");
+						localStorage.removeItem("clinical_last_active");
 					} catch {}
 				}
 				queryClient.removeQueries({ queryKey: authKeys.all });

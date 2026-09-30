@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
-const STORAGE_KEY = "arya_noble_last_active";
+const STORAGE_KEY = "clinical_last_active";
 const THROTTLE_MS = 2000; // Throttle storage writes to once every 2s
 
 export interface UseIdleTimerOptions {

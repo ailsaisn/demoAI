@@ -29,8 +29,8 @@ export default function Dashboard() {
   if (!doctor) return null
 
   const activeBranch = doctor.user_branchs?.find((b) => b.status === "1" || b.status === 1) || doctor.user_branchs?.[0]
-  const branchCode = activeBranch?.branch_code || (doctor.ecosystem?.toLowerCase() === 'dermies' ? '034' : '011')
-  const branchId = activeBranch?.branch_id ? String(activeBranch.branch_id) : (doctor.ecosystem?.toLowerCase() === 'dermies' ? '847' : '838')
+  const branchCode = activeBranch?.branch_code || '011'
+  const branchId = activeBranch?.branch_id ? String(activeBranch.branch_id) : '838'
 
   return (
     <div style={{ 

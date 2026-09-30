@@ -146,15 +146,13 @@ _WHITELIST_PHRASES: list[str] = [
     "thread lift", "tarik benang", "co2 fractional", "dermal filler",
     "platelet rich plasma", "comedo extraction", "ekstraksi komedo",
     "suntik jerawat", "injeksi jerawat", "infus whitening", "uji klinis",
-    # ERHA brand, clinic operations & services
-    "erha derma center", "erha clinic", "erha skin", "erha apotheke", "erha ultimate",
-    "arya noble", "erha buddy", "erha connect", "jam buka", "jam operasional",
+    # Clinical operations & services
+    "skin clinic", "clinical skin", "klinik kulit", "pusat estetika",
+    "jam buka", "jam operasional",
     "hari praktek", "hari praktik", "jadwal praktek", "jadwal praktik",
     "janji temu", "rekam medis", "biaya tindakan", "biaya perawatan",
     "efek samping", "side effect", "bahan aktif", "active ingredient",
     "aturan pakai", "cara pakai", "how to use", "interaksi obat",
-    # Arya Noble & Partner Brands
-    "lumera", "luméra", "dermies", "skincode",
     # Skin barrier & physiological terms
     "skin barrier", "skin-barrier", "barrier defense", "barrier repair",
     # Clinical consultation & treatment recommendation phrases
@@ -210,7 +208,7 @@ _WHITELIST_KEYWORDS: set[str] = {
     "rf", "radiofrequency", "hifu", "cauterisasi",
 
     # Clinic, doctors, administration & services
-    "erha", "arya", "noble", "lumera", "dermies", "skincode", "klinik", "clinic", "dokter", "dok", "doctor", "dr",
+    "klinik", "clinic", "dokter", "dok", "doctor", "dr",
     "spkk", "spdve", "dermatologist", "resepsionis", "perawat", "nurse", "apoteker",
     "pharmacist", "apotek", "apotheke", "konsultasi", "telekonsultasi", "appointment",
     "janji", "booking", "reservasi", "daftar", "pendaftaran", "registrasi",
@@ -265,15 +263,15 @@ _OFFTOPIC_KEYWORDS: list[str] = [
 ]
 
 _OFFTOPIC_SPECIFIC_MSG = (
-    "Maaf Dok, pertanyaan Anda terdeteksi berada di luar lingkup layanan klinik dan dermatologi medis ERHA "
+    "Maaf Dok, pertanyaan Anda terdeteksi berada di luar lingkup layanan klinik dan dermatologi medis "
     "(teridentifikasi topik non-medis seperti teknologi/pemrograman, finansial/investasi, politik, hiburan, atau masakan). "
-    "Mohon ajukan pertanyaan terkait produk, kondisi dermatologi, tindakan estetika, atau operasional klinik ERHA."
+    "Mohon ajukan pertanyaan terkait produk, kondisi dermatologi, tindakan estetika, atau operasional klinik."
 )
 
 _OFFTOPIC_GENERIC_MSG = (
-    "Maaf Dok, saya adalah ERHA Medical Assistant yang dirancang khusus untuk mendukung Dokter "
+    "Maaf Dok, saya adalah Clinical Medical Assistant yang dirancang khusus untuk mendukung Dokter "
     "mencari informasi produk perawatan kulit, tindakan klinis estetika, "
-    "dan knowledge base ERHA. Silakan ajukan pertanyaan terkait produk atau klinis ERHA."
+    "dan knowledge base klinis. Silakan ajukan pertanyaan terkait produk atau klinis."
 )
 
 # ── PII Patterns ─────────────────────────────────────────────────────────────
@@ -301,7 +299,7 @@ _PRESCRIPTIVE_KEYWORDS: list[str] = [
 
 _MEDICAL_DISCLAIMER = (
     "\n\n---\n"
-    "⚕️ *Catatan: Informasi di atas merupakan panduan umum berdasarkan knowledge base ERHA. "
+    "⚕️ *Catatan: Informasi di atas merupakan panduan umum berdasarkan knowledge base klinis. "
     "Keputusan klinis akhir tetap berada pada dokter yang menangani pasien secara langsung.*"
 )
 
@@ -352,7 +350,7 @@ class InputGuard:
     @classmethod
     def matches_whitelist(cls, query: str) -> Tuple[bool, list[str]]:
         """
-        Evaluates whether the query belongs to the ERHA medical/clinic domain using:
+        Evaluates whether the query belongs to the clinical domain using:
         1. Multi-word phrase matching
         2. Word token and Indonesian stem/root matching
         3. English plural/suffix normalizations
@@ -417,7 +415,7 @@ class InputGuard:
     def check_topicality(cls, query: str) -> Tuple[bool, Optional[str]]:
         """
         Whitelist-First Topicality Gate:
-        1. Primary Check: Evaluates query against clinical/ERHA Whitelist (semantic & stem-based).
+        1. Primary Check: Evaluates query against clinical Whitelist (semantic & stem-based).
            If query matches Whitelist -> immediately allowed (proceeds to retrieval).
         2. Secondary Check: Evaluates non-whitelisted query against Blacklist for explanatory feedback.
            - If matches Blacklist -> rejected with specific off-topic message.
@@ -443,7 +441,7 @@ class InputGuard:
 
         if is_blacklisted:
             # If query has strong clinical/medical matches (not just generic transactional words like 'harga'/'biaya'),
-            # allow legitimate clinical queries with incidental technical words (e.g. 'rekam medis pasien di database website ERHA')
+            # allow legitimate clinical queries with incidental technical words (e.g. 'rekam medis pasien di database website')
             _GENERIC_TRANSACTIONAL = {"harga", "tarif", "biaya", "cost", "price", "bayar", "pembayaran"}
             strong_clinical_matches = [
                 m for m in matched_whitelist 

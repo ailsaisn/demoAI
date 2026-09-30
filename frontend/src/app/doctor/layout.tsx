@@ -22,7 +22,7 @@ export default function DoctorLayout({
             <div className="flex items-center justify-center mr-2">
               <RiArrowLeftLine className="size-4" />
             </div>
-            <span className="font-semibold text-sm">ERHA Medical Assistant</span>
+            <span className="font-semibold text-sm">Clinical Medical Assistant</span>
           </button>
         </header>
         

@@ -266,7 +266,7 @@ class FlattenedDesignParser:
             # Skip title repeat, clinic brand logos, glyphs
             if txt == title_candidate or any(h.get("text") == txt for h in headers.values()):
                 continue
-            if any(bw in txt_l for bw in ["aesthetic clinic", "naturally speaking", "by erha", "dermi3smax"]):
+            if any(bw in txt_l for bw in ["aesthetic clinic", "naturally speaking"]):
                 continue
             if txt in ["4", "口"]:
                 continue

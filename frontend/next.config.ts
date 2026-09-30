@@ -7,8 +7,8 @@ const nextConfig: NextConfig = {
     remotePatterns: [
       { protocol: "http", hostname: "localhost" },
       { protocol: "http", hostname: "127.0.0.1" },
-      { protocol: "https", hostname: "*.aryanoble.web.id" },
-      { protocol: "https", hostname: "*.aryanoble.co.id" },
+      { protocol: "https", hostname: "*.clinical-ai.local" },
+      { protocol: "https", hostname: "*.clinical-ai.com" },
     ],
   },
   async rewrites() {

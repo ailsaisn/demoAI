@@ -200,7 +200,7 @@ async def run_production_readiness_suite():
     # TEST 3B — RESTART / COLD-START DELETE PERSISTENCE
     # -------------------------------------------------------------
     print("\n>>> TEST 3B: COLD-START DELETE PERSISTENCE <<<")
-    res_delete_target = await GeneralKnowledgeService.find_target_document_and_item("ERHA Acne Clear Gel")
+    res_delete_target = await GeneralKnowledgeService.find_target_document_and_item("Acne Clear Gel")
     if res_delete_target:
         del_kid, del_item, del_doc = res_delete_target
         # Delete document
@@ -216,9 +216,9 @@ async def run_production_readiness_suite():
             fresh_bm25.load(settings.bm25_index_path)
         fresh_retriever = HybridRetriever(vector_store=fresh_vstore, bm25_index=fresh_bm25)
 
-        rag_res = fresh_retriever.retrieve("ERHA Acne Clear Gel", top_k=3)
+        rag_res = fresh_retriever.retrieve("Acne Clear Gel", top_k=3)
         retrieved_text = rag_res.get("context", "")
-        t3b_pass = "ERHA Acne Clear Gel" not in retrieved_text or len(rag_res.get("results", [])) == 0
+        t3b_pass = "Acne Clear Gel" not in retrieved_text or len(rag_res.get("results", [])) == 0
 
         print(f"3B Cold-Start Delete Verified: {t3b_pass}")
         test_results["Test 3B (Cold Start Delete)"] = ("PASS" if t3b_pass else "FAIL", f"deleted_item_in_rag={not t3b_pass}")

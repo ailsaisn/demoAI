@@ -103,7 +103,7 @@ export function ProjectDialog({ isOpen, onClose, projectToEdit }: ProjectDialogP
 						<FieldContent>
 							<Input
 								autoComplete="off"
-								placeholder="e.g. ERHA Acne Treatment 2026"
+								placeholder="e.g. Clinical Acne Treatment 2026"
 								value={name}
 								onChange={(e) => setName(e.target.value)}
 								className="border-gray-200 bg-white focus-visible:ring-blue-500 text-sm h-10 rounded-lg"

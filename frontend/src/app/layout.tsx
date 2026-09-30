@@ -17,7 +17,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Arya Noble Chatbot",
+  title: "Skin Clinic Chatbot",
   description: "AI-powered chatbot interface for doctors and admin",
 };
 

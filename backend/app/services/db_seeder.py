@@ -164,13 +164,13 @@ DEFAULT_CATEGORIES: list[str] = [
     "Pediatric Skincare",
     "Pregnancy-Safe Skincare",
     "Geriatric Skincare",
-    "ERHA Ultimate Acne Cure",
-    "ERHA Ultimate Anti-Aging",
-    "ERHA Ultimate Brightening",
-    "ERHA Ultimate Hair Care",
-    "Dermies Max Clear Program",
-    "Dermies Max Bright Program",
-    "Dermies Max Hair Program",
+    "Clinical Ultimate Acne Cure",
+    "Clinical Ultimate Anti-Aging",
+    "Clinical Ultimate Brightening",
+    "Clinical Ultimate Hair Care",
+    "Clinical Clear Program",
+    "Clinical Bright Program",
+    "Clinical Hair Program",
 
     # --- 10. OTC Formulations & Product Formats ---
     "Facial Cleanser",
@@ -314,7 +314,7 @@ async def reset_database(session: AsyncSession) -> dict[str, Any]:
 async def seed_database(
     session: AsyncSession,
     admin_email: str = "admin@mail.com",
-    admin_password: str = "Erhadermies@123",
+    admin_password: str = "Clinical@123",
 ) -> dict[str, Any]:
     """
     Idempotently seeds accesses, roles, default admin user, medical categories, and base app config.
@@ -373,7 +373,7 @@ async def seed_database(
             name="System Administrator",
             type=UserType.STAFF,
             password_hash=get_password_hash(admin_password),
-            ecosystem="ERHA",
+            ecosystem="Clinical",
         )
         session.add(admin_user)
         await session.commit()
@@ -410,7 +410,7 @@ async def seed_database(
 async def reset_and_reseed_database(
     session: AsyncSession,
     admin_email: str = "admin@mail.com",
-    admin_password: str = "Erhadermies@123",
+    admin_password: str = "Clinical@123",
 ) -> dict[str, Any]:
     """
     Executes database table reset followed immediately by re-seeding default data.

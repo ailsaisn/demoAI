@@ -1,4 +1,4 @@
-# Arya Noble AI Chatbot - Frontend Service
+# Skin Clinic AI Chatbot - Frontend Service
 
 Next.js 16 (App Router with Turbopack) web interface powering the Skin Clinic AI Chatbot system. It provides role-scoped portals for System Administrators, Functional Staff, and Clinic Doctors, alongside a rich WYSIWYG Markdown editor, streaming RAG chat interfaces, and an embeddable customer chatbot widget preview.
 
@@ -212,7 +212,7 @@ pnpm lint
 
 - **Shadcn / Base UI Primitives**: Located in `src/components/ui/`, styled with Tailwind CSS utility classes and `clsx` / `tailwind-merge`.
 - **MdForge WYSIWYG Editor**: Located in `src/components/shared/wysiwyg-editor/`, provides a TipTap toolbar and editor for rich-text markdown creation and editing.
-- **API Interceptor & Credentials**: [`src/lib/axios.ts`](file:///d:/Work/Company/widya-robotics/projects/arya-noble/project/frontend/src/lib/axios.ts) automatically attaches `withCredentials: true` so all requests seamlessly pass HTTP-only authentication cookies.
+- **API Interceptor & Credentials**: [`src/lib/axios.ts`](src/lib/axios.ts) automatically attaches `withCredentials: true` so all requests seamlessly pass HTTP-only authentication cookies.
 - **RAG Streaming Markdown**: Real-time token streaming with syntax-highlighted code blocks, tables, and sanitized content via `stripMarkdown`.
 
 ---
@@ -223,7 +223,7 @@ pnpm lint
 - **Symptom**: API requests fail with CORS origin error or instant 401 redirect.
 - **Resolution**:
   - Ensure `NEXT_PUBLIC_API_URL` in `frontend/.env` points to `http://localhost:8000/api`.
-  - Verify `allow_origins` in backend [`app/main.py`](file:///d:/Work/Company/widya-robotics/projects/arya-noble/project/backend/app/main.py) includes `http://localhost:3000`.
+  - Verify `allow_origins` in backend [`app/main.py`](../backend/app/main.py) includes `http://localhost:3000`.
 
 ### 2. Stale React Query Cache
 - **Symptom**: Updated branch token limit or document status does not reflect immediately.

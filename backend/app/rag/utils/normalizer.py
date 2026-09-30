@@ -60,7 +60,7 @@ def _match_multi_word_label(lines, idx, N, label_set, first_word_set, max_words=
     Handles:
     - word-per-line: "Product" / "Name" on separate lines
     - pre-joined: "Product Name" on one line
-    - label-as-prefix: "Product Name ERHA Truwhite..." on one line
+    - label-as-prefix: "Product Name Truwhite..." on one line
     Returns (matched_label, consumed_line_count, rest_text) or (None, 0, "").
     rest_text contains any text after the label on the same line.
     """

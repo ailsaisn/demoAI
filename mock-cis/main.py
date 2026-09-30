@@ -59,23 +59,23 @@ def sign_proxy_payload(body_bytes: bytes, user_id: str) -> str:
 MOCK_BRANCHES = [
     {
         "id": 838,
-        "name": "Klinik Utama Erha Ultimate BSD",
+        "name": "Klinik Utama Ultimate BSD",
         "code": "011",
-        "ecosystem": "Erha",
+        "ecosystem": "Clinical",
         "status": "1"
     },
     {
-            "id": 839,
-            "name": "Klinik Utama Erha Ultimate TRG",
-            "code": "012",
-            "ecosystem": "Erha",
-            "status": "1"
-        },
+        "id": 839,
+        "name": "Klinik Utama Ultimate TRG",
+        "code": "012",
+        "ecosystem": "Clinical",
+        "status": "1"
+    },
     {
         "id": 847,
-        "name": "Klinik Utama Dermies BSD",
+        "name": "Klinik Utama BSD 2",
         "code": "034",
-        "ecosystem": "Dermies",
+        "ecosystem": "Clinical",
         "status": "1"
     }
 ]
@@ -88,7 +88,7 @@ MOCK_DOCTORS = [
         "user_type_name": "Doctor SpKK",
         "nik": "dr00123",
         "email": "drkk11@gmail.com",
-        "ecosystem": "Erha",
+        "ecosystem": "Clinical",
         "status": "1",
         "user_branchs": [
             {
@@ -110,7 +110,7 @@ MOCK_DOCTORS = [
         "user_type_name": "Doctor gp",
         "nik": "dr00456",
         "email": "drbudi@gmail.com",
-        "ecosystem": "Dermies",
+        "ecosystem": "Clinical",
         "status": "1",
         "user_branchs": [
             {
@@ -127,7 +127,7 @@ MOCK_DOCTORS = [
         "user_type_name": "Doctor SpKK",
         "nik": "dr00789",
         "email": "drclarissa@gmail.com",
-        "ecosystem": "Erha",
+        "ecosystem": "Clinical",
         "status": "1",
         "user_branchs": [
             {
@@ -145,21 +145,21 @@ MOCK_USER_BRANCHES = [
         "branch_id": 838,
         "branch_code": "011",
         "status": "1",
-        "ecosystem": "Erha"
+        "ecosystem": "Clinical"
     },
     {
         "user_id": 2,
         "branch_id": 847,
         "branch_code": "034",
         "status": "1",
-        "ecosystem": "Dermies"
+        "ecosystem": "Clinical"
     },
     {
         "user_id": 3,
         "branch_id": 839,
         "branch_code": "012",
         "status": "1",
-        "ecosystem": "Erha"
+        "ecosystem": "Clinical"
     }
 ]
 

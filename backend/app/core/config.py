@@ -3,8 +3,8 @@ from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
-    PROJECT_NAME: str = "Arya Noble Chatbot API"
-    DATABASE_URL: str = "postgresql+asyncpg://postgres:postgres@localhost:50010/arya_noble"
+    PROJECT_NAME: str = "AI Clinical Assistant API"
+    DATABASE_URL: str = "postgresql+asyncpg://postgres:postgres@localhost:50010/clinical_db"
     SECRET_KEY: str = "supersecretkey" # Replace in production
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60
@@ -34,16 +34,16 @@ class Settings(BaseSettings):
     S3_USE_PATH_STYLE: Optional[bool] = None # None = auto-detect (True for MinIO, False for AWS)
     S3_PUBLIC_URL: Optional[str] = None # Optional public CDN / API prefix
 
-    COOKIE_DOMAIN: Optional[str] = None # e.g. ".aryanoble.web.id" or ".aryanoble.co.id"
+    COOKIE_DOMAIN: Optional[str] = None # e.g. ".clinical-ai.local"
     COOKIE_SECURE: Optional[bool] = None
     COOKIE_SAMESITE: str = "lax"
     CORS_ORIGINS: list[str] | str = [
         "http://localhost:3000",
         "http://localhost:8000",
         "http://localhost:8001",
-        "https://dokterpedia-dev.aryanoble.web.id",
-        "https://dokterpedia-staging.aryanoble.web.id",
-        "https://dokterpedia.aryanoble.co.id",
+        "https://dokterpedia-dev.clinical-ai.local",
+        "https://dokterpedia-staging.clinical-ai.local",
+        "https://dokterpedia.clinical-ai.local",
     ]
 
     # Token Quotas

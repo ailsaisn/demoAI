@@ -12,10 +12,10 @@ class Settings(BaseSettings):
     # Vector DB (PGVector) Settings
     pg_host: str = "localhost"
     pg_port: int = 50010
-    pg_db: str = "arya_noble"
+    pg_db: str = "clinical_db"
     pg_user: str = "postgres"
     pg_password: str = "postgres"
-    pg_collection_name: str = "arya_noble_kb"
+    pg_collection_name: str = "clinical_kb"
     
     @property
     def pg_conn_str(self) -> str:

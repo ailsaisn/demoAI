@@ -14,7 +14,7 @@ from typing import Optional, Dict, Any, List, Tuple
 
 class KnowledgeScope(str, Enum):
     GLOBAL = "GLOBAL"    # Scientific literature, general dermatology textbooks, shared clinical studies
-    TENANT = "TENANT"    # Arya Noble / ERHA Group wide policies and formulary
+    TENANT = "TENANT"    # Clinical Group wide policies and formulary
     CLINIC = "CLINIC"    # Branch-specific protocols, local stock/price, unique doctor schedules
 
 
@@ -760,7 +760,7 @@ def classify_image_provenance(
     # 2. MULTI-SIGNAL ARTIFACT DETECTION (Non-keyword substring)
     # -------------------------------------------------------------------------
     is_logo_fn = bool(re.search(r'(?:^|[_\-.])(?:logo|publisher_logo|brand_logo|univ_logo|journal_logo)(?:[_\-.]|$)', fn_lower))
-    is_logo_text = bool(re.search(r'\b(?:publisher logo|journal logo|springer logo|nature logo|company logo|brand logo|logo erha)\b', alt_lower or caption_lower))
+    is_logo_text = bool(re.search(r'\b(?:publisher logo|journal logo|springer logo|nature logo|company logo|brand logo|logo klinik)\b', alt_lower or caption_lower))
     is_header_footer_logo = any(k in sec_lower for k in ["header", "footer"]) and "logo" in (alt_lower or fn_lower)
     if is_logo_fn or is_logo_text or is_header_footer_logo:
         return ImageProvenance(
@@ -801,7 +801,7 @@ def classify_image_provenance(
     if k_type == KnowledgeType.PRODUCT:
         active_text = caption_clean or alt_clean
         ff_active = extract_canonical_form_factor(active_text)
-        is_product_brand = any(b in (caption_lower or alt_lower) for b in ["erha", "erhair", "acneact", "truwhite", "scalperfect", "produk", "product"])
+        is_product_brand = any(b in (caption_lower or alt_lower) for b in ["clinical", "acneact", "truwhite", "scalperfect", "produk", "product"])
         if ff_active or is_product_brand:
             return ImageProvenance(
                 image_id=image_id, document_id=doc_id, source_document=src_doc, page_or_sheet=page_or_sheet,
@@ -933,7 +933,7 @@ def classify_image_provenance(
     else:
         active_text = caption_clean or alt_clean
         ff_other = extract_canonical_form_factor(active_text)
-        is_product_brand = any(b in (caption_lower or alt_lower) for b in ["erha", "erhair", "acneact", "truwhite", "scalperfect", "produk", "product"])
+        is_product_brand = any(b in (caption_lower or alt_lower) for b in ["clinical", "acneact", "truwhite", "scalperfect", "produk", "product"])
         if ff_other or is_product_brand:
             return ImageProvenance(
                 image_id=image_id, document_id=doc_id, source_document=src_doc, page_or_sheet=page_or_sheet,

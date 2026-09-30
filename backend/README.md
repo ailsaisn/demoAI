@@ -1,4 +1,4 @@
-# Arya Noble AI Chatbot - Backend Service
+# Skin Clinic AI Chatbot - Backend Service
 
 FastAPI Modular Monolith backend powering the Skin Clinic AI Chatbot system. It handles user authentication, clinic branch administration, token quota allocation, MinIO object storage, daily CIS attendance synchronization, multi-stage knowledge base management, and a dynamic Retrieval-Augmented Generation (RAG) conversational engine.
 
@@ -166,22 +166,22 @@ backend/
 
 | Component / File | File Path | Detailed Description & Implementation |
 | :--- | :--- | :--- |
-| **Interfaces** | [`app/rag/services/interfaces.py`](file:///d:/Work/Company/widya-robotics/projects/arya-noble/project/backend/app/rag/services/interfaces.py) | Defines abstract blueprints `BaseVectorStoreAdapter` and `BaseLLMAdapter`. Standardizes operations across vector stores and LLM providers. |
-| **PgVector Adapter** | [`app/rag/services/vector_store.py`](file:///d:/Work/Company/widya-robotics/projects/arya-noble/project/backend/app/rag/services/vector_store.py) | Translates vector insertions and similarity queries directly into PostgreSQL `knowledge_chunk` table operations using `KnowledgeChunk.embedding.cosine_distance()`. |
-| **Adapter Factory** | [`app/rag/services/factory.py`](file:///d:/Work/Company/widya-robotics/projects/arya-noble/project/backend/app/rag/services/factory.py) | Dynamically instantiates the active LLM (OpenAI / Gemini) and Vector Store from database `AppConfig` runtime settings. |
-| **Document Parser** | [`app/rag/utils/parser.py`](file:///d:/Work/Company/widya-robotics/projects/arya-noble/project/backend/app/rag/utils/parser.py) | Extracts structured text, tables, and section structures from PDF, TXT, and Markdown files using Docling. |
-| **Chunking Engine** | [`app/rag/utils/chunker.py`](file:///d:/Work/Company/widya-robotics/projects/arya-noble/project/backend/app/rag/utils/chunker.py) | Splits parsed documents into semantic chunks with heading context, chunk index, and character offset tracking. |
-| **Ingestion Pipeline** | [`app/rag/services/rag_pipeline.py`](file:///d:/Work/Company/widya-robotics/projects/arya-noble/project/backend/app/rag/services/rag_pipeline.py) | Connects Docling parser, semantic chunker, metadata extractor, and `PGVectorAdapter` into an automated staged pipeline. |
-| **Hybrid Retriever** | [`app/rag/services/rag_retriever.py`](file:///d:/Work/Company/widya-robotics/projects/arya-noble/project/backend/app/rag/services/rag_retriever.py) | Reciprocal Rank Fusion (RRF) combining `pgvector` cosine similarity search with in-memory `BM25Index` and Cross-Encoder reranking (`BAAI/bge-reranker-base`). |
-| **Generation Engine** | [`app/rag/services/rag_generator.py`](file:///d:/Work/Company/widya-robotics/projects/arya-noble/project/backend/app/rag/services/rag_generator.py) | Orchestrates `HybridRetriever`, system prompts, conversation history, medical source citations, and LLM inference streaming. |
-| **Evaluation** | [`app/rag/services/evaluation.py`](file:///d:/Work/Company/widya-robotics/projects/arya-noble/project/backend/app/rag/services/evaluation.py) | Evaluates search and answer quality (Hit Rate, Mean Reciprocal Rank MRR). |
-| **RAG Router** | [`app/rag/router.py`](file:///d:/Work/Company/widya-robotics/projects/arya-noble/project/backend/app/rag/router.py) | Exposes internal RAG REST endpoints (`/api/ai/ingest`, `/api/ai/chat`, `/api/ai/search`, `/api/ai/refine`, `/api/ai/evaluate`). |
+| **Interfaces** | [`app/rag/services/interfaces.py`](app/rag/services/interfaces.py) | Defines abstract blueprints `BaseVectorStoreAdapter` and `BaseLLMAdapter`. Standardizes operations across vector stores and LLM providers. |
+| **PgVector Adapter** | [`app/rag/services/vector_store.py`](app/rag/services/vector_store.py) | Translates vector insertions and similarity queries directly into PostgreSQL `knowledge_chunk` table operations using `KnowledgeChunk.embedding.cosine_distance()`. |
+| **Adapter Factory** | [`app/rag/services/factory.py`](app/rag/services/factory.py) | Dynamically instantiates the active LLM (OpenAI / Gemini) and Vector Store from database `AppConfig` runtime settings. |
+| **Document Parser** | [`app/rag/utils/parser.py`](app/rag/utils/parser.py) | Extracts structured text, tables, and section structures from PDF, TXT, and Markdown files using Docling. |
+| **Chunking Engine** | [`app/rag/utils/chunker.py`](app/rag/utils/chunker.py) | Splits parsed documents into semantic chunks with heading context, chunk index, and character offset tracking. |
+| **Ingestion Pipeline** | [`app/rag/services/rag_pipeline.py`](app/rag/services/rag_pipeline.py) | Connects Docling parser, semantic chunker, metadata extractor, and `PGVectorAdapter` into an automated staged pipeline. |
+| **Hybrid Retriever** | [`app/rag/services/rag_retriever.py`](app/rag/services/rag_retriever.py) | Reciprocal Rank Fusion (RRF) combining `pgvector` cosine similarity search with in-memory `BM25Index` and Cross-Encoder reranking (`BAAI/bge-reranker-base`). |
+| **Generation Engine** | [`app/rag/services/rag_generator.py`](app/rag/services/rag_generator.py) | Orchestrates `HybridRetriever`, system prompts, conversation history, medical source citations, and LLM inference streaming. |
+| **Evaluation** | [`app/rag/services/evaluation.py`](app/rag/services/evaluation.py) | Evaluates search and answer quality (Hit Rate, Mean Reciprocal Rank MRR). |
+| **RAG Router** | [`app/rag/router.py`](app/rag/router.py) | Exposes internal RAG REST endpoints (`/api/ai/ingest`, `/api/ai/chat`, `/api/ai/search`, `/api/ai/refine`, `/api/ai/evaluate`). |
 
 ---
 
 ## Storage Architecture (MinIO & Local Fallback)
 
-The backend implements a **Dual-Bucket S3 Object Storage Architecture** via [`app/services/storage.py`](file:///d:/Work/Company/widya-robotics/projects/arya-noble/project/backend/app/services/storage.py):
+The backend implements a **Dual-Bucket S3 Object Storage Architecture** via [`app/services/storage.py`](app/services/storage.py):
 
 1. **Dual Buckets**:
    - `images`: Stores clinic product images, before-after photos, and user-uploaded chat attachments.
@@ -201,11 +201,11 @@ cp .env.example .env
 
 ```env
 # --- Core Application Settings ---
-PROJECT_NAME="Arya Noble Chatbot API"
+PROJECT_NAME="AI Clinical Assistant API"
 CORS_ORIGINS=["http://localhost:3000","http://localhost:8001"]
 
 # --- Database & PgVector Connection ---
-DATABASE_URL=postgresql+asyncpg://postgres:postgres@localhost:50010/arya_noble
+DATABASE_URL=postgresql+asyncpg://postgres:postgres@localhost:50010/clinical_db
 
 # --- Security & JWT Authentication ---
 SECRET_KEY=supersecretkey_change_in_production
@@ -253,7 +253,7 @@ alembic downgrade -1
 
 ### 2. Database Seeder Script
 
-The [`seed.py`](file:///d:/Work/Company/widya-robotics/projects/arya-noble/project/backend/seed.py) script populates initial data into PostgreSQL (superadmin accounts, default clinic branches, category taxonomies, and dynamic AppConfig values):
+The [`seed.py`](seed.py) script populates initial data into PostgreSQL (superadmin accounts, default clinic branches, category taxonomies, and dynamic AppConfig values):
 
 ```bash
 python seed.py

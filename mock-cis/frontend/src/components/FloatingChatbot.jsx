@@ -6,14 +6,14 @@ import "./FloatingChatbot.css";
 /**
  * FloatingChatbot Component
  *
- * A reference implementation for integrating the Arya Noble AI Chatbot into a React application.
+ * A reference implementation for integrating the Clinical AI Chatbot into a React application.
  *
  * @param {Object} props
  * @param {string} props.token - The JWT token provided by the CIS system (used for authorization).
  * @param {string} props.doctorName - The name of the doctor currently logged in (for display).
  * @param {string} [props.branchCode] - The code of the branch (e.g. "011").
  * @param {string} [props.branchId] - The CIS external ID of the branch (e.g. "838").
- * @param {string} [props.apiBaseUrl] - The base URL of the Chatbot API (e.g., https://api.arya-noble.com).
+ * @param {string} [props.apiBaseUrl] - The base URL of the Chatbot API (e.g., http://localhost:8000).
  */
 function isValidImageUrl(src) {
 	if (!src) return false;
@@ -564,7 +564,7 @@ export default function FloatingChatbot({
 							</svg>
 						</div>
 						<div className="fc-header-title">
-							<h3>Erha AI Assistant</h3>
+							<h3>Clinical AI Assistant</h3>
 							<span>{doctorName}</span>
 						</div>
 					</div>

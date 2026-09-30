@@ -462,7 +462,7 @@ Tampilkan badge info di sebelah status dokumen:
 
 ## 6. Update Interface TypeScript
 
-Buka file [frontend/src/app/dashboard/knowledge/api/types.ts](it-aryanoble-skin-clinic-chatbot-d522bca9bdf5/it-aryanoble-skin-clinic-chatbot-d522bca9bdf5/frontend/src/app/dashboard/knowledge/api/types.ts):
+Buka file [frontend/src/app/dashboard/knowledge/api/types.ts](frontend/src/app/dashboard/knowledge/api/types.ts):
 
 Perbarui interface `KnowledgeResponse` agar sinkron dengan API backend terbaru:
 

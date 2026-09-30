@@ -76,7 +76,7 @@ async def _upsert_single_branch(db: AsyncSession, data: Dict[str, Any]) -> Branc
         
     name = str(data.get("name") or "")
     code = data.get("code")
-    ecosystem = data.get("ecosystem", "Erha")
+    ecosystem = data.get("ecosystem", "Clinical")
     raw_status = data.get("status", 1)
     is_inactive = str(raw_status).strip() == "0"
     
@@ -161,7 +161,7 @@ async def _upsert_single_doctor(db: AsyncSession, data: Dict[str, Any]) -> User:
     employee_id = data.get("nik") or data.get("employee_id")
     dr_type = data.get("user_type_name") or data.get("dr_type")
     user_type_code = str(data.get("user_type")) if data.get("user_type") is not None else None
-    ecosystem = data.get("ecosystem", "Erha")
+    ecosystem = data.get("ecosystem", "Clinical")
     raw_status = data.get("status", 1)
     is_inactive = str(raw_status).strip() == "0"
     

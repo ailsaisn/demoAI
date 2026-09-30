@@ -1,4 +1,4 @@
-"""Unified Chatbot Pipeline for ERHA (PT Arya Noble).
+"""Unified Chatbot Pipeline for Clinical Assistant.
 
 Single Entry Point and Single Source of Truth:
 - Input Guardrails Validation (Prompt Injection & Topicality)
@@ -64,7 +64,7 @@ class OpenAIAdapter(BaseLLMAdapter):
         
         # Configurable temperature from settings / env var LLM_GENERATION_TEMPERATURE.
         # CRITICAL MEDICAL DOMAIN NOTE:
-        # The recommended safe operating range for the ERHA medical domain is 0.0 to 0.2 ONLY.
+        # The recommended safe operating range for the clinical medical domain is 0.0 to 0.2 ONLY.
         # Temperatures above 0.2 are strictly not recommended due to high risk of factual variations
         # or hallucinations in sensitive clinical claims, pricing, SKUs, and active ingredient dosages.
         # The default remains strictly 0.0 for maximum determinism and consistency.
@@ -123,7 +123,7 @@ class OpenAIAdapter(BaseLLMAdapter):
 # --- Grounded System Prompt Configuration ---
 
 SYSTEM_PROMPT = """<role_and_persona>
-Kamu adalah AI Chatbot Arya Noble / ERHA, asisten AI internal berbasis RAG yang bertugas membantu Pengguna resmi (Dokter melalui integrasi CIS, Admin, dan Departemen Fungsional) dalam mencari dan menyajikan informasi tindakan klinis, produk skincare, protokol medis, serta SOP internal berdasarkan Knowledge Base resmi.
+Kamu adalah AI Clinical Assistant, asisten AI internal berbasis RAG yang bertugas membantu Pengguna resmi (Dokter melalui integrasi CIS, Admin, dan Departemen Fungsional) dalam mencari dan menyajikan informasi tindakan klinis, produk skincare, protokol medis, serta SOP internal berdasarkan Knowledge Base resmi.
 
 Karakteristik & Sikap:
 - Profesional, presisi, ringkas, dan to-the-point — sesuaikan dengan waktu terbatas pengguna.
@@ -279,7 +279,7 @@ Jika Admin atau Departemen Fungsional menanyakan SOP internal, panduan pengelola
 # --- Query General: Default Fallback System Prompt ---
 # This is ONLY used as fallback when no prompt is configured in AppConfig (key: AI_PROMPT_QUERY_GENERAL).
 # Admin can customize the system prompt via Configuration page in CIS dashboard.
-DEFAULT_QUERY_GENERAL_PROMPT = """Kamu adalah Asisten Pusat Pengetahuan Arya Noble (Executive Knowledge Hub) untuk Admin (ERHA & Ekosistem Group).
+DEFAULT_QUERY_GENERAL_PROMPT = """Kamu adalah Asisten Pusat Pengetahuan Klinis (Executive Knowledge Hub) untuk Admin.
 Tugas utamamu adalah membantu Admin dan Pengguna internal menelusuri, menguji, berdiskusi, dan menjawab pertanyaan (Q&A) berbasis basis pengetahuan aktif (Knowledge Base) dengan informasi yang presisi, lengkap, dan mudah dipahami.
 
 PERAN & TONA RESPONS (NATURAL & INFORMAL Q&A):
@@ -564,7 +564,7 @@ def _extract_specific_treatment_or_product_name(
                     if not any(k in c_val.lower() for k in ["treatment", "perawatan"]):
                         c_val = f"{c_val} Treatment"
                     return c_val
-                elif any(k in c_val.lower() for k in ["erha", "gel", "wash", "moisturizer", "serum", "cream", "sunscreen"]):
+                elif any(k in c_val.lower() for k in ["clinical", "gel", "wash", "moisturizer", "serum", "cream", "sunscreen"]):
                     return c_val
 
     # C. Check section name if not generic
@@ -576,7 +576,7 @@ def _extract_specific_treatment_or_product_name(
                 if not any(k in c_val.lower() for k in ["treatment", "perawatan"]):
                     c_val = f"{c_val} Treatment"
                 return c_val
-            elif any(k in c_val.lower() for k in ["erha", "gel", "wash", "moisturizer", "serum", "cream", "sunscreen"]):
+            elif any(k in c_val.lower() for k in ["clinical", "gel", "wash", "moisturizer", "serum", "cream", "sunscreen"]):
                 return c_val
             else:
                 return c_val
@@ -1044,8 +1044,8 @@ class GenerationPipeline:
             r'Silakan sampaikan jika ada informasi lain yang ingin ditanyakan\.?',
             r'Silakan lakukan konfirmasi manual ke Dept Functional / Admin untuk detail lebih lanjut\.?',
             r'Silakan lakukan konfirmasi manual ke Dept Functional / Admin\.?',
-            r'Informasi mengenai gambar produk yang tersedia di panduan resmi ERHA saat ini,?\s*Dok\.?',
-            r'Informasi mengenai gambar produk yang tersedia di panduan resmi ERHA saat ini\.?',
+            r'Informasi mengenai gambar produk yang tersedia di panduan resmi saat ini,?\s*Dok\.?',
+            r'Informasi mengenai gambar produk yang tersedia di panduan resmi saat ini\.?',
             r'[\r\n\s]*(?:Jika\s+(?:Anda\s+)?(?:memerlukan|butuh|ingin)\s+informasi\s+lebih\s+lanjut\s+atau\s+ingin\s+melakukan\s+pemesanan[^\.\!\?]*[\.\!\?]?)',
             r'[\r\n\s]*(?:Jika\s+(?:Anda\s+)?(?:memerlukan|butuh|ingin)\s+informasi\s+lebih\s+lanjut[^\.\!\?]*[\.\!\?]?)',
             r'[\r\n\s]*(?:Jika\s+ada\s+hal\s+lain\s+yang\s+ingin\s+ditanyakan\s+atau\s+ingin\s+memesan[^\.\!\?]*[\.\!\?]?)',
@@ -1140,7 +1140,7 @@ class GenerationPipeline:
                 "treatment", "perawatan", "produk", "foto", "gel", "cream", "krim", 
                 "serum", "lotion", "wash", "facial", "cleanse", "cleanser", "toner", 
                 "foam", "dan", "yang", "di", "ke", "dari", "untuk", "pada", "new", 
-                "version", "acne", "erha", "skin", "care", "moisturizer", "spot"
+                "version", "acne", "clinical", "skin", "care", "moisturizer", "spot"
             }
             tokens = [t for t in specific_item_name.lower().split() if t not in GENERIC_SKINCARE_TOKENS and len(t) > 2]
             

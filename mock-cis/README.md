@@ -1,6 +1,6 @@
 # Mock CIS (Clinic Information System) Service
 
-This module simulates the external **Clinic Information System (CIS)** environment. It serves as both an automated integration testbed and a **reference implementation** for external CIS development teams integrating with the Arya Noble AI Chatbot ecosystem.
+This module simulates the external **Clinic Information System (CIS)** environment. It serves as both an automated integration testbed and a **reference implementation** for external CIS development teams integrating with the AI Clinical Assistant ecosystem.
 
 ---
 
@@ -23,7 +23,7 @@ sequenceDiagram
     participant Doctor as Clinic Doctor
     participant CIS_UI as CIS Dashboard (Frontend)
     participant CIS_BE as CIS Backend
-    participant Chatbot_BE as Arya Noble Chatbot Backend
+    participant Chatbot_BE as AI Clinical Assistant Backend
 
     Note over CIS_BE,Chatbot_BE: Phase 1: Background Master Data Push
     CIS_BE->>CIS_BE: Generate RSA-SHA256 Payload Signature

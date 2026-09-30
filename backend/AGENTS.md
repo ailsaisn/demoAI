@@ -1,10 +1,10 @@
-# AGENTS.md — Arya Noble Backend Agent Configuration
+# AGENTS.md — Skin Clinic Backend Agent Configuration
 
 > **Core Directive:** This file serves as the source of truth for the FastAPI backend architecture, tech stack, conventions, and AI team collaboration workflow. Always refer back to this document when generating new APIs, models, or RAG pipeline features.
 
 ## Project Context
 
-We are building the backend for the **Arya Noble AI Chatbot (Clinic Information System)**.
+We are building the backend for the **Skin Clinic AI Chatbot (Clinic Information System)**.
 
 - **Goal**: Serve as a robust standard API for user authentication, CRUD operations, syncing data from the CIS, and driving an enterprise-grade Retrieval-Augmented Generation (RAG) engine.
 - **Unified Team Workspace**: Both Backend Engineers and AI Engineers work directly in this repository (`backend/`). The AI subsystem lives entirely inside `backend/app/rag/`.

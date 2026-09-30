@@ -35,7 +35,7 @@ class BranchResponse(BranchBase):
     id: UUID
     external_id: Optional[int] = None
     code: Optional[str] = None
-    ecosystem: str = "Erha"
+    ecosystem: str = "Clinical"
     created_at: datetime
     updated_at: datetime
     

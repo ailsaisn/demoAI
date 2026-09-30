@@ -121,7 +121,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 app = FastAPI(
     title=settings.PROJECT_NAME,
-    description="Backend API for Arya Noble AI Chatbot",
+    description="Backend API for AI Clinical Assistant",
     version="1.0.0",
     lifespan=lifespan,
     swagger_ui_parameters={"persistAuthorization": True}

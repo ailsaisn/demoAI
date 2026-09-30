@@ -1,11 +1,11 @@
 """
-Dedicated CRUD Service for General Knowledge Assistant (Arya Noble).
+Dedicated CRUD Service for General Knowledge Assistant.
 
 This service executes deterministic, validated database operations (READ metadata, EDIT, DELETE)
 on approved Knowledge Base documents across:
 - Local JSON storage (data/output/)
 - PostgreSQL (Knowledge table)
-- PGVector (arya_noble_kb table)
+- PGVector (clinical_kb table)
 - MinIO Object Storage (approved & canonical buckets)
 - BM25 Index (bm25_index.pkl)
 
@@ -682,7 +682,7 @@ status       : {status}
                                     for col in cols:
                                         col_clean = re.sub(r'!\[.*?\]\(.*?\)', '', col).strip()
                                         if len(col_clean) > 3 and not col_clean.startswith("http") and not col_clean.startswith("/api/storage"):
-                                            if any(kw in col_clean.lower() for kw in ["erha", "serum", "gel", "cream", "wash", "lotion", "moisturizer", "toner", "sabun"]):
+                                            if any(kw in col_clean.lower() for kw in ["clinical", "serum", "gel", "cream", "wash", "lotion", "moisturizer", "toner", "sabun"]):
                                                 target_sub_items.append(col_clean)
                                                 break
 
@@ -933,7 +933,7 @@ status       : {status}
         """
         approved_file = resolve_approved_file(knowledge_id)
         if not approved_file:
-            return False, f"Dokumen dengan ID/Nama '{knowledge_id}' tidak ditemukan dalam Basis Data Pengetahuan ERHA.", None
+            return False, f"Dokumen dengan ID/Nama '{knowledge_id}' tidak ditemukan dalam Basis Data Pengetahuan Klinis.", None
 
         try:
             with open(approved_file, "r", encoding="utf-8") as f:
@@ -1715,7 +1715,7 @@ status       : {status}
                     if len(sections) <= 1:
                         sections = [s for s in re.split(r'(?=(?:^|\n)#{1,4}\s+[^\n]+)', summary) if s.strip()]
 
-                    target_words = [w for w in re.findall(r'\b[a-zA-Z0-9]{3,}\b', target_item_lower) if w not in ('produk', 'product', 'erha', 'the', 'and', 'gambar', 'foto', 'image', 'picture')]
+                    target_words = [w for w in re.findall(r'\b[a-zA-Z0-9]{3,}\b', target_item_lower) if w not in ('produk', 'product', 'clinical', 'the', 'and', 'gambar', 'foto', 'image', 'picture')]
 
                     new_sections = []
                     image_removed_from_section = False
@@ -1916,7 +1916,7 @@ status       : {status}
                         sections = [s for s in re.split(r'(?=(?:^|\n)#{1,4}\s+[^\n]+)', summary) if s.strip()]
 
                     kept_sections = []
-                    target_words = [w for w in re.findall(r'\b[a-zA-Z0-9]{3,}\b', target_item_lower) if w not in ('produk', 'product', 'erha', 'the', 'and')]
+                    target_words = [w for w in re.findall(r'\b[a-zA-Z0-9]{3,}\b', target_item_lower) if w not in ('produk', 'product', 'clinical', 'the', 'and')]
 
                     for sec in sections:
                         name_m = re.search(r'-\s*\*\*Nama(?:\s+Produk)?\*\*\s*:\s*([^\n]+)', sec, re.IGNORECASE)
@@ -1937,7 +1937,7 @@ status       : {status}
                                 is_match = True
                             else:
                                 generic_words = {
-                                    'produk', 'product', 'erha', 'the', 'and', 'for', 'with',
+                                    'produk', 'product', 'clinical', 'the', 'and', 'for', 'with',
                                     'new', 'version', 'series', 'edisi', 'baru', 'edition', 'care',
                                     'cream', 'serum', 'gel', 'lotion', 'wash', 'cleanser', 'toner', 'facial', 'sunscreen', 'moisturizer'
                                 }

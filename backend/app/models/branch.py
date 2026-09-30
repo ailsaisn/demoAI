@@ -12,7 +12,7 @@ class Branch(Base, TimestampMixin, SoftDeleteMixin):
     external_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     name: Mapped[str] = mapped_column(String, nullable=False)
     code: Mapped[Optional[str]] = mapped_column(String, nullable=True)
-    ecosystem: Mapped[str] = mapped_column(String, default="Erha", server_default="Erha", nullable=False)
+    ecosystem: Mapped[str] = mapped_column(String, default="Clinical", server_default="Clinical", nullable=False)
     token_limit: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     has_custom_limit: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false", nullable=False)
 

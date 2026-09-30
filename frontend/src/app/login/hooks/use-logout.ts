@@ -11,7 +11,7 @@ export const useLogout = () => {
 			if (typeof window !== "undefined") {
 				sessionStorage.setItem("is_logging_out", "true");
 				try {
-					localStorage.removeItem("arya_noble_last_active");
+					localStorage.removeItem("clinical_last_active");
 				} catch {}
 			}
 			queryClient.cancelQueries();

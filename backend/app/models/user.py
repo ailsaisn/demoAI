@@ -24,7 +24,7 @@ class User(Base, TimestampMixin, SoftDeleteMixin):
     employee_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     dr_type: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     user_type_code: Mapped[Optional[str]] = mapped_column(String, nullable=True)
-    ecosystem: Mapped[str] = mapped_column(String, default="ERHA", server_default="ERHA", nullable=False)
+    ecosystem: Mapped[str] = mapped_column(String, default="Clinical", server_default="Clinical", nullable=False)
 
     __table_args__ = (
         CheckConstraint(

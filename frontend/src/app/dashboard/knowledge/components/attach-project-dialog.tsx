@@ -193,7 +193,7 @@ export function AttachProjectDialog({
 									<Input
 										autoFocus
 										autoComplete="off"
-										placeholder="e.g. ERHA Acne Treatment"
+										placeholder="e.g. Clinical Acne Treatment"
 										value={newProjectName}
 										onChange={(e) => {
 											setNewProjectName(e.target.value);

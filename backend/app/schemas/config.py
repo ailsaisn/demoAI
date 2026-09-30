@@ -51,9 +51,9 @@ class DatabaseResetRequest(BaseModel):
         examples=["admin@mail.com"],
     )
     admin_password: str = Field(
-        default="Erhadermies@123",
+        default="Clinical@123",
         description="Default admin user password",
-        examples=["Erhadermies@123"],
+        examples=["Clinical@123"],
     )
 
 class DatabaseResetResponse(BaseModel):

@@ -1,4 +1,4 @@
-# AGENTS.md — Arya Noble Frontend Agent Configuration
+# AGENTS.md — Skin Clinic Frontend Agent Configuration
 
 > **Core Directive:** ALWAYS refer to `docs/DESIGN.md` before building UI components. `DESIGN.md` is the strict source of truth for design patterns, tokens, and CSS best practices.
 

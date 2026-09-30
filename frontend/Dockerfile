@@ -19,7 +19,7 @@ CMD ["pnpm", "dev"]
 
 # Stage 4: Production builder
 FROM base AS builder
-ARG NEXT_PUBLIC_API_URL=https://dokterpedia-api-dev.aryanoble.web.id/api
+ARG NEXT_PUBLIC_API_URL=http://localhost:8000/api
 ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules

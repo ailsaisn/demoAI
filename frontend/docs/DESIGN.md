@@ -1,4 +1,4 @@
-# DESIGN.md — Arya Noble Frontend Design System
+# DESIGN.md — Skin Clinic Frontend Design System
 
 This document is strictly the source of truth for design patterns, CSS/UI guidelines, and Figma tokens. For architectural rules or project structure, see `AGENTS.md`.
 

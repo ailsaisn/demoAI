@@ -15,7 +15,7 @@ export const useLogin = () => {
 		onSuccess: (data) => {
 			if (typeof window !== "undefined") {
 				try {
-					localStorage.setItem("arya_noble_last_active", Date.now().toString());
+					localStorage.setItem("clinical_last_active", Date.now().toString());
 				} catch {}
 			}
 			queryClient.setQueryData(authKeys.me(), data.userProfile);

@@ -16,9 +16,9 @@ def test_bug_2_source_hiding_and_sanitization():
             "chunk_id": "test_chunk_1",
             "text": "Acneact Witch Hazel BHA Toner membantu meredakan kemerahan pada jerawat aktif.",
             "metadata": {
-                "source_file": "Katalog_Produk_ERHA_Acneact_2024.pdf",
+                "source_file": "Katalog_Produk_Acneact_2024.pdf",
                 "knowledge_id": "c1f3089d-784f-4d9d-9ea8-6bc4fb619213",
-                "product_name": "ERHA Acneact BHA Toner",
+                "product_name": "Acneact BHA Toner",
                 "category": "Toner",
                 "section": "Deskripsi Produk"
             },
@@ -27,15 +27,15 @@ def test_bug_2_source_hiding_and_sanitization():
     ]
 
     context = builder.build_context(chunks)
-    assert "Katalog_Produk_ERHA_Acneact_2024.pdf" not in context, "LEAK DETECTED: Source filename found in context!"
+    assert "Katalog_Produk_Acneact_2024.pdf" not in context, "LEAK DETECTED: Source filename found in context!"
     assert "Source:" not in context, "LEAK DETECTED: 'Source:' header found in context!"
     assert "c1f3089d-784f-4d9d-9ea8-6bc4fb619213" not in context, "LEAK DETECTED: Knowledge ID found in context!"
-    assert "ERHA Acneact BHA Toner" in context, "Product name should be preserved in context."
+    assert "Acneact BHA Toner" in context, "Product name should be preserved in context."
     print("  [PASS] build_context() successfully excludes raw filenames, Source headers, and UUIDs.")
 
     # Test strip_internal_document_references sanitizer
     leaky_response = (
-        "Berdasarkan dokumen Katalog_Produk_ERHA_Acneact_2024.pdf dan panduan SOP_Klinik.docx, "
+        "Berdasarkan dokumen Katalog_Produk_Acneact_2024.pdf dan panduan SOP_Klinik.docx, "
         "produk ini memiliki ID c1f3089d-784f-4d9d-9ea8-6bc4fb619213. Silakan cek data_2024.xlsx."
     )
     cleaned = strip_internal_document_references(leaky_response)
@@ -90,7 +90,7 @@ def test_bug_1_two_column_pdf_reading_order():
     page = doc.new_page(width=600, height=800)
 
     # Header spanning across page
-    page.insert_text((50, 50), "JUDUL JURNAL PENELITIAN KLINIS ERHA", fontsize=14)
+    page.insert_text((50, 50), "JUDUL JURNAL PENELITIAN KLINIS", fontsize=14)
 
     # Left column text (x: 50 to 280)
     page.insert_text((50, 100), "Kolom Kiri Paragraf 1: Pengujian formula Acneact dimulai.", fontsize=10)

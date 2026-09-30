@@ -6,13 +6,13 @@ services:
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: arya_noble
+      POSTGRES_DB: clinical_db
     ports:
       - "50010:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: [ "CMD-SHELL", "pg_isready -U postgres -d arya_noble" ]
+      test: [ "CMD-SHELL", "pg_isready -U postgres -d clinical_db" ]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -49,7 +49,7 @@ services:
     env_file:
       - ./backend/.env
     environment:
-      - DATABASE_URL=postgresql+asyncpg://postgres:postgres@db:5432/arya_noble
+      - DATABASE_URL=postgresql+asyncpg://postgres:postgres@db:5432/clinical_db
       - ENABLE_RERANKER=false
     depends_on:
       db:
@@ -70,13 +70,13 @@ services:
       context: ./frontend
       target: production
       args:
-        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-https://dokterpedia-api-dev.aryanoble.web.id/api}
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000/api}
     container_name: skin_clinic_frontend_prod
     restart: always
     ports:
       - "3000:3000"
     environment:
-      - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-https://dokterpedia-api-dev.aryanoble.web.id/api}
+      - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-http://localhost:8000/api}
     depends_on:
       backend:
         condition: service_healthy

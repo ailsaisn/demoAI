@@ -587,16 +587,16 @@ CLINICAL_SYNONYM_DICTIONARY = {
     "melasma": ["melasma", "hyperpigmentation", "flek hormonal", "brightening center"],
     "melasma ringan": ["melasma ringan", "mild melasma", "brightening center", "pih"],
     "pih": ["post-inflammatory hyperpigmentation", "hiperpigmentasi pasca inflamasi", "noda hitam bekas jerawat"],
-    "brightening center": ["brightening center", "erha brightening", "produk pencerah melasma"],
+    "brightening center": ["brightening center", "clinical brightening", "produk pencerah melasma"],
     
     # ── Reverse Ingredient & Active Substances ───────────────
     "ethyl ascorbic acid": ["10% ethyl ascorbic acid", "active glow booster", "vitamin c", "brightening peptides"],
-    "10% ethyl ascorbic acid": ["erha truwhite active glow booster", "ethyl ascorbic acid", "brightening peptides"],
-    "brightening peptides": ["erha truwhite active glow booster", "peptides pencerah", "ethyl ascorbic acid"],
-    "active glow booster": ["erha truwhite active glow booster", "glow booster", "brightening serum"],
-    "truwhite": ["erha truwhite", "brightening facial wash", "active glow booster"],
-    "acneact": ["erha acneact", "gentle acne moisturizer", "acne spot gel"],
-    "gentle acne moisturizer": ["erha acneact gentle acne moisturizer", "pelembap jerawat", "acne moisturizer"],
+    "10% ethyl ascorbic acid": ["truwhite active glow booster", "ethyl ascorbic acid", "brightening peptides"],
+    "brightening peptides": ["truwhite active glow booster", "peptides pencerah", "ethyl ascorbic acid"],
+    "active glow booster": ["truwhite active glow booster", "glow booster", "brightening serum"],
+    "truwhite": ["truwhite", "brightening facial wash", "active glow booster"],
+    "acneact": ["acneact", "gentle acne moisturizer", "acne spot gel"],
+    "gentle acne moisturizer": ["acneact gentle acne moisturizer", "pelembap jerawat", "acne moisturizer"],
     
     # ── Pores, Sebum & Cleansers ─────────────────────────────
     "pori gede": ["enlarged pores", "pori pori besar", "seborrhea"],
@@ -823,7 +823,7 @@ class HybridRetriever:
         ing_match = re.search(r'\b(?:kandungan|mengandung|bahan\s+aktif|komposisi|ingredients?|dengan\s+kandungan|dengan\s+komposisi|berbahan|formula)\s+([a-zA-Z0-9\-\s]{3,30})\b', q_lower)
         if ing_match:
             cand = ing_match.group(1).strip()
-            cand = re.sub(r'\b(apa\s+saja|adakah|ada|saja|ya|dong|tolong|di\s+erha|ini|itu|tersebut|yang|bisa|untuk)\b', '', cand).strip()
+            cand = re.sub(r'\b(apa\s+saja|adakah|ada|saja|ya|dong|tolong|di\s+klinik|ini|itu|tersebut|yang|bisa|untuk)\b', '', cand).strip()
             if re.match(r'^(dan|atau|serta|pada|dari|dalam|tentang|apakah|bagaimana)\b', cand):
                 cand = ""
             if len(cand) >= 3 and cand not in ("produk", "skincare", "obat", "cream", "krim", "serum", "cleanser", "wash"):

@@ -48,7 +48,7 @@ export function DoctorTableRow({ doctor, onView }: DoctorTableRowProps) {
 			>
 				{branchesLabel}
 			</TableCell>
-			<TableCell className="text-gray-900">{doctor.ecosystem || "ERHA"}</TableCell>
+			<TableCell className="text-gray-900">{doctor.ecosystem || "Clinical"}</TableCell>
 			<TableCell className="text-gray-900">{doctor.email || "-"}</TableCell>
 			<TableCell className="text-right">
 				<div className="flex justify-end gap-2">

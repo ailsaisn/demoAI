@@ -7,7 +7,7 @@ BASE_URL = "http://localhost:8000/api"
 def main():
     s = requests.Session()
     # 1. Login as admin
-    login_res = s.post(f"{BASE_URL}/auth/login", data={"username": "admin@mail.com", "password": "Erhadermies@123"})
+    login_res = s.post(f"{BASE_URL}/auth/login", data={"username": "admin@mail.com", "password": "Clinical@123"})
     print("Login Status:", login_res.status_code)
 
     # 2. Get quota/pending list to find a document to approve

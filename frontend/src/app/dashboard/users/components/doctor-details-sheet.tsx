@@ -162,7 +162,7 @@ export function DoctorDetailsSheet({
 									<div className="flex flex-col gap-1">
 										<span className="text-sm text-black-300">Ecosystem</span>
 										<span className="text-sm font-medium text-black-500">
-											{doctor.ecosystem || "ERHA"}
+											{doctor.ecosystem || "Clinical"}
 										</span>
 									</div>
 								</TabsContent>

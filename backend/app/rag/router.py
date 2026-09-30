@@ -375,7 +375,7 @@ def auto_embed_images_in_summary(
                 updated = updated[:pos] + img_md + updated[pos:].lstrip("\n")
                 placed = True
             else:
-                words = [w for w in re.split(r'[\s\-_/]+', prod_name) if len(w) > 3 and w.lower() not in ["erha", "produk", "product"]]
+                words = [w for w in re.split(r'[\s\-_/]+', prod_name) if len(w) > 3 and w.lower() not in ["clinical", "produk", "product"]]
                 if len(words) >= 2:
                     fuzzy_prod_regex = re.compile(
                         r'(?mi)^(#{2,6}\s*.*?' + r'.*?'.join(re.escape(w) for w in words[:3]) + r'.*?)$'
@@ -435,11 +435,11 @@ def clean_duplicate_headers(text: str) -> str:
     """
     Cleans up accidental duplicated consecutive headers or lines in markdown text.
     For example:
-        ERHA Acneact Acne Spot Gel
+        Acneact Acne Spot Gel
         
-        ERHA Acneact Acne Spot Gel
+        Acneact Acne Spot Gel
     becomes:
-        ## ERHA Acneact Acne Spot Gel
+        ## Acneact Acne Spot Gel
     """
     if not text:
         return ""
@@ -605,7 +605,7 @@ def extract_product_deletion(user_prompt: str) -> tuple[Optional[str], Optional[
             return None
         return t or None
 
-    # 0. By image deletion: e.g. hapus gambar product Spot Gel New Version, hapus foto "ERHA Acneact", hilangkan gambar
+    # 0. By image deletion: e.g. hapus gambar product Spot Gel New Version, hapus foto "Acneact", hilangkan gambar
     m_img = re.search(
         r'\b(?:hapus|delete|hilangkan|remove|buang|bersihkan|tiadakan)\s+(?:semua\s+|seluruh\s+)?(?:gambar|foto|image|picture|visual|banner)\s*(?:dari|pada|untuk|buat|for|from|of)?\s*(?:(?:data\s+)?(?:produk|products?|item|barang))?\s*(?:["\'“]([^"\'”]+)["\'”]|([A-Za-z0-9\s\-_]{3,60}))?',
         user_prompt,
@@ -676,7 +676,7 @@ def extract_product_cards_from_summary(summary: str, target_product_names: Optio
     clean_targets = []
     distinctive_targets = []
     generic_words = {
-        'produk', 'product', 'erha', 'and', 'the', 'with', 'for',
+        'produk', 'product', 'clinical', 'and', 'the', 'with', 'for',
         'cream', 'serum', 'gel', 'lotion', 'toner', 'wash', 'cleanser',
         'facial', 'sunscreen', 'moisturizer', 'spot', 'care', 'treatment'
     }
@@ -691,7 +691,7 @@ def extract_product_cards_from_summary(summary: str, target_product_names: Optio
             if dist_words:
                 distinctive_targets.append(dist_words)
             else:
-                all_words = [w.lower() for w in re.findall(r'\b[a-zA-Z0-9]{3,}\b', t_clean) if w.lower() not in ('produk', 'product', 'erha', 'and', 'the')]
+                all_words = [w.lower() for w in re.findall(r'\b[a-zA-Z0-9]{3,}\b', t_clean) if w.lower() not in ('produk', 'product', 'clinical', 'and', 'the')]
                 if all_words:
                     distinctive_targets.append(all_words)
 
@@ -721,8 +721,8 @@ def extract_product_cards_from_summary(summary: str, target_product_names: Optio
             matched = False
             # 1. Exact or substring match of full target name or product name
             for t_clean in clean_targets:
-                t_norm = re.sub(r'^(?:erha\s+|the\s+)', '', t_clean).strip()
-                p_norm = re.sub(r'^(?:erha\s+|the\s+)', '', p_lower).strip()
+                t_norm = re.sub(r'^(?:clinical\s+|the\s+)', '', t_clean).strip()
+                p_norm = re.sub(r'^(?:clinical\s+|the\s+)', '', p_lower).strip()
                 if t_norm in p_norm or p_norm in t_norm or t_clean in p_lower:
                     matched = True
                     break
@@ -828,7 +828,7 @@ def apply_refinements_to_content(
             is_sku_target = True
             if sku_target:
                 sku_target_clean = sku_target.lower()
-                target_words = [w for w in re.findall(r'\b[a-zA-Z0-9]{3,}\b', sku_target_clean) if w not in ('erha', 'acneact', 'the', 'and', 'for', 'product', 'overview')]
+                target_words = [w for w in re.findall(r'\b[a-zA-Z0-9]{3,}\b', sku_target_clean) if w not in ('clinical', 'acneact', 'the', 'and', 'for', 'product', 'overview')]
                 if target_words:
                     is_sku_target = any(tw in sec_lower for tw in target_words)
 
@@ -836,7 +836,7 @@ def apply_refinements_to_content(
             is_price_target = True
             if price_target:
                 price_target_clean = price_target.lower()
-                target_words = [w for w in re.findall(r'\b[a-zA-Z0-9]{3,}\b', price_target_clean) if w not in ('erha', 'acneact', 'the', 'and', 'for', 'product', 'overview')]
+                target_words = [w for w in re.findall(r'\b[a-zA-Z0-9]{3,}\b', price_target_clean) if w not in ('clinical', 'acneact', 'the', 'and', 'for', 'product', 'overview')]
                 if target_words:
                     is_price_target = any(tw in sec_lower for tw in target_words)
 
@@ -910,7 +910,7 @@ def apply_refinements_to_content(
             
             should_update_sku = True
             if extracted_sku and sku_target:
-                target_words = [w for w in re.findall(r'\b[a-zA-Z0-9]{3,}\b', sku_target.lower()) if w not in ('erha', 'acneact', 'the', 'and', 'for', 'product', 'overview')]
+                target_words = [w for w in re.findall(r'\b[a-zA-Z0-9]{3,}\b', sku_target.lower()) if w not in ('clinical', 'acneact', 'the', 'and', 'for', 'product', 'overview')]
                 if target_words:
                     should_update_sku = any(tw in chunk_combined for tw in target_words)
 
@@ -939,10 +939,10 @@ def apply_refinements_to_content(
         )
 
         truwhite_targets = [
-            "ERHA Truwhite Brightening Serum with 10% Stable Ethyl Vitamin C & Brightening Peptides",
-            "ERHA Truwhite Brightening Day Cream SPF30 PA+++",
-            "ERHA Truwhite Brightening Pore Toner 100 ml",
-            "ERHA Truwhite Peptovitae® Bright, Yuzu Extract & Niacinamide Moisture Gel Cream"
+            "Truwhite Brightening Serum with 10% Stable Ethyl Vitamin C & Brightening Peptides",
+            "Truwhite Brightening Day Cream SPF30 PA+++",
+            "Truwhite Brightening Pore Toner 100 ml",
+            "Truwhite Peptovitae® Bright, Yuzu Extract & Niacinamide Moisture Gel Cream"
         ]
 
         for sec in sections:
@@ -1022,11 +1022,11 @@ def apply_refinements_to_content(
 
         target_clean = del_name.lower().strip() if del_name else ""
         generic_words = {
-            'produk', 'product', 'products', 'erha', 'the', 'and', 'for', 'with',
+            'produk', 'product', 'products', 'clinical', 'the', 'and', 'for', 'with',
             'gambar', 'foto', 'image', 'picture', 'visual', 'banner',
             'new', 'version', 'series', 'edisi', 'baru', 'edition', 'care'
         }
-        all_target_words = [w for w in re.findall(r'\b[a-zA-Z0-9]{3,}\b', target_clean) if w not in ('produk', 'product', 'products', 'erha', 'the', 'and', 'gambar', 'foto', 'image', 'picture')]
+        all_target_words = [w for w in re.findall(r'\b[a-zA-Z0-9]{3,}\b', target_clean) if w not in ('produk', 'product', 'products', 'clinical', 'the', 'and', 'gambar', 'foto', 'image', 'picture')]
         distinctive_target_words = [w for w in all_target_words if w not in generic_words]
 
         sections = [s for s in re.split(prod_boundary_pattern, target_base) if s.strip()]
@@ -1142,12 +1142,12 @@ def apply_refinements_to_content(
                 p_name_clean = p_name.lower().strip() if p_name else sec.lower().strip()
 
                 generic_words = {
-                    'produk', 'product', 'products', 'erha', 'the', 'and', 'for', 'with',
+                    'produk', 'product', 'products', 'clinical', 'the', 'and', 'for', 'with',
                     'new', 'version', 'series', 'edisi', 'baru', 'edition', 'care',
                     'cream', 'serum', 'gel', 'lotion', 'wash', 'cleanser', 'toner', 'facial', 'sunscreen', 'moisturizer'
                 }
                 distinctive_del_words = [w for w in re.findall(r'\b[a-zA-Z0-9]{3,}\b', del_name_clean) if w not in generic_words]
-                all_del_words = [w for w in re.findall(r'\b[a-zA-Z0-9]{3,}\b', del_name_clean) if w not in ('produk', 'product', 'products', 'erha', 'the', 'and')]
+                all_del_words = [w for w in re.findall(r'\b[a-zA-Z0-9]{3,}\b', del_name_clean) if w not in ('produk', 'product', 'products', 'clinical', 'the', 'and')]
 
                 if del_name_clean == p_name_clean:
                     should_delete = True
@@ -1185,8 +1185,8 @@ def apply_refinements_to_content(
 def extract_product_retrieval_query(user_prompt: str) -> Optional[str]:
     """
     Detects if the admin instruction is a product/document retrieval or query request
-    (e.g., 'berikan detail produk ERHA Acneact Acne Spot Gel', 'panggil ERHA Acneact Acne Spot Gel',
-    'tampilkan produk ERHA Acneact Acne Spot Gel').
+    (e.g., 'berikan detail produk Acneact Acne Spot Gel', 'panggil Acneact Acne Spot Gel',
+    'tampilkan produk Acneact Acne Spot Gel').
     Returns the target product name or None if prompt is a mutation/edit.
     """
     import re
@@ -1235,7 +1235,7 @@ def extract_product_card_from_summary(summary: str, target_product: str) -> Opti
     sections = [s for s in re.split(prod_boundary_pattern, summary) if s.strip()]
     matched_section = None
     target_clean = target_product.lower()
-    target_words = [w.lower() for w in re.findall(r'\b[a-zA-Z0-9]{3,}\b', target_clean) if w.lower() not in ('erha', 'produk', 'product', 'detail', 'item')]
+    target_words = [w.lower() for w in re.findall(r'\b[a-zA-Z0-9]{3,}\b', target_clean) if w.lower() not in ('clinical', 'produk', 'product', 'detail', 'item')]
     best_score = 0
     best_name = ''
     for sec in sections:
@@ -1322,7 +1322,7 @@ def apply_targeted_image_swap(
     best_score = 0
     best_product = None
     for kp in known_products:
-        kp_words = [w.lower() for w in re.findall(r'\b[a-zA-Z0-9]{3,}\b', kp) if w.lower() not in ("erha", "produk")]
+        kp_words = [w.lower() for w in re.findall(r'\b[a-zA-Z0-9]{3,}\b', kp) if w.lower() not in ("clinical", "produk")]
         if not kp_words:
             continue
         score = 0
@@ -1345,7 +1345,7 @@ def apply_targeted_image_swap(
     target_idx = -1
 
     if target_name and len(sections) > 1:
-        target_words = [w.lower() for w in re.findall(r'\b[a-zA-Z0-9]{3,}\b', target_name) if w.lower() not in ("erha", "produk", "gambar", "foto", "dengan", "ini", "jadi")]
+        target_words = [w.lower() for w in re.findall(r'\b[a-zA-Z0-9]{3,}\b', target_name) if w.lower() not in ("clinical", "produk", "gambar", "foto", "dengan", "ini", "jadi")]
         best_match_idx = -1
         best_match_score = 0
 
@@ -1448,14 +1448,14 @@ def preserve_existing_product_images(old_summary: str, new_summary: str, user_pr
         old_alt = img_match.group(1)
         old_url = img_match.group(2).strip()
 
-        if del_target and any(w in del_target for w in re.findall(r'\b[a-zA-Z0-9]{3,}\b', p_name.lower()) if w not in ("erha", "produk")):
+        if del_target and any(w in del_target for w in re.findall(r'\b[a-zA-Z0-9]{3,}\b', p_name.lower()) if w not in ("clinical", "produk")):
             continue
 
         if old_url in new_summary:
             continue
 
         new_sections = re.split(r'(?=\n#{1,4}\s+)', "\n" + new_summary)
-        p_words = [w for w in re.findall(r'\b[a-zA-Z0-9]{3,}\b', p_name.lower()) if w not in ("erha", "produk")]
+        p_words = [w for w in re.findall(r'\b[a-zA-Z0-9]{3,}\b', p_name.lower()) if w not in ("clinical", "produk")]
         
         target_new_idx = -1
         for idx, n_sec in enumerate(new_sections):
@@ -1524,7 +1524,7 @@ def align_chunks_with_multitreatment(
         if not matched_entity:
             best_score = 0
             for ent in entities:
-                ent_words = [w for w in re.findall(r'\b[a-zA-Z0-9]{3,}\b', ent.lower()) if w not in ('erha', 'and', 'for', 'the', 'treatment', 'program', 'therapy', 'center')]
+                ent_words = [w for w in re.findall(r'\b[a-zA-Z0-9]{3,}\b', ent.lower()) if w not in ('clinical', 'and', 'for', 'the', 'treatment', 'program', 'therapy', 'center')]
                 if ent_words:
                     score = sum(1 for w in ent_words if w in chunk_lower) / len(ent_words)
                     if score > best_score and score >= 0.5:
@@ -2174,7 +2174,7 @@ async def process_ingestion_background(
                         # For papers/journals: extract title & metadata quickly using first 8000 chars (title, abstract, authors)
                         doc_content_excerpt = canonical_text[:8000]
                         structuring_prompt = f"""
-You are an expert scientific document analysis AI for PT Arya Noble (ERHA).
+You are an expert scientific document analysis AI for Skin Clinic.
 This document is a scientific research paper, journal article, clinical study, or academic manuscript.
 
 Your tasks:
@@ -2219,7 +2219,7 @@ CRITICAL INSTRUCTION:
 """
 
                         structuring_prompt = f"""
-You are an expert document structuring and knowledge curation AI for PT Arya Noble (ERHA).
+You are an expert document structuring and knowledge curation AI for Skin Clinic.
 
 {admin_instruction_block}
 
@@ -2252,7 +2252,7 @@ Your tasks:
      * Never dump orphan photos at the top under the main document title (# Title) or between sections.
      * Preserve all specific attributes present in each sheet (e.g. Komposisi, Cara Penggunaan, Kontraindikasi, Efek Samping, Kategori, Ukuran, Deskripsi).
    - STRICT ZERO-HALLUCINATION & FACTUAL ACCURACY RULE FOR PRODUCT ATTRIBUTES (CRITICAL):
-     * SKU RULE: ONLY include the `- **SKU**: [Nomor SKU]` line IF AND ONLY IF an explicit SKU code or number is written in the source document. If NO SKU code/number is explicitly written in the source document, YOU MUST COMPLETELY OMIT THE `- **SKU**:` LINE ENTIRELY! DO NOT INVENT, FABRICATE, GENERATE, OR GUESS ANY SKU CODE (e.g. NEVER create ERHA-ACNE-001, ERHA-TRU-001, or any random code).
+     * SKU RULE: ONLY include the `- **SKU**: [Nomor SKU]` line IF AND ONLY IF an explicit SKU code or number is written in the source document. If NO SKU code/number is explicitly written in the source document, YOU MUST COMPLETELY OMIT THE `- **SKU**:` LINE ENTIRELY! DO NOT INVENT, FABRICATE, GENERATE, OR GUESS ANY SKU CODE (e.g. NEVER create CLINICAL-ACNE-001, CLINICAL-TRU-001, or any random code).
      * ATTRIBUTE ACCURACY: ONLY include attribute bullet lines (`Brand`, `Kategori`, `Ukuran`, `Harga`, `Deskripsi`, `Komposisi`, `Cara Penggunaan`, `Kontraindikasi`, `Efek Samping`) for values that are EXPLICITLY present in the source document. Do NOT invent missing values or fabricate categories.
    - NON-PRODUCT DOCUMENTS RULE: If the document is a Technical Design Document, SOP, FAQ, operational manual, or general report (NOT a product catalog): DO NOT format content into `### Detail Produk` blocks. Use clean, standard Markdown headings (`##`, `###`) reflecting the actual document sections.
    - EXCEL & SPREADSHEET TABLE PRESERVATION:
@@ -2331,7 +2331,7 @@ Return ONLY valid JSON (no surrounding markdown code blocks):
                     if is_image_file:
                         doc_img = all_doc_image_urls[0] if all_doc_image_urls else init_image_url
                         img_md = f"![{recommended_title}]({doc_img})" if doc_img else ""
-                        summary = f"# {recommended_title}\n\n{img_md}\n\nDokumen visual produk resmi ERHA: {recommended_title}."
+                        summary = f"# {recommended_title}\n\n{img_md}\n\nDokumen visual produk resmi: {recommended_title}."
                         extracted_doc_type = "PRODUCT"
                         logger.info(f"🖼️ [BATCH: {batch_id or 'SINGLE'}] [FILE: {file_name}] Preserved clean product image summary: '{recommended_title}'")
                     else:
@@ -2805,7 +2805,7 @@ Harap perhatikan dan penuhi instruksi pengguna di atas saat menyusun ringkasan e
 """
 
     batch_prompt = f"""
-Anda adalah AI Knowledge Specialist & Clinical Data Integrator untuk klinik ERHA (PT Arya Noble).
+Anda adalah AI Knowledge Specialist & Clinical Data Integrator untuk Skin Clinic.
 Pengguna mengunggah {len(batch_docs)} dokumen sekaligus dalam satu batch ingest.
 
 Berikut ringkasan dan sampel isi masing-masing dokumen dalam batch ini:
@@ -3713,7 +3713,7 @@ async def refine_pending_document(
 
         # ─── COLLABORATIVE KNOWLEDGE BASE EDITOR PROMPT ─────────────────────────────
         refine_prompt = f"""
-You are an intelligent, helpful knowledge base editor for PT Arya Noble (ERHA).
+You are an intelligent, helpful knowledge base editor for Skin Clinic.
 Your task is to refine, edit, format, or update the document content based on the Admin's instruction.
 
 ======================================================================
@@ -3754,7 +3754,7 @@ EDITING GUIDELINES:
      - **Aturan Pakai**: Cara penggunaan (format sebagai bullet point)
      - **Deskripsi**: Penjelasan manfaat dan kegunaan produk.
      ```
-   - STRICT ZERO-HALLUCINATION RULE: ONLY include `- **SKU**:` IF AND ONLY IF an explicit SKU code/number is stated in the source document or explicitly instructed by Admin. NEVER fabricate SKU numbers (e.g. do NOT invent ERHA-ACNE-001).
+   - STRICT ZERO-HALLUCINATION RULE: ONLY include `- **SKU**:` IF AND ONLY IF an explicit SKU code/number is stated in the source document or explicitly instructed by Admin. NEVER fabricate SKU numbers (e.g. do NOT invent CLINICAL-ACNE-001).
    - CRITICAL: NEVER break product attributes into raw markdown headings like `### Ingredients` or `### Benefits`! Keep all product attributes as bullet points inside `### Detail Produk` blocks.
    - Intelligently embed each image into its most relevant section or product block.
    - NEVER create any "Asset Media dari File Terlampir" heading or list of raw media assets at the end of the summary. Embed the attached image URL ONLY where it belongs.
@@ -4804,7 +4804,7 @@ async def refine_approved_document(
 
         # ─── COLLABORATIVE KNOWLEDGE BASE EDITOR PROMPT ─────────────────────────────
         refine_prompt = f"""
-You are an intelligent, helpful knowledge base editor for PT Arya Noble (ERHA).
+You are an intelligent, helpful knowledge base editor for Skin Clinic.
 Your task is to refine, edit, format, or update the approved document content based on the Admin's instruction.
 
 ======================================================================
@@ -4834,7 +4834,7 @@ EDITING GUIDELINES:
      ### Detail Produk
      ![Nama Produk Lengkap](URL_GAMBAR)
      - **Nama Produk**: Nama Produk Lengkap
-     - **Brand**: ERHA
+     - **Brand**: Clinical
      - **Kategori**: Kategori Produk (misal: Sabun Wajah Jerawat)
      - **Ukuran**: 100 g
      - **Harga**: Rp ... (jika ada)
@@ -4961,7 +4961,7 @@ CRITICAL REQUIREMENT FOR THE "summary" FIELD:
         if delete_img_match:
             del_target = delete_img_match.group(1).strip() if delete_img_match.group(1) else ""
             if del_target:
-                target_words = [w for w in re.split(r'[\s\-_/]+', del_target) if len(w) > 2 and w.lower() not in ["erha", "produk", "product", "gambar", "foto", "image"]]
+                target_words = [w for w in re.split(r'[\s\-_/]+', del_target) if len(w) > 2 and w.lower() not in ["clinical", "produk", "product", "gambar", "foto", "image"]]
                 img_tags = list(re.finditer(r'!\[([^\]]*)\]\(([^\)]+)\)', updated_summary))
                 for itag in img_tags:
                     alt = itag.group(1)
@@ -6133,7 +6133,7 @@ class QueryGeneralRequest(BaseModel):
     prompt: str = Field(
         ..., 
         description="Prompt teks dari user untuk menelusuri (read), mengedit (update), atau menghapus (delete) dokumen KB",
-        example="Apakah ada produk ERHA Age Corrector di database?"
+        example="Apakah ada produk Clinical Age Corrector di database?"
     )
     history: List[dict] = Field(
         default=[], 
@@ -6544,7 +6544,7 @@ async def query_general_endpoint(
                 is_all_scope = bool(re.search(r'\b(?:di\s+seluruh|seluruh|semua|all|di\s+semua|semuanya)\b', clean_ans))
                 
                 # Extract options listed in assistant message:
-                # E.g. "1. [d60efdf1-...](url) — *Katalog Produk ERHA Acneact*"
+                # E.g. "1. [d60efdf1-...](url) — *Katalog Produk Acneact*"
                 option_matches = re.findall(r'(?:(\d+)\.\s*)?\[([0-9a-fA-F\-]{36})\]\([^\)]+\)\s*—\s*\*?([^\*\n\r]+)\*?', last_asst_msg)
                 
                 chosen_doc_id = None

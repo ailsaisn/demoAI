@@ -1,4 +1,4 @@
-"""MedicalAgent Tool Orchestrator for ERHA RAG System (PT Arya Noble).
+"""MedicalAgent Tool Orchestrator for Clinical RAG System.
 
 Single Responsibility:
 - Acts as the Agent Tool Orchestration & Reasoning Module for complex multi-topic queries.
@@ -21,8 +21,8 @@ from app.rag.services.intent import QueryIntentDetector, QueryIntent
 # ── Agent Tool Schema & Reasoning Prompt ──────────────────────────────────────
 
 AGENT_ORCHESTRATION_PROMPT = """<role>
-You are ERHA Medical Assistant Tool Planner.
-Your role is to evaluate complex medical queries from ERHA Doctors and determine which search tools to execute to gather complete clinical evidence.
+You are Clinical Medical Assistant Tool Planner.
+Your role is to evaluate complex medical queries from Clinical Doctors and determine which search tools to execute to gather complete clinical evidence.
 </role>
 
 <multi_concern_decomposition_rule>
@@ -51,7 +51,7 @@ MEDICAL_AGENT_TOOLS_SCHEMA = [
         "type": "function",
         "function": {
             "name": "search_products",
-            "description": "Search ERHA product knowledge base for skincare product information, ingredients, usage, and recommendations.",
+            "description": "Search product knowledge base for skincare product information, ingredients, usage, and recommendations.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -68,7 +68,7 @@ MEDICAL_AGENT_TOOLS_SCHEMA = [
         "type": "function",
         "function": {
             "name": "search_treatments",
-            "description": "Search ERHA clinical treatment/procedure database for in-clinic aesthetic procedures.",
+            "description": "Search clinical treatment/procedure database for in-clinic aesthetic procedures.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -169,7 +169,7 @@ class MedicalAgent:
             return f"Search execution failed: {str(e)}", []
 
     def _search_products(self, query: str) -> Tuple[str, List[Dict[str, Any]]]:
-        """Tool: Search ERHA product knowledge base."""
+        """Tool: Search product knowledge base."""
         expanded_query = f"produk skincare cream serum gel lotion {query}"
         return self._search_knowledge_base(
             query=expanded_query,
@@ -178,7 +178,7 @@ class MedicalAgent:
         )
 
     def _search_treatments(self, query: str) -> Tuple[str, List[Dict[str, Any]]]:
-        """Tool: Search ERHA clinical treatment/procedure database."""
+        """Tool: Search clinical treatment/procedure database."""
         expanded_query = f"treatment tindakan prosedur terapi {query}"
         return self._search_knowledge_base(
             query=expanded_query,
@@ -193,8 +193,8 @@ class MedicalAgent:
 
     def _build_tool_descriptions(self) -> str:
         return """Available tools:
-1. search_products(query) - Search ERHA product knowledge base for skincare product information, ingredients, usage, and recommendations.
-2. search_treatments(query) - Search ERHA clinical treatment/procedure database for in-clinic aesthetic procedures.
+1. search_products(query) - Search product knowledge base for skincare product information, ingredients, usage, and recommendations.
+2. search_treatments(query) - Search clinical treatment/procedure database for in-clinic aesthetic procedures.
 3. search_contraindications(query) - Search for safety information, contraindications, pregnancy/lactation warnings, allergies, and drug interactions.
 
 PARALLEL TOOL CALLING INSTRUCTION:

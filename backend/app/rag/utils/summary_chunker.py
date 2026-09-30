@@ -543,7 +543,7 @@ def chunk_summary_markdown(
                 target_entity = detected_product or detected_treatment
                 if target_entity and all_doc_imgs_with_alt:
                     clean_target = re.sub(r'[^a-zA-Z0-9\s]', '', target_entity.lower()).strip()
-                    target_words = [w for w in clean_target.split() if len(w) > 2 and w not in ["erha", "acneact", "truwhite", "the", "and", "with"]]
+                    target_words = [w for w in clean_target.split() if len(w) > 2 and w not in ["clinical", "acneact", "truwhite", "the", "and", "with"]]
                     for alt, u in all_doc_imgs_with_alt:
                         alt_l = alt.lower()
                         u_l = u.lower()

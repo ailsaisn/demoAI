@@ -1,6 +1,6 @@
 # Backend Changelog
 
-All notable changes to the Arya Noble AI Chatbot Backend are documented in this file.
+All notable changes to the Skin Clinic AI Chatbot Backend are documented in this file.
 
 ## [1.5.1] - 2026-09-24
 
@@ -120,7 +120,7 @@ All notable changes to the Arya Noble AI Chatbot Backend are documented in this 
   - Enhanced SSE streaming in `generate_answer_stream()` to dynamically normalize `results` context metadata before emitting initial SSE payload.
   - Updated `run_chat_pipeline()` in `app/rag/router.py` to ensure final chat messages always contain absolute URLs.
 - **Cross-Origin & Multi-Tenant Compatibility**:
-  - Enabled external CIS floating chat (`https://cis.erha.co.id`) to embed images directly from standard Markdown responses without 404 domain collisions or authentication requirements.
+  - Enabled external CIS floating chat (`https://cis.skinclinic.id`) to embed images directly from standard Markdown responses without 404 domain collisions or authentication requirements.
 
 ---
 
@@ -285,7 +285,7 @@ All notable changes to the Arya Noble AI Chatbot Backend are documented in this 
 ### Knowledge Lifecycle Data Integrity & Bug Fixes
 - **Exact UUID Match Soft-Deletion & Complete Index Purge (`app/api/routers/knowledge.py`, `app/rag/router.py`, `app/rag/services/vector_store.py`, `app/rag/services/rag_retriever.py`)**:
   - `list_knowledge` now purges stale staging files strictly by `deleted_ids` (UUIDs), eliminating the bug where files with the same name as previously deleted documents were purged upon upload.
-  - `delete_approved_document` and `delete_knowledge` purge matching chunks completely from PostgreSQL `arya_noble_kb` table, `PGVectorAdapter`, and `BM25Index` across `source_file`, `knowledge_id`, and `file_name`, guaranteeing no "zombie knowledge" can be retrieved after deletion.
+  - `delete_approved_document` and `delete_knowledge` purge matching chunks completely from PostgreSQL `clinical_kb` table, `PGVectorAdapter`, and `BM25Index` across `source_file`, `knowledge_id`, and `file_name`, guaranteeing no "zombie knowledge" can be retrieved after deletion.
   - Query filtering strictly uses exact `Knowledge.id == target_uuid`, removing broad substring `ilike("%...%")` matching that caused accidental deletion of unrelated documents.
 - **Self-Healing DB Fallback (`app/api/routers/knowledge.py`, `app/rag/router.py`)**:
   - Added self-healing fallback to `edit_pending_document` and `edit_approved_document` that loads the document from PostgreSQL `Knowledge` if the disk staging JSON is missing, preventing 404 errors during category edits and approval.
@@ -320,9 +320,9 @@ All notable changes to the Arya Noble AI Chatbot Backend are documented in this 
 
 ## [1.1.0] - 2026-07-22
 
-### Major Milestone: Unification of `arya-noble-rag` into `backend/app/rag/`
+### Major Milestone: Unification of `skin-clinic-rag` into `backend/app/rag/`
 
-The standalone AI team repository (`arya-noble-rag`) has been fully merged and integrated into the main `backend` codebase inside `backend/app/rag/`. This eliminates repository fragmentation and establishes a single shared workspace where AI Engineers and Backend Engineers collaborate directly.
+The standalone AI team repository (`skin-clinic-rag`) has been fully merged and integrated into the main `backend` codebase inside `backend/app/rag/`. This eliminates repository fragmentation and establishes a single shared workspace where AI Engineers and Backend Engineers collaborate directly.
 
 ---
 
@@ -417,7 +417,7 @@ backend/app/rag/
 
 ### Summary of Key Improvements
 
-| Feature | Before (Legacy Backend RAG) | After (Unified `arya-noble-rag`) |
+| Feature | Before (Legacy Backend RAG) | After (Unified `skin-clinic-rag`) |
 | :--- | :--- | :--- |
 | **Document Parsing** | Basic text splitter | **Docling Engine** (Extracts headers, tables, & layout context) |
 | **Search Strategy** | Dense PgVector only | **Hybrid Search**: Dense (`PGVector`) + Sparse (`BM25Okapi`) + Reciprocal Rank Fusion (RRF) |

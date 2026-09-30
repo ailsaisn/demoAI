@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes and release updates for the Arya Noble AI Chatbot System are documented in this file.
+All notable changes and release updates for the Skin Clinic AI Chatbot System are documented in this file.
 
 ---
 

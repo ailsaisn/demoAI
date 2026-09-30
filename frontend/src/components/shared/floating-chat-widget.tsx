@@ -61,7 +61,7 @@ export function FloatingChatWidget() {
             <RiRobot2Line className="size-5" />
           </div>
           <div className="flex flex-col">
-            <span className="text-white font-semibold text-sm leading-tight">Erha AI</span>
+            <span className="text-white font-semibold text-sm leading-tight">Clinical AI</span>
             <span className="text-white/80 text-xs">Your artificial intelligence assistant</span>
           </div>
         </div>

@@ -16,7 +16,7 @@ function formatCardTitle(rawText?: string | null, maxLen = 75): string {
   // 3. Strip bold/italics
   s = s.replace(/[*_]{1,3}([^*_]+)[*_]{1,3}/g, '$1')
 
-  // Check structured key-value list like "- Brand: ERHA\n- Kategori: Jerawat"
+  // Check structured key-value list like "- Brand: Clinical\n- Kategori: Jerawat"
   const brandMatch = s.match(/(?:^|\n)\s*[-*•]?\s*Brand\s*:\s*([^\n\r]+)/i)
   const catMatch = s.match(/(?:^|\n)\s*[-*•]?\s*Kategori\s*:\s*([^\n\r]+)/i)
   if (brandMatch) {

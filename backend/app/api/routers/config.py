@@ -411,7 +411,7 @@ async def get_system_logs_ui(
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Arya Noble - Backend Live Logs</title>
+    <title>Clinical AI - Backend Live Logs</title>
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; }
         body {
@@ -587,7 +587,7 @@ async def get_system_logs_ui(
 <body>
     <header>
         <div class="brand">
-            <span>⚡ Arya Noble Backend Logs</span>
+            <span>⚡ Clinical AI Backend Logs</span>
             <span class="badge">Live</span>
         </div>
         <div class="controls">
@@ -963,7 +963,7 @@ async def endpoint_reseed_db(
     request: Request,
     reset: bool = False,
     admin_email: str = "admin@mail.com",
-    admin_password: str = "Erhadermies@123",
+    admin_password: str = "Clinical@123",
     x_admin_secret: Optional[str] = Header(None, alias="X-Admin-Secret"),
     db: AsyncSession = Depends(get_db),
 ):

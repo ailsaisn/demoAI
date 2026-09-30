@@ -6,13 +6,13 @@ services:
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: arya_noble
+      POSTGRES_DB: clinical_db
     ports:
       - "50010:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d arya_noble"]
+      test: ["CMD-SHELL", "pg_isready -U postgres -d clinical_db"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -23,7 +23,7 @@ services:
     restart: always
     ports:
       - "9000:9000"
-      - "9001:9001"
+      - "9002:9001"
     environment:
       MINIO_ROOT_USER: minioadmin
       MINIO_ROOT_PASSWORD: minioadmin
@@ -42,23 +42,18 @@ services:
       target: development
     container_name: skin_clinic_backend
     restart: always
-    cpus: 2.0
-    mem_limit: 6144m
     ports:
       - "8000:8000"
-    command: ["/app/start.sh", "prod"]
     env_file:
       - ./backend/.env
     environment:
-      - DATABASE_URL=postgresql+asyncpg://postgres:postgres@db:5432/arya_noble
+      - DATABASE_URL=postgresql+asyncpg://postgres:postgres@db:5432/clinical_db
       - PG_HOST=db
       - PG_PORT=5432
       - POSTGRES_HOST=db
       - POSTGRES_PORT=5432
-      - ENV=prod
-      - WORKERS=1
-      - ENABLE_RERANKER=false
-      - RATE_LIMIT_PER_MINUTE=1000
+      - S3_ENDPOINT_URL=http://minio:9000
+      - ENVIRONMENT=development
     depends_on:
       db:
         condition: service_healthy
@@ -114,6 +109,9 @@ services:
     depends_on:
       backend:
         condition: service_healthy
+    volumes:
+      - ./mock-cis/main.py:/app/main.py
+      - ./mock-cis/keys:/app/keys
 
 volumes:
   pgdata:

@@ -33,8 +33,8 @@ class ChatResponse(BaseModel):
     agent_used: bool = Field(False, description="Whether AI Agent (multi-step reasoning) was used for this response")
 
 class EvaluationItem(BaseModel):
-    query: str = Field(..., description="Test query string (e.g. 'Apa indikasi ERHA Acne Clear Gel?')")
-    expected_file: str = Field(..., description="Expected source document filename (e.g. 'ERHA Acne Clear Gel.docx')")
+    query: str = Field(..., description="Test query string (e.g. 'Apa indikasi Acne Clear Gel?')")
+    expected_file: str = Field(..., description="Expected source document filename (e.g. 'Acne Clear Gel.docx')")
 
 class TextIngestRequest(BaseModel):
     text_content: str = Field(..., description="Raw text knowledge material to convert to structured .md document")
@@ -150,13 +150,13 @@ class ApprovedDocumentResponse(BaseModel):
 
 class RAGEvaluationItem(BaseModel):
     query: str = Field(..., description="Test query string (e.g. 'Berapa lama durasi tindakan Acne Intensive Program?')")
-    expected_file: str = Field(..., description="Expected source document filename or keyword match (e.g. 'ERHA_Acne_Center_Treatments.docx')")
+    expected_file: str = Field(..., description="Expected source document filename or keyword match (e.g. 'Clinical_Acne_Center_Treatments.docx')")
     expected_answer: Optional[str] = Field(None, description="Expected reference answer for generation evaluation (opsional)")
 
 class RAGEvaluationRequest(BaseModel):
     dataset: Optional[List[RAGEvaluationItem]] = Field(
         None, 
-        description="Optional custom benchmark test dataset. If empty, the default official ERHA benchmark dataset will be used."
+        description="Optional custom benchmark test dataset. If empty, the default official Clinical benchmark dataset will be used."
     )
 
     model_config = {
@@ -165,11 +165,11 @@ class RAGEvaluationRequest(BaseModel):
                 "dataset": [
                     {
                         "query": "Berapa lama durasi tindakan, downtime, dan interval sesi untuk Acne Intensive Program?",
-                        "expected_file": "ERHA_Acne_Center_Treatments.docx",
+                        "expected_file": "Clinical_Acne_Center_Treatments.docx",
                         "expected_answer": "Durasi tindakan 60-75 menit, downtime 1-2 hari, interval 2 minggu sekali."
                     },
                     {
-                        "query": "Apa saja kandungan aktif, indikasi, dan harga ERHA Acneact Acne Spot Gel?",
+                        "query": "Apa saja kandungan aktif, indikasi, dan harga Acneact Acne Spot Gel?",
                         "expected_file": "Katalog_Acneact.pdf",
                         "expected_answer": "Kandungan BHA/Salicylic Acid, Sulfur. Indikasi jerawat aktif. Harga Rp 50.000."
                     }
